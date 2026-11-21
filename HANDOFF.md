@@ -34,13 +34,19 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
-Current bounded work: [SEC release refusals](docs/maintenance/20261121_sec_release_refusals.md).
-Local verification complete: 231 relevant tests, selected report208 before/after,
-9 identical existing fixed collector outputs, same official bytes for3 issuers.
-MSFT year-less title recovers explicit FY2027Q1 from realized body evidence;
-AAPL remains withheld for missing dateline, AMAT for issuer-name mismatch.
-No score/TTL/provider/deadline/rate changes. Source push/reboot/live verification
-pending; finish that verification before choosing another task.
+[SEC release refusals](docs/maintenance/20261121_sec_release_refusals.md), started
+clean at `a791d693`. Code **`2ac2d94b`** pushed, direct owner reboot and production
+verification complete. MSFT year-less title recovers explicit FY2027Q1 from
+realized body evidence; AAPL remains withheld for missing dateline, AMAT for
+issuer-name mismatch (submissions suffix/state conflict; no guessed alias).
+231 related tests, selected report208 before/after,14 exact accepted parser
+outputs and9 exact collector outputs/request multisets. Same official bytes for3
+issuers replayed. No score/TTL/provider/deadline/rate changes.
+Live18 checks pass; report120.672s, discovery23.577s. Release parser21 calls:
+accepted9, issuer6/quarter3/date2/title1 refusals. Added aggregate allowlisted
+reason counters only, no raw exceptions/credentials. Fresh DART corporate lookup
+failed with connect_timeout (2 existing attempts), leaving31 domestic connections
+withheld; this separate availability issue is next, not a reason to relax checks.
 
 ### Previous completed profiling task
 
@@ -178,6 +184,23 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[SEC validation audit](docs/maintenance/20261121_sec_release_refusals.md), code
+**`2ac2d94b`**, direct owner Reboot complete. Report
+`3d4dd44113a04b259ac4d4c7bba38e0d` /120.672s, normal generation,18 checks pass.
+Four loaded/disk/Git hashes and output/diagnostic hash agree; no stale modules.
+MSFT FY2027Q1 /Oct28 official release visible in detailed evidence; AAPL date and
+AMAT identity still withheld. SOXL Nov20 regular return-31.83% preserved.
+Parser21 /accepted9 /refused12; reason histogram matches timing failures exactly.
+Discovery23.577s, parsing0.850s. SEC68 unique get attempts; DART2 attempts /1
+unique (existing retry), corporate connect_timeout leaves31 issuers unavailable.
+Normal report completion is not complete provider coverage. No speedup claim:
+cache/input/remote conditions differ from previous reports.
+Private evidence `cache/sec_refusals_20261121/`: official body captures/hash
+manifest, fixed replay/parity, report(47), matching auto_report JSON,18-check
+audit and operating_msft.jpg. Browser on expanded company evidence table.
+
+### Previous profiling verification
 
 [Filing-discovery profiling](docs/maintenance/20261121_earnings_discovery_profile.md),
 code **`8604900a`**, direct owner Reboot complete. Today95.1s; completed reports:
@@ -336,17 +359,18 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Audit SEC earnings-release validation refusals on fixed official evidence.**
+**Audit DART corporate-directory timeout and last-success fallback.**
 
-Latest operating trace has parse_sec_release31 calls/21 caught validation errors;
-first run15/9. Obtain safe per-reason counts from collector sources and choose
-three representative refusals, then replay the same official filing/exhibit bytes
-to distinguish justified withholding from recoverable parser defects.
-Do not relax issuer/period/date/metric identity to improve coverage. Preserve
-scores, TTLs, provider priority, request-rate/deadline policy and financial meaning.
-Only fix demonstrated parser errors with fixture/regression coverage; otherwise
-record limits. Same-run exact request duplicates were0; no speculative response
-memoization or larger parallelism. Update handoff with one bounded next task.
+Latest completed run3d4dd441 has DART setup10.047s, two existing get attempts
+(one duplicate identity = retry), connect_timeout;31 domestic issuer connections
+are explicitly withheld. Inspect whether a valid prior corporate snapshot existed,
+why it was/was not reused across reboot, and reproduce on fixed failure inputs.
+Distinguish transient provider/connectivity failure from an actual fallback defect.
+Preserve issuer/date validation, scores, TTLs, provider priority and request-rate/
+deadline policy; no guessed mapping, cache-age extension or removal of the retry.
+Only repair demonstrated availability defects, verify operating outcomes, and
+update handoff with one bounded next task. SEC remaining aliases/combined Q4
+headlines are recorded limits, not concurrent work for this step.
 
 ## Verification Discipline
 
