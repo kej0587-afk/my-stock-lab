@@ -34,13 +34,24 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
-In progress after `bf7b385b`: [cross-view price/mode audit](docs/maintenance/20261121_cross_view_price_mode.md).
-Six representative US closes/afterhours observations and one KR ETF checked against
-actual providers; pre-change production Today 95 rows completed in 98.2s.
-Mode evidence and portfolio comparison table implemented; 98 focused tests and
-final selected decision 1,638 tests pass (`decision_iksxjci1`). Prices unchanged,
-646 price tests pass. Push/owner reboot and production comparison remain before
-closing this task. Preserve snapshots and finish that verification first.
+Completed after `bf7b385b`: [cross-view price/mode audit](docs/maintenance/20261121_cross_view_price_mode.md).
+Code **`801cdf67`** pushed, owner reboot and production verification completed.
+
+- Six representative US regular closes/afterhours observations and one KR ETF
+  checked through public raw quotes and actual app loaders. SOXX is not in Today.
+- Selection mode/held status are display evidence, not changed scoring inputs.
+  Portfolio now compares saved Today/precision price/date/quote time/session/mode/ID.
+- Fixed held KR ETF reproduces different existing free/held account-limit paths
+  with equal price/quality/weight inputs. Do not unify policies without an explicit
+  policy task. Matching price IDs alone do not prove all market/account inputs equal.
+- 98 focused tests and final selected decision **1,638 passed / 152.724s**
+  (`decision_iksxjci1`). Prices unchanged; selected prices **646 passed / 63.229s**.
+  No golden regeneration, threshold/label/TTL/provider priority changes.
+- Operating Today **95 rows / 105.0s**, no missing current prices, all source dates
+  Nov20. Before 98.2s has uncontrolled cache state; no performance claim.
+- Four completed precision captures (GOOGL, SOXL, KR ETF free/held) pass nine
+  build/price/date/quote/workflow checks each. Portfolio UI comparison verified for
+  SOXL and KR ETF; holding export prices also match for SOXL/KR ETF/BITX.
 
 ### Previous completed task
 
@@ -109,6 +120,25 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[Cross-view audit](docs/maintenance/20261121_cross_view_price_mode.md), code
+**`801cdf67`**, owner Reboot completed directly, operating checks 12:56–13:29 KST.
+
+- All four completed precision ZIPs match deployed commit, restart_required=false,
+  stale_modules=[]. Today/precision share selected price, source date and price ID.
+- SOXL source Close30.88 remains separate from selected Yahoo post quote33.3694,
+  supplier bar time Nov21 09:59:59 KST. GOOGL Close265.29 / post270.18 similarly.
+- KR ETF free and held selection share price23180, price ID, quality/technical score
+  and weights. Free code CRISIS_PANIC_SELL_OFF versus held HARD_BLOCK_OVERWEIGHT;
+  held code equals Today. Existing path difference is exposed, not rewritten.
+- Portfolio analysis ran; actual SOXL/KR ETF selectors show matching saved prices,
+  source dates, observation time/session and price ID in the new two-row table.
+  KR provider time/session unknown remains unknown; no fabricated timestamps.
+- Downloads Today `_20261121_1256.zip`, precision GOOGL `(37)`, SOXL `(2)`,
+  379810 `(5)` free / `(6)` held. Private ignored `cross_view_operating_audit.json`
+  and `cross_view_portfolio_{kr,soxl}.jpg` under `cache/operating_20261121`.
+
+### Previous SOXL repair verification
 
 [SOXL close repair](docs/maintenance/20261121_cross_view_soxl_close.md): code
 **`49ab429d`**, direct owner Reboot completed, SOXL result at 2026-11-21 10:49 KST.
@@ -182,15 +212,17 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Record and replay free-entry versus held-selection account limits.**
+**Verify the automatic market report uses the repaired regular close separately
+from extended-session quotes.**
 
-For one fixed held KR ETF, capture selection mode (`is_free`) plus matching price,
-market and account inputs in Today/precision evidence. The old 379810 captures have
-the same price ID but different decision codes; their missing mode/context prevents
-a causal conclusion. Reproduce both modes with fixed inputs, distinguish legitimate
-account-limit differences from a display/connection error, and fix only a proven
-defect. Preserve existing scores, thresholds, labels, TTLs and user-owned inputs.
-Do not start another broad refactor. Finish one record and exactly one next task.
+Generate one completed operating report with matching diagnostic ID. For SOXL and
+one ordinary US stock, compare its regular close/date and separate afterhours quote
+with the public source and Today/precision evidence. Confirm the earlier missing
+Close cannot silently roll the report back one session. Fix only a reproduced
+report connection/display defect; preserve scores, policy paths, labels, TTLs and
+user inputs. Existing price tests cover the shared repair; do not re-open general
+refactoring or force unknown supplier finalization. Record timing as an observation,
+not a speedup without like-for-like measurements. Finish one record and one next task.
 
 ## Verification Discipline
 

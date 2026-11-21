@@ -60,10 +60,39 @@ GOOGL·SOXL·BITX 현재가/시각이 위 관측과 일치했다. SOXX는 이 �
 
 ## 운영 배포
 
-푸시·재시작 후 동일 거래일 대표 3종목의 오늘점검/정밀/포트폴리오 근거 비교 예정.
+코드 **`801cdf67`** 푸시, 소유자 Cloud Reboot 직접 실행 후 인증 세션 복구.
+완료 검토 ZIP 4건 모두 해당 커밋, `restart_required=false`, `stale_modules=[]`.
+
+- 수정 후 오늘점검 **95종목 / 화면 105.0초** 완료. 현재가 누락 0건,
+  가격 원자료 기준일 전부 11/20. 수정 전 98.2초와 캐시 상태가 통제되지
+  않았고 이번 변경은 표시 근거 추가이므로 성능 개선/악화의 인과를 주장하지 않는다.
+- GOOGL·SOXL·379810 자유입력 및 379810 보유 선택의 완료 ZIP을 오늘점검과
+  비교. 선택가격·원자료일·가격 ID·시세 공급자·관측시각·세션·시각종류와
+  공통 workflow 연결, 로드 버전 등 **각 9개 검사 × 4건 통과**.
+- GOOGL 원자료 Close265.29 / 선택가격270.18, SOXL Close30.88 / 선택가격33.3694.
+  선택가격에는 각각 09:59:57 / 09:59:59 KST 애프터마켓 관측이 붙는다.
+  정규장 종가를 시간외 가격으로 바꿔 저장하지 않는다.
+- 379810은 자유입력/보유 선택 모두 23,180원, 같은 가격 ID·품질등급·기술점수·
+  현재/목표비중. 기존 자유입력 경로 `CRISIS_PANIC_SELL_OFF`, 계좌 경로
+  `HARD_BLOCK_OVERWEIGHT`; 후자는 오늘점검과 일치. 모드만 바꾼 고정 입력
+  재현은 단위 테스트로 증명했고, 운영의 모든 다른 입력까지 동일하다고 주장하지 않는다.
+- GOOGL의 자유입력/오늘점검 코드도 다르다. 가격 ID만으로 전체 정책 입력이
+  같다고 결론내리지 않는다. 이번 작업은 기존 경로를 기록하며 정책을 통일하지 않는다.
+- 포트폴리오 분석을 실행해 SOXL과 379810을 실제 선택했다. 새 두 행 표의
+  오늘점검/정밀 가격·원자료일·시세 시각/세션·가격 ID 일치 확인. SOXL은
+  계좌/자유입력 차이, 379810은 계좌/계좌 경로가 표시됐다.
+- 동일 완료 ZIP의 보유 표도 SOXL·379810·BITX 현재가가 오늘점검과 일치한다.
+  포트폴리오 평가는 공통 현재가 경로, 수익률/상관 분석은 이력 경로를 사용하는
+  기존 구조를 유지한다. 새 표는 저장된 관측의 비교이지 실시간 동시 가격 인증이 아니다.
+- 국내 Naver 공급시각/세션 미확인은 그대로 남는다. SOXX는 Today 목록 밖이고,
+  95종목 전체를 외부 원자료와 개별 대조했다고 확대하지 않는다.
 
 ## 비공개 근거
 
 ignored `cache/operating_20261121/cross_view_quote_probe.json`,
-`cross_view_kr_quote.json`, Downloads `stock_lab_review_export_20261121_1149.zip`.
+`cross_view_kr_quote.json`, `cross_view_operating_audit.json`,
+`cross_view_portfolio_kr.jpg`, `cross_view_portfolio_soxl.jpg`.
+Downloads `stock_lab_review_export_20261121_1149.zip`, `_1256.zip`,
+`precision_review_GOOGL (37).zip`, `precision_review_SOXL (2).zip`,
+`precision_review_379810.KS (5).zip`(자유입력), `(6).zip`(보유 선택).
 개인 자료는 Git 제외. 단위 테스트는 합성 계좌 입력이며 운영 계좌 복제 아님.
