@@ -77,13 +77,39 @@ Adj Close는 조정 근거가 없어 그대로 미확인이다. 전날 값을 fo
 
 ## 운영 배포
 
-배포·SOXL 재조회 검증 대기. 완료 후 이 절과 HANDOFF를 갱신한다.
+코드 **`49ab429d`**(비중 연결 `1a9989fb` 포함)를 main에 푸시하고 Cloud 관리
+화면에서 직접 Reboot했다. 로그인 유지, SOXL 재계산·완료 ZIP 다운로드 성공.
+
+| 2026-11-21 KST | 수정 전 10:16 | 수정 후 10:49 |
+| --- | --- | --- |
+| 원자료 마지막 일봉 | 11/19, 45.30 | **11/20, 30.88** |
+| 선택 현재가 | 42.34, 공급 시각·세션 미확인 | **33.3694**, Yahoo chart, 09:59:59 KST, post |
+| 원자료 일간 등락 | -8.04% (11/18→19) | **-31.83% (11/19→20)** |
+| 최신가/마지막 Close | -6.53% | **+8.06%** |
+| 시나리오·기초축 기준 종가 | 45.30 / 기초축 미연결 | **30.88 / 연결** |
+
+- `base_commit=49ab429d`, `restart_required=false`, `stale_modules=[]`.
+  `prices`·`yahoo_daily_close`의 로드/디스크 해시 일치.
+- 원자료 CSV의 OHL·거래량·30.88 Close와 11/20 날짜를 직접 확인했다.
+  `signal_basis`에 실제 Yahoo 봉 관측시각/애프터마켓 세션이 연결됐다.
+  33.3694는 그 시각의 관측이며 현재 진행 중 세션이나 시간외 최종 종가 인증이 아니다.
+- 화면의 `시나리오 종가 $30.88 · 2026-11-20 / 기존 판정 입력 $33.37 · 조회
+  현재가 · 애프터마켓`, 확인축의 SOXL 종가 30.88과 -31.8%를 확인했다.
+- workflow 비중 필드 2개도 운영 ZIP에서 확인했다. 기존 code는 이번 캡처에서도
+  `LEVERAGED_RECOVERY_DCA_BLOCK`이지만 ETF 품질은 보통→관망으로 바뀌었다.
+  입력·계산시각이 달라 운영 점수 동일성을 주장하지 않는다. 고정 입력 회귀는 위 참조.
+- ZIP은 attrs 허용 목록만 내보내므로 `daily_close_repair` 상세는 포함되지 않는다.
+  복구 검증은 원자료 CSV·로드된 모듈 해시·별도 공개 원자료 probe를 함께 사용했다.
+  이 제한을 누락하거나 해당 attrs가 ZIP에 있다고 기록하지 않는다.
+- 전체 오늘점검/자동 시황은 이번에 재실행하지 않았다. 속도 개선 주장은 없다.
 
 ## 비공개 근거와 다음 한 건
 
 ignored `cache/operating_20261121/`: `cross_view_fixed_audit.json`,
 `precision_workflow_before_cross_view.py`, `soxl_missing_close_probe.json`.
 Downloads의 기존 Today/GOOGL/379810/SOXL ZIP은 보존, Git 제외.
+운영 전/후 `precision_review_SOXL.zip`, `precision_review_SOXL (1).zip`,
+검증 결과 `soxl_close_operating.json`(7개 확인 통과), 화면 `soxl_close_operating.jpg`.
 
 다음: 동일 종목·시각·가격·시장·계좌 입력에서 자유입력/보유 선택 모드를 기록하고
 오늘점검·정밀관측소의 계좌 제한 차이를 재현한다. 모드 차이와 실제 오류를 구분하고

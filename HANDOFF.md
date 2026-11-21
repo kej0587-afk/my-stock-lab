@@ -37,7 +37,7 @@ under a behavior-preserving task. Investment performance validation is separate.
 Current bounded work: [cross-view evidence and SOXL close repair](docs/maintenance/20261121_cross_view_soxl_close.md).
 Started clean at `c895a19b`. The user reported SOXL 42.34 versus regular close 30.88
 during the cross-view audit; the explicit price bug took priority over the former
-no-provider-change restriction. Implementation/tests complete; production verification pending.
+no-provider-change restriction. Implementation/tests and production verification complete.
 
 - `1a9989fb` passes existing calculated weights into precision's shared evidence.
   Three fixed cases preserve every existing workflow field and portfolio readiness;
@@ -56,8 +56,9 @@ no-provider-change restriction. Implementation/tests complete; production verifi
   Final selected decision: **1,638 passed / 153.218s**, `decision_bqkmn9n1`.
   New/focused contracts: **75 passed / 26.26s**, including NaT/duplicate-column
   guards found in focused review. No golden regeneration.
-- Local live probe restores Nov20 Close30.88; separate post-session quote33.3694
-  carries actual supplier timestamp/session. Production recheck follows push/reboot.
+- Local and production restore Nov20 Close30.88; separate post-session quote33.3694
+  carries actual supplier timestamp/session. `49ab429d` pushed, owner reboot done,
+  completed SOXL ZIP confirms loaded modules match disk and account weight fields connect.
 
 ### Previous completed display task
 
@@ -98,6 +99,28 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[SOXL close repair](docs/maintenance/20261121_cross_view_soxl_close.md): code
+**`49ab429d`**, direct owner Reboot completed, SOXL result at 2026-11-21 10:49 KST.
+
+- base_commit matches, restart_required=false, stale_modules=[]; `prices` and
+  `yahoo_daily_close` loaded/disk hashes match. Authenticated session recovered.
+- Source CSV now includes Nov20 Close **30.88** (OHL 42.40/42.57/29.82 and volume
+  533,762,471). Regular return -31.83% correctly compares Nov19→Nov20.
+- Separate selected quote **33.3694**, Yahoo chart Nov21 **09:59:59 KST**, post.
+  Screen and ZIP distinguish this observation from regular close; no claim of
+  current active session or certified final afterhours close.
+- Scenario/underlying axis displays $30.88. Shared workflow contains both existing
+  calculated weight fields. Full Today/report was not rerun; no speedup claim.
+- Prices changed, so grade changed with corrected input. Existing decision formula,
+  thresholds and labels remain unchanged; fixed-input regression evidence above.
+- ZIP attrs allowlist excludes daily_close_repair; proof uses actual source CSV,
+  matching loaded modules and separate public raw probe, not invented export metadata.
+- Private evidence: Downloads `precision_review_SOXL.zip` and `(1).zip`;
+  ignored `cache/operating_20261121/soxl_close_operating.json` (7 checks passed),
+  `soxl_missing_close_probe.json`, `soxl_close_operating.jpg`.
+
+### Previous display verification
 
 [Daily-return basis deployment](docs/maintenance/20261121_daily_return_basis.md):
 code **`35dd624d`**, owner Cloud Reboot completed directly; authenticated session recovered.
