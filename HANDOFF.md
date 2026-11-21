@@ -32,7 +32,7 @@ supplier fields are explicit limitations, not a reason to block all later stages
 No score thresholds, decision labels, TTLs or trading permissions may be changed
 under a behavior-preserving task. Investment performance validation is separate.
 
-## Current Bounded Task
+## Latest Completed Task
 
 [Report repaired-close audit](docs/maintenance/20261121_report_repaired_close.md),
 started clean at `6660a895`. Public report quote endpoint and completed operating
@@ -44,8 +44,10 @@ label; it now states holiday/closed and refers to dated closes. Active-window
 missing/delayed warnings, numeric output, decisions and TTLs unchanged.
 New/relevant 77 tests pass; selected report 208 passes before and after
 (`report_jxn3q92o`, `report_gyh3u4_r`). No golden regeneration.
-Code ready; push/owner reboot and final operating report verification pending.
-Finish that comparison before starting the next task.
+Code **`bc5d8d2e`** pushed; direct owner reboot, Today rerun and final operating
+report verification complete. Report 82.366s before / 85.817s after with uncontrolled
+cache/remote response; no speedup claim. 13 operating report checks and 10 public
+quote/precision-source comparisons passed. Changes are report display only.
 
 ## Previous Completed Task
 
@@ -135,6 +137,28 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[Report repaired-close verification](docs/maintenance/20261121_report_repaired_close.md),
+code **`bc5d8d2e`**, owner Reboot completed. Today full run **85.7s** restored held
+inputs, then final report **85.817s**, ID `d3a32b05ac864f60abbd3bcb41456af0`.
+
+- completed/normal, no degraded reasons; base matches, restart_required=false,
+  stale_modules=[]. Output Markdown hash matches the same diagnostic's output hash.
+  Three relevant Cloud loaded/disk hashes match committed Git blobs (LF).
+- SOXL -31.83% and GOOGL -2.70% remain Nov20 regular-close returns. Exact prices
+  30.88/265.29 separately checked against public quote and completed precision CSVs.
+  Earlier post33.3694/270.18 is not promoted to a current holiday observation.
+- SOXL/BITX/IAU holdings rows visibly say holiday / no separate current quote /
+  refer to dated close. Active-session missing/delayed paths remain tested.
+- UI generation attempts without a completed file were excluded. Browser logs
+  recorded WebSocket closures; server cause not established. Reconnected retry
+  completed. Do not describe an interrupted attempt as an app computation result.
+- Ignored `cache/operating_20261121`: report `(42).md` before / `(43).md` after,
+  both `auto_report_<ID>.json` files, `report_close_operating_final.json`,
+  `report_close_cross_view_audit.json`, `report_quote_probe.json`,
+  `report_repaired_close_operating.jpg`. No private artifacts in Git.
+
+### Previous cross-view verification
 
 [Cross-view audit](docs/maintenance/20261121_cross_view_price_mode.md), code
 **`801cdf67`**, owner Reboot completed directly, operating checks 12:56–13:29 KST.

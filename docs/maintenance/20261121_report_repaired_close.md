@@ -60,8 +60,27 @@
 
 ## 운영 반영
 
-테스트 완료, 푸시/소유자 재시작 후 같은 종가가 유지되고 휴장 표시가 수정됐는지
-새 완료 리포트와 동일 측정ID JSON으로 최종 확인 예정.
+코드 **`bc5d8d2e`** 푸시, 소유자 Cloud Reboot 직접 실행 및 인증 세션 복구 완료.
+오늘점검 전체를 다시 실행(화면 **85.7초**)해 보유 입력을 복원했다.
+운영 브라우저 WebSocket 연결 종료가 다시 기록돼 완료본이 없는 시도는 비교에서
+제외하고, 재연결 후 다음의 완료본을 확보했다. 연결 종료의 서버 원인은 미확인이다.
+
+- 수정 후 **`d3a32b05ac864f60abbd3bcb41456af0` / 85.817초**, completed/normal,
+  degraded 없음. base `bc5d8d2e`, restart_required=false, stale_modules=[].
+- 출력 Markdown SHA256과 진단 output_sha256 일치. report_account_section,
+  report_quotes, report_context의 Cloud loaded/disk/Git 커밋 blob 해시 일치.
+  Windows 작업트리 CRLF와 직접 바이트 비교하지 않고 커밋의 LF blob을 사용했다.
+- **13개 운영 검사 통과**, 공개 quote와 이전 완료 정밀 CSV의 종가·직전종가·
+  날짜·시간외 값·수익률 대조 **10개 통과**. 원문은 등락률을 표시하므로 정확한
+  종가 숫자는 별도 공개 원자료/정밀 CSV 대조로 확인했다.
+- SOXL -31.83%(11/20 확정 종가), GOOGL -2.70% 유지. 시간외 +8.06%/+1.84%를
+  정규장 수익률에 혼합하지 않는다. 운영 보유 표의 SOXL/BITX/IAU는
+  **미국 휴장 · 별도 현재시세 표시 안 함 · 기준일 종가 참조**로 표시됨을 직접 확인.
+- 수정 후 중첩 없는 구간: 시세14.322s, 매크로·공시·수급34.005s,
+  종가계산1.227s, 뉴스1.931s, 기사본문1.102s, 저장11.768s, 조립21.462s.
+  수정 전82.366s→후85.817s는 캐시·외부응답 미통제 관측이며 속도 개선 주장 없음.
+- 휴장 운영 확인과 시간외 거래 중 고정시각 재현을 구분한다. 이번 작업에서
+  실제 활성 시간외 시장을 실시간으로 다시 검증한 것은 아니다.
 
 ## 남은 한 건
 
@@ -73,5 +92,8 @@
 
 비공개 근거: ignored `cache/operating_20261121/report_quote_probe.json`,
 `stock_lab_market_report (42).md`, `auto_report_fee694dacf574c88b2b6a481eeec9e71.json`.
+수정 후 `(43).md`, `auto_report_d3a32b05ac864f60abbd3bcb41456af0.json`,
+`report_close_operating_final.json`, `report_close_cross_view_audit.json`,
+`report_repaired_close_operating.jpg`도 같은 ignored 폴더에 보존했다.
 수정 전 소스 사본 `report_account_section_before_20261121.py`도 같은 ignored 폴더.
 운영 자료·개인 계좌 파일은 Git 제외; 신규 테스트는 합성 계좌 입력.
