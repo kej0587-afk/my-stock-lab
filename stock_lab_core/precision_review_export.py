@@ -394,6 +394,7 @@ def build_precision_review_export_zip(
             "last_index": clean["index"][-1] if len(frame) else None,
             "attrs": _json_value({key: value for key, value in frame.attrs.items() if key in {
                 "ticker", "source", "asof", "live_quote", "price_basis", "fetched_at", "volume_missing_sessions",
+                "daily_close_repair",
             }}),
         }
 

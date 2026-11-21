@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from stock_lab_core import decision_engine
-from stock_lab_core.signal_basis import build_signal_basis
+from stock_lab_core.signal_basis import build_signal_basis, selection_basis
 from tests.fixtures_price import make_price_df
 from tests.mtf_ast_contract import before_optional_daily_snapshot
 from tests.signal_basis_reference import before_price_basis_identity
@@ -38,8 +38,15 @@ def stable(value):
 
 def test_only_two_app_functions_change_and_only_reviewed_expressions(original_source):
     approved = subprocess.check_output(['git', 'show', 'd1d17690:app.py'], cwd=ROOT, encoding='utf-8-sig')
+    def before_selection(node):
+        # Only the new post-calculation mode evidence is removed for this old gate.
+        statement = ast.parse('c["input_basis"].update(selection_basis(is_free=False, has_position=bool(has_p), selection_type="today"))').body[0]
+        matches = [n for n in node.body if ast.dump(n) == ast.dump(statement)]
+        assert len(matches) == 1
+        node.body.remove(matches[0])
+        return node
     def functions(source, current=False):
-        return {n.name: ast.dump(before_price_basis_identity(n) if current and n.name == '_compute_summary_item' else n)
+        return {n.name: ast.dump(before_price_basis_identity(before_selection(n)) if current and n.name == '_compute_summary_item' else n)
                 for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
     old, extracted, now = functions(original_source), functions(approved), functions(current, current=True)
@@ -127,6 +134,20 @@ def test_entire_today_worker_row_matches_original(app_module, monkeypatch, origi
     expected = old(*args, _price_df=frame, _long_price_df=long)
     actual = app._compute_summary_item(*args, _price_df=frame, _long_price_df=long)
     assert actual['f_score'] is not None
-    assert stable(actual) == stable(expected)
+    metadata = selection_basis(is_free=False, has_position=bool(kwargs['has_pos']), selection_type='today')
+    seen = []
+    def without_selection(value):
+        if isinstance(value, dict):
+            added = set(value) & set(metadata)
+            if added:
+                assert added == set(metadata)
+                assert {key:value[key] for key in added} == metadata
+                seen.append(True)
+            return {key:without_selection(item) for key,item in value.items() if key not in metadata}
+        if isinstance(value, list):
+            return [without_selection(item) for item in value]
+        return value
+    assert stable(without_selection(actual)) == stable(expected)
+    assert seen
     for source, saved in zip((frame, long), originals):
         pd.testing.assert_frame_equal(source, saved, check_exact=True)

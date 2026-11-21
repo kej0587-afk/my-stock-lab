@@ -113,6 +113,23 @@ def holding_choice_rows(detail, management=None):
     ])
 
 
+def price_comparison_rows(detail):
+    """Compare the two saved observations without repricing or merging them."""
+    signal = detail.get("signal") or {}
+    precision = detail.get("precision") or {}
+    workflow = precision.get("workflow") or {}
+    rows = []
+    for label, row in ((text(signal.get("연결출처"), "저장 점검"), signal), ("정밀관측소", workflow)):
+        rows.append({
+            "출처": label,
+            "선택가격 / 원자료일": f"{text(row.get('현재가'))} / {text(row.get('가격자료기준일'))}",
+            "시세 관측": f"{text(row.get('현재가관측시각'))} · {text(row.get('현재가세션'))}",
+            "판정 경로": f"{text(row.get('분석경로'))} · {text(row.get('보유확인'))}",
+            "가격입력ID": text(row.get("가격입력ID")),
+        })
+    return pd.DataFrame(rows)
+
+
 def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None, refresh_evidence=None, render_constituents=None):
     signals = select_portfolio_signals(st.session_state, context, detailed=True)
     overview, details = build_holding_review(holdings, signals, st.session_state.get(PRECISION_KEY), context)
@@ -138,6 +155,8 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None, m
         calculated_at=signal.get("저장시각"),
     ))
     st.caption(f"{text(signal.get('연결출처'))} 저장: {display_time(signal.get('저장시각'))} · 정밀 계산: {display_time(precision.get('captured_at'))}. 저장시각은 시세 제공시각이 아닙니다.")
+    if signal or precision:
+        st.dataframe(price_comparison_rows(detail), hide_index=True, width="stretch")
     st.warning("현재 시세로 재검증한 통합 매매판정이 아닙니다. 계산시각·가격 기준이 다르거나 미확인이면 오늘점검과 정밀관측소를 다시 확인하세요.")
     action = {}
     if isinstance(management, pd.DataFrame) and "티커" in management:

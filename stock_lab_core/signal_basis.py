@@ -16,6 +16,16 @@ _SESSION_LABELS = {"regular": "정규장", "pre": "프리마켓", "post": "애�
                    "overnight": "오버나이트", "day": "공급사 day 시세 · 정규장 여부 미확인"}
 
 
+def selection_basis(*, is_free, has_position, selection_type):
+    """Record the actual call mode separately from price identity and ownership."""
+    return {
+        "자유입력여부": is_free if isinstance(is_free, bool) else None,
+        "분석경로": "자유입력" if is_free is True else "계좌기준" if is_free is False else "미확인",
+        "보유확인": "보유" if has_position is True else "미보유" if has_position is False else "미확인",
+        "선택유형": selection_type if selection_type in {"today", "free", "watchlist", "preset"} else "unknown",
+    }
+
+
 def source_bar_observation(frame, provenance, ticker):
     """Audit daily rows against the *selected* quote, never discard/reclassify them."""
     date = source_date(frame)
@@ -171,6 +181,9 @@ def render_signal_basis(st, basis):
                      "가격 기준": basis.get("등락봉시간상태", "완료 여부 미확인")})
         rows.append({"항목": "최신가 비교가 표시될 때", "기준일/봉 날짜": basis.get("가격자료기준일", "미확인"),
                      "가격 기준": basis.get("최신가비교기준", "비교기준 미확인")})
+    if basis.get("분석경로"):
+        rows.append({"항목": "판정 선택 경로", "기준일/봉 날짜": basis["분석경로"],
+                     "가격 기준": f"{basis.get('보유확인', '미확인')} · 자유입력도 실제 보유 종목일 수 있음"})
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption(f"계산 {basis['계산시각']} · 시세 제공시각과 별도")
     if basis.get("가격입력ID"):

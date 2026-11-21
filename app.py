@@ -67,7 +67,7 @@ if not all(hasattr(_precision_selection, name) for name in ("remember_precision_
     from importlib import reload as _reload_precision_selection
     _reload_precision_selection(_precision_selection)
 from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection, apply_precision_quick_target
-from stock_lab_core.signal_basis import build_signal_basis, quote_display_label, render_signal_basis
+from stock_lab_core.signal_basis import build_signal_basis, quote_display_label, render_signal_basis, selection_basis
 from stock_lab_core.precision_chart_view import (
     build_price_figure, finish_price_figure, frame_last_date, render_chart_basis,
 )
@@ -20988,6 +20988,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
     sector_rs_state = classify_sector_rs_state(sector_rs_label, is_etf=is_etf)
     c["input_basis"] = {**build_signal_basis(df, live_context, ticker=tkr, input_price=_live_p), **financial_basis(financial_meta, is_etf=is_etf)}
+    c["input_basis"].update(selection_basis(is_free=False, has_position=bool(has_p), selection_type="today"))
     c["flow_context"] = source_flow_context
     workflow = build_decision_workflow(
         name, tkr, c, is_etf=is_etf, has_pos=has_p,
@@ -34628,6 +34629,8 @@ if main_page == "precision":
         chart_df, _precision_live_ohlcv_applied, _precision_live_issue = precision_live_context
         precision_signal_basis = build_signal_basis(df, precision_live_context, ticker=tkr,
                                                      input_price=display_cur_p, manual=manual_cur_p > 0)
+        precision_signal_basis.update(selection_basis(
+            is_free=is_free, has_position=bool(has_p), selection_type=selected_option.get("type")))
         precision_has_pos = has_p
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, is_free,

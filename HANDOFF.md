@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+In progress after `bf7b385b`: [cross-view price/mode audit](docs/maintenance/20261121_cross_view_price_mode.md).
+Six representative US closes/afterhours observations and one KR ETF checked against
+actual providers; pre-change production Today 95 rows completed in 98.2s.
+Mode evidence and portfolio comparison table implemented; 98 focused tests and
+final selected decision 1,638 tests pass (`decision_iksxjci1`). Prices unchanged,
+646 price tests pass. Push/owner reboot and production comparison remain before
+closing this task. Preserve snapshots and finish that verification first.
+
+### Previous completed task
+
 Current bounded work: [cross-view evidence and SOXL close repair](docs/maintenance/20261121_cross_view_soxl_close.md).
 Started clean at `c895a19b`. The user reported SOXL 42.34 versus regular close 30.88
 during the cross-view audit; the explicit price bug took priority over the former
