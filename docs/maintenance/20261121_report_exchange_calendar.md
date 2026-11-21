@@ -70,9 +70,28 @@ KRX 공식 예외를 재사용하며 신규 시세 요청이나 별도 투자 �
 
 ## 배포 기록
 
-로컬 수정/검증 단계. 최종 gate 후 커밋·푸시 및 운영 모듈 적용을 확인한다.
-실제 특수장/미국 단축장을 현재 운영 시각으로 재현했다고 주장하지 않는다.
-경계 조건은 위 고정 시각 계약으로, 운영에서는 신규 모듈 로드와 정상 리포트 경로를 확인한다.
+코드 커밋 **`8c0caab5`**을 main에 푸시했다. Cloud 관리 화면의 첫 Reboot 요청은
+Internal server error였으며, 재시도 후 재기동 화면과 앱 복귀를 확인했다.
+재시작 후 오늘점검의 자동 뉴스픽을 실행해 2026-11-21 09:08 KST 보고서를 생성했다.
+
+- 측정ID `38e7cbbeb5fb4abfa8a4a20bcf00b274`, **55.337초**, completed,
+  normal 경로, degraded_reasons 없음. 캐시 초기 상태 미확인; 속도 개선 주장 아님.
+- 진단 build.base_commit=`8c0caab54b27261168e20d5c208c15d7bbbc7c8d`.
+  `restart_required=false`, `stale_modules=[]`.
+- report_exchange_clock / report_session / report_evidence / market_board 각각의
+  실행 중 SHA256과 배포 디스크 SHA256이 일치한다.
+- 다운로드한 Markdown SHA256이 해당 진단의 output_sha256과 정확히 같다.
+- 한국: **2026-11-20 정규장 종가 / 휴장일 / XKRX**.
+  미국: **2026-11-20 정규장 종가 / 마감 후·애프터마켓 / XNYS**.
+- 주말/미국 시간외 화면과 종가·별도 세션 표시를 직접 확인했다. 특수장·미국
+  단축장 경계는 현재 운영 시각이 아니므로 고정 시각 테스트로 검증한 것이다.
+- 재시작 후 종목 전체 계산은 다시 돌리지 않았다. 계좌/판정 미연결 경고가
+  구체적으로 표시되며, 이번 리포트로 계좌 전체 판정 보존을 주장하지 않는다.
+  판정 보존 근거는 선택 회귀 및 이전 운영 입력의 오프라인 재현이다.
+
+개인 보고서·진단·화면은 ignored `cache/operating_20261121/`에 보존했다:
+`stock_lab_market_report (41).md`, `auto_report_38e7cbbeb5fb4abfa8a4a20bcf00b274.json`,
+`calendar_report_operating.jpg`. Downloads 원본도 유지한다. Git에는 넣지 않는다.
 
 ## 다음 한 건
 

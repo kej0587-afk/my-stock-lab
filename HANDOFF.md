@@ -59,7 +59,7 @@ existing verified calendar data; US holidays/early closes use the same schedule.
   `cache/refactor_checks/all_swbjv6ii`. After preserving non-equity caller boundaries,
   final selected-report gate: **208 passed**, 47.276s,
   `cache/refactor_checks/report_9lrrgl58`; final saved JSON remains exactly equal.
-  Deployment/owner reboot verification is pending below.
+  Code `8c0caab5` pushed; owner reboot and new operating report verified below.
 - Mixed futures/FX/macro daily and observation windows retain the old filters and
   existing macro expected-date guard. They are not certified by the equity calendar.
 - Decision functions, partial-bar scoring policy, thresholds and decision labels
@@ -76,27 +76,30 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
-[Selected-quote observation record](docs/maintenance/20261121_naver_quote_observation.md):
-production source `eb0af4a2`, documentation `f915d5ee`, owner Cloud reboot completed.
+[Report calendar deployment](docs/maintenance/20261121_report_exchange_calendar.md):
+code **`8c0caab5`**, owner Reboot completed after one Cloud internal-error retry.
 
-- Existing Naver basic evidence retains its own aware time/session; polling records
-  source identity with unknown per-item time. Existing batch reuse preserves the carrier.
-- Previous final selected-all gate: **2,466 passed**, zero failures/errors/skips,
-  234.228s, `cache/refactor_checks/all_t0oang_2`. Not rerun for documentation/probe work.
-- Operating Today: 95 rows, **106.065s**, completed measurement
-  `c4cd1b65cb224e08ae4aefaee052ed76`; no stale tracked report modules.
-- 45 domestic rows used untimed polling; 50 Yahoo rows retained chart timestamps.
-  These 45 missing provider timestamps are not pending transport fixes.
-- 379810 precision before/after: price 23,180, input ID `bf23c77900eefde6`, financial
-  and technical scores, grade, decision code and gate matched. No global live guarantee.
-- This was a normal refresh with potentially warm caches, not a fully cold run or
-  proof of speed improvement. No new production calculation in the comparison task.
+- Auto report generated at 2026-11-21 09:08 KST: **55.337s**, completed/normal,
+  measurement `38e7cbbeb5fb4abfa8a4a20bcf00b274`, no degraded reasons.
+- Diagnostic base commit matches; restart_required=false, stale_modules=[].
+  New clock, session, report evidence and market board loaded/disk hashes match.
+- Downloaded Markdown SHA256 matches the diagnostic output SHA256.
+- KR holiday, last confirmed close Nov20; US regular closed/afterhours, last
+  confirmed close Nov20. Both calendar sources displayed (XKRX/XNYS).
+- Full Today calculation was not rerun after reboot; this report explicitly states
+  account/decision inputs are absent. No claim of a new account/grade comparison.
+- Special/short-session boundaries are fixed-clock tests, not live time simulation.
+  Caches were not cleared; 55.337s is an observation, not a speedup claim.
 
-Private evidence: `cache/operating_20261121/`; Downloads
-`stock_lab_review_export_20261121_0107.zip`, `precision_review_379810.KS (3).zip` /
-`(4).zip`, `today_queue_c4cd1b65cb224e08ae4aefaee052ed76.json`.
-The GOOGL precision `(34).zip` captured a regular-session partial daily bar,
-input `e4f3a675caffbd4d`. Inspect availability before assuming a fixed replay exists.
+Ignored evidence: `cache/operating_20261121/stock_lab_market_report (41).md`,
+`auto_report_38e7cbbeb5fb4abfa8a4a20bcf00b274.json`, `calendar_report_operating.jpg`,
+`partial_bar_calendar_final.json`. Downloads originals remain intact.
+
+Previous live full Today: 95 rows/106.065s, source `eb0af4a2`, measurement
+`c4cd1b65cb224e08ae4aefaee052ed76`; see the Naver observation record, not this report run.
+Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
+`precision_review_GOOGL (34).zip`. Their price input IDs and limits are in the
+partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
