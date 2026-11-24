@@ -217,6 +217,30 @@ def _observatory_status_lines(rendered, *, country):
     return lines
 
 
+def _kr_flow_table_lines(flow):
+    """Copy flow tables; history keeps its completed-day period and sign meaning."""
+    lines = []
+    flow_dates = []
+    for header, rows in tables("\n".join(flow)):
+        history = any("연속" in cell for cell in header)
+        # Npay backfill ("누적") excludes today's session; the stored-snapshot
+        # history ("합계") may include the base day's intraday values.
+        completed = history and any("누적" in cell for cell in header)
+        lines += _table([header[0] + (" · 억원(완료 거래일)" if completed else " · 억원(잠정)"), *header[1:]], rows)
+        if not history:
+            flow_dates += [row[-1] for row in rows if row]
+            continue
+        # The source note is dropped in this copy; keep the period and sign meaning beside the table.
+        asof = sorted({row[-1] for row in rows if row})
+        note = (f"이력 표는 기준일({' / '.join(asof)}) 마감까지의 완료 거래일 기준입니다." if completed else
+                f"이력 표는 기준일({' / '.join(asof)})까지이며 기준일 장중 수치가 포함될 수 있습니다.")
+        later = sorted({day for day in flow_dates if asof and day > asof[-1]})
+        if later:
+            note += f" 위 {' / '.join(later)} 잠정 수급은 포함하지 않습니다."
+        lines += [note + " 연속 일수는 마지막 거래일부터 같은 방향이 이어진 날수, 누적은 기간 합계라 부호가 서로 다를 수 있습니다.", ""]
+    return lines
+
+
 def compose_reading_report(report, *, context, news, summary_rows, now):
     """Quick summary -> market body -> appendix; one reading path, evidence once.
 
@@ -288,8 +312,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         if market == "KR":
             # The data tables retain market, source, provisional status and unit.
             flow = korean_flow_tables(context, fact)
-            for header, rows in tables("\n".join(flow)):
-                lines += _table([header[0] + " · 억원(잠정)", *header[1:]], rows)
+            lines += _kr_flow_table_lines(flow)
             lines += [line for line in flow if line.startswith(("출처:", "프로그램 자료 미연결:", "프로그램은", "KRX 시장 전체"))]
             lines += [""]
             for header, rows in tables(sections.get("시장 안전장치 발동 근거", "")):

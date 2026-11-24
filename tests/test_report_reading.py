@@ -279,3 +279,26 @@ def test_no_observatory_data_keeps_status_only():
     sections = dict(split_report_sections(render()))
     assert "옵션 위험" not in sections["매크로"]
     assert "브라질 ETF(EWZ) · 미연결" in sections["세계 시장과 국가 ETF"]
+
+
+def test_kr_flow_history_keeps_completed_period_and_excludes_today_provisional():
+    from stock_lab_core.report_reading import _kr_flow_table_lines
+    flow = ["시장 | 개인 | 외국인 | 기관 | 기준일", "--- | --- | --- | --- | ---",
+            "KOSPI | -11,311.28 | +6,851.39 | +2,765.50 | 2026-11-24", "",
+            "시장 | 투자자 | 연속 순매수·순매도 | 5거래일 누적 | 20거래일 누적 | 기준일",
+            "--- | --- | --- | --- | --- | ---",
+            "KOSPI | 외국인 | 순매도 7거래일 | -35,196.49 | -149,375.13 | 2026-11-23",
+            "KOSPI | 개인 | 순매도 1거래일 | +9,429.54 | +10,974.89 | 2026-11-23", ""]
+    out = "\n".join(_kr_flow_table_lines(flow))
+    assert "시장 · 억원(잠정) | 개인" in out and "시장 · 억원(완료 거래일) | 투자자" in out
+    assert "기준일(2026-11-23) 마감까지의 완료 거래일 기준" in out
+    assert "위 2026-11-24 잠정 수급은 포함하지 않습니다" in out
+    assert "KOSPI | 개인 | 순매도 1거래일 | +9,429.54 | +10,974.89 | 2026-11-23" in out
+
+
+def test_snapshot_flow_history_is_not_called_completed():
+    from stock_lab_core.report_reading import _kr_flow_table_lines
+    flow = ["시장 | 투자자 | 연속 순매수·순매도 | 5거래일 합계 | 20거래일 합계 | 기준일",
+            "--- | --- | --- | --- | --- | ---", "KOSPI | 외국인 | 순매수 2거래일 | +1.00 | +2.00 | 2026-11-24", ""]
+    out = "\n".join(_kr_flow_table_lines(flow))
+    assert "완료 거래일" not in out and "장중 수치가 포함될 수 있습니다" in out

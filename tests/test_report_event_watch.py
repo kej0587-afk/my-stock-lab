@@ -236,3 +236,13 @@ def test_upcoming_events_lead_and_past_dates_move_to_recent_results():
     assert upcoming < recent
     assert upcoming < output.index("APEC 정상회의") < recent  # Second day of the meeting: still ongoing.
     assert output.index("2026-11-17 현지", recent) > recent  # Past release sits under recent results.
+
+
+def test_listed_company_policy_headline_is_not_tracked_as_ipo():
+    c = context()
+    c['other_market_news'] = [dict(title=title, link=f'https://www.yna.co.kr/{i}', publisher='연합뉴스',
+        published_at='2026-11-15T12:00:00+09:00', market='KR') for i, title in enumerate(
+        ['증시 급락에…금융당국, 상장사 자사주 1일 취득한도 확대', '새회사 코스닥 상장 예정, 공모가 확정'])]
+    output = '\n'.join(event_watch_lines(c, [], [], NOW))
+    assert '자사주 1일 취득한도' not in output
+    assert '새회사 코스닥 상장 예정' in output
