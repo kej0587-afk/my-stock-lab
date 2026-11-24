@@ -221,3 +221,18 @@ def test_ongoing_watch_does_not_present_unconfirmed_prices_as_close(changes):
     c.update(sessions={"US": changes.get("date", "2026-11-13")},
              prices={"IGV": dict({"date": "2026-11-13", "return": .03}, **changes)})
     assert "IGV +3.00%" not in "\n".join(event_watch_lines(c, [], [], NOW))
+
+
+def test_upcoming_events_lead_and_past_dates_move_to_recent_results():
+    past = event(indicator="US_RETAIL_SALES", date="2026-11-17", release_at="2026-11-17", release_precision="date")
+    ongoing = event(indicator="APEC_LEADERS_MEETING", date="2026-11-18", end_date="2026-11-19",
+                    release_precision="date", release_at="2026-11-18", timezone="Asia/Shanghai")
+    ahead = event(indicator="US_CPI", date="2026-11-21", release_at="2026-11-21", release_precision="date")
+    c = context(past)
+    c["calendar_events"] = [past, ongoing, ahead]
+    now = datetime.fromisoformat("2026-11-19T12:00:00+09:00")
+    output = "\n".join(event_watch_lines(c, [], [], now))
+    upcoming, recent = output.index("**이번 주 남은 일정 · 7일 이내**"), output.index("**최근 지난 일정 · 결과 확인**")
+    assert upcoming < recent
+    assert upcoming < output.index("APEC 정상회의") < recent  # Second day of the meeting: still ongoing.
+    assert output.index("2026-11-17 현지", recent) > recent  # Past release sits under recent results.
