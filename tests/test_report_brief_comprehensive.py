@@ -157,3 +157,18 @@ def test_comprehensive_wrap_keeps_distinct_facts_and_unique_readings_checks(comp
     for value in ("Collected demand fact", "Collected credit fact", "Collected margin fact",
                   "Demand reading", "Credit reading", "Demand check", "Credit check", "Margin check"):
         assert rendered.count(value) == 1
+
+
+@pytest.mark.parametrize("mode", [{"comprehensive": True}, {"limit": None}])
+def test_two_article_ids_with_the_same_verified_body_sentence_show_once(mode):
+    fact = dict(topic="ai_credit", summary="AI 투자 관련 보도: AI 관련 기업들의 주가 거품 논란과 자금조달 부담이 여전하다.",
+                implication="Synthetic conditional reading", check="Synthetic source check")
+    first = article("NVIDIA chip supply agreement announced", link="https://www.reuters.com/same-1",
+                    body_status="verified", body_facts=[fact])
+    second = article("AI stocks swing as funding worries return", link="https://www.reuters.com/same-2",
+                     body_status="verified", body_facts=[dict(fact)])
+    other = article("CoreWeave debt refinancing announced", link="https://www.reuters.com/other",
+                    body_status="verified", body_facts=[dict(fact, summary="본문 보도: 다른 사실.")])
+    result = build_news_brief(CONTEXT, [first, second, other], [], NOW, **mode)
+    assert len({first["link"], second["link"]} & set(result["article_keys"])) == 1
+    assert other["link"] in result["article_keys"]

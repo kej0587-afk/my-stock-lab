@@ -151,13 +151,72 @@ def connection_checks(context, summary_rows, digest, reading, now):
         and (at := stamp(row.get("date"))) and at.date() >= now.astimezone(KST).date()
         for row in records(context.get("calendar_events")))
     checks.append(("한국은행 일정 표시", "통과" if has_bok else "미확인", "공식 일정 연결·결정 결과와 별도" if has_bok else "현재 표시 구간의 공식 일정 미확보"))
+    checks += content_checks(context, reading, now)
+    return checks
+
+
+def _section(reading, title):
+    match = re.search(rf"^## {re.escape(title)}\n(.*?)(?=^## |\Z)", reading, re.M | re.S)
+    return match.group(1) if match else ""
+
+
+def content_checks(context, reading, now):
+    """Deterministic content checks on what the report already shows (status #17).
+
+    They flag repeated stories, consensus/target-month mismatches and future
+    dates. They do not judge an article's claim or a forecast's quality.
+    """
+    checks = []
+    repeated, links = [], 0
+    for title in ("한국 시황", "미국 시황"):
+        # A link reused by a different table (e.g. sector evidence citing a news
+        # row) is citation reuse; the same story twice in one table is a repeat.
+        tables, current = [], []
+        for line in _section(reading, title).splitlines():
+            if " | " in line:
+                current.append(line)
+            elif current:
+                tables.append(current)
+                current = []
+        tables += [current] if current else []
+        for rows in tables:
+            seen_links, seen_text = {}, {}
+            for line in rows:
+                for link in set(re.findall(r"\]\((https?://[^)\s]+)\)", line)):
+                    seen_links[link] = seen_links.get(link, 0) + 1
+                cells = line.split(" | ")
+                body = re.sub(r"\[[^\]]*\]\([^)]*\)|\d{2}/\d{2} \d{2}:\d{2} KST", "", cells[1] if len(cells) > 1 else "").strip()
+                if len(body) >= 30:
+                    seen_text[body] = seen_text.get(body, 0) + 1
+            links += len(seen_links)
+            repeated += [f"{title} {link}" for link, count in seen_links.items() if count > 1]
+            repeated += [f"{title} 같은 문장 '{body[:30]}…'" for body, count in seen_text.items() if count > 1]
+    checks.append(("시황 본문 기사 중복", "실패" if repeated else "통과" if links else "미확인",
+                   ("같은 원문이 여러 행에 반복: " + " / ".join(repeated[:3])) if repeated else
+                   f"한국·미국 시황 표마다 같은 원문·같은 문장은 한 행(원문 링크 {links}건)" if links else "시황 본문 원문 링크 없음"))
+    attached = [row for row in records(context.get("economic_releases")) if row.get("forecast") is not None]
+    mismatched = [f"{text(row.get('indicator'))} {text(row.get('period'))}≠{text(row.get('forecast_period'))}"
+                  for row in attached if text(row.get("forecast_period")) and text(row.get("forecast_period")) != text(row.get("period"))]
+    unlabeled = [row for row in attached if not text(row.get("forecast_period"))]
+    checks.append(("컨센서스 대상월", "실패" if mismatched else "미확인" if unlabeled or not attached else "통과",
+                   ("관측월과 예상치 대상월 불일치: " + ", ".join(mismatched)) if mismatched else
+                   f"예상치 {len(attached)}건 중 대상월 표기 없는 {len(unlabeled)}건(공급 원자료 기준)" if unlabeled else
+                   f"예상치 {len(attached)}건 모두 같은 관측월에만 연결" if attached else "연결된 예상치 없음"))
+    today = now.astimezone(KST).date()
+    future = [f"{ticker} {obs.get('date')}" for key in ("observatory_daily", "local_indices")
+              for ticker, obs in (context.get(key) or {}).items()
+              if isinstance(obs, dict) and (at := stamp(obs.get("date"))) and at.date() > today]
+    shown = sum(1 for key in ("observatory_daily", "local_indices") for obs in (context.get(key) or {}).values() if obs)
+    checks.append(("관측실·현지 지수 기준일", "실패" if future else "통과" if shown else "미확인",
+                   ("생성일보다 뒤 기준일: " + ", ".join(future)) if future else
+                   f"표시 {shown}개 모두 생성일 이후 날짜 없음(완료 일봉)" if shown else "표시할 관측값 없음"))
     return checks
 
 
 def check_lines(checks):
     counts = {state: sum(row[1] == state for row in checks) for state in ("통과", "실패", "미확인")}
-    summary = "자동점검(연결·구조): " + " · ".join(f"{state} {count}" for state, count in counts.items()) + " — 항목별 근거는 상세 근거에 표시."
-    detail = ["### 자동점검 항목", "연결·기준일 점검이며 기사 주장·투자 판단의 정확도 보증은 아닙니다.", "",
+    summary = "자동점검(연결·구조·내용 일부): " + " · ".join(f"{state} {count}" for state, count in counts.items()) + " — 항목별 근거는 상세 근거에 표시."
+    detail = ["### 자동점검 항목", "연결·기준일과 중복·대상월 같은 기계적 내용 점검이며 기사 주장·투자 판단의 정확도 보증은 아닙니다.", "",
               "항목 | 상태 | 확인 범위", "--- | --- | ---"]
     detail += [" | ".join(_cell(x) for x in row) for row in checks]
     return summary, detail + [""]
