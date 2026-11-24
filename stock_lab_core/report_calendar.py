@@ -91,7 +91,7 @@ def _result_detail_lines(row):
         if isinstance(kind, dict) and kind.get("measures"):
             missing = [name for name in ("영업이익", "순이익", "EPS") if name not in kind["measures"]]
             detail = (f"문장에 있는 항목: {'·'.join(kind['measures'])} ({kind.get('basis', '기준 미표기')})"
-                      + (f" · {'·'.join(missing)}는 이 문장에 없음" if missing else "") + " · " + detail)
+                      + (f" · 이 문장에 없음: {'·'.join(missing)}" if missing else "") + " · " + detail)
         if metric.get("period_scope") == "trailing_twelve_months":
             detail = "최근 12개월 누적(TTM), 분기값 아님 · " + detail
         if metric.get("status") == "missing" and metric.get("reason") == "not_reported_in_supported_pdf":

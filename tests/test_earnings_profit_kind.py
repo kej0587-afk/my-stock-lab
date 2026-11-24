@@ -20,11 +20,13 @@ def test_operating_income_sentence_is_not_presented_as_eps():
     assert metric["profit_kind"] == {"measures": ["영업이익"], "basis": "GAAP"}
     row = {"event": "PANW earnings", "fiscal_period": "FY2027Q1", "result_metrics": {"profit": metric}}
     line = next(l for l in _result_detail_lines(row) if l.startswith("이익·EPS"))
-    assert "문장에 있는 항목: 영업이익 (GAAP) · 순이익·EPS는 이 문장에 없음" in line
+    assert "문장에 있는 항목: 영업이익 (GAAP) · 이 문장에 없음: 순이익·EPS" in line
     assert "$96 million" in line.replace("\\$", "$")  # Source sentence still shown unchanged.
 
 
 def test_basis_labels():
-    assert profit_kind("Non-GAAP net income was $1 billion")["basis"] == "조정(non-GAAP)"
+    assert profit_kind("Non-GAAP net income was $1 billion")["basis"] == "조정(non-GAAP) 포함"
+    intel = "EPS attributable to Intel was $0.60; non-GAAP EPS attributable to Intel was $0.52."
+    assert profit_kind(intel)["basis"] == "조정(non-GAAP) 포함"
     assert profit_kind("Net income was $1 billion")["basis"] == "기준 미표기"
     assert profit_kind("Revenue was $1 billion")["measures"] == []
