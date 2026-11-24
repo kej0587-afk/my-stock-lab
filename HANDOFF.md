@@ -490,10 +490,11 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check #15 in production, then consensus month matching (status #13).**
+**Consensus month matching (status #13), after confirming the broker-quote fix in production.**
 
-After merge/reboot, confirm in one report that no story appears twice in 한국/미국 시황 as
-"(종합)" and plain versions, and that analyst-quote headlines are not filed under 금융. Then #13:
+#15 was checked in production at 2026-11-24 14:18 KST: no duplicate "(종합)"/plain stories. One broker sector
+call (키움증권 "이차전지…") was still under 금융; fixed in the follow-up PR (see
+`docs/maintenance/20261124_news_dedup_classification.md`). Next, #13:
 consensus values must attach only to the same indicator, period (target month) and release date
 (see 경제지표 "컨센서스 연결" notes); never carry a survey to another month.
 
