@@ -274,6 +274,11 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
+PR #7 (`96d45dc1`), report 2026-11-24 14:06 KST after Claude reboot: 물가·고용·소비·경기 shows
+"최근 3거래일 안 새 발표 없음 · 마지막으로 확인된 발표" with 한국 수출 (11-16), PPI MoM/YoY (11-13),
+CPI (11-10), newest first, cells unchanged. 다음 일정 order: 이번 주 남은 일정 (BOK MPC 11-26) →
+이후 확정 일정 (Employment 12/04, FOMC 12/10 KST, CPI, PPI …) → 최근 지난 일정 (NVDA 11-17 … ).
+
 PR #6 (`af2a994a`, observatory values), report 2026-11-24 13:56 KST after Claude reboot: EWZ 29.24,
 INDA 52.14, VNM 16.71, EWJ 86.90 USD; SKEW 140.37, VVIX 117.36, OVX 49.19 pt; all dated
 2026-11-20 → 2026-11-23, Yahoo Finance daily. 관측실 status marks exactly these 7 (plus existing
@@ -477,11 +482,9 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check the release fallback and schedule split in production, then news dedup/classification (#15).**
+**News dedup/classification (status #15).**
 
-After merge/reboot, in one report confirm 물가·고용·소비·경기 shows "최근 3거래일 안 새 발표 없음 ·
-마지막으로 확인된 발표" rows (or recent rows when the window has any), and 다음 일정 lists 이번 주
-남은 일정 before 최근 지난 일정. Then #15 (report 61): duplicate Yonhap sentences and mis-filed
+Report 61: duplicate Yonhap sentences and mis-filed
 news (e.g. JP모건 AI 전망 under 금융); fix grouping/dedup only, never article facts.
 
 ## Verification Discipline
