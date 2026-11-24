@@ -71,7 +71,7 @@ _HOSTS = {"www.sec.gov", "news.microsoft.com", "news.samsung.com", "news.skhynix
           "s206.q4cdn.com", "images.samsung.com", "ir.aboutamazon.com", "www.intc.com", "www.sandisk.com"}
 _METRICS = {
     "revenue": r"\b(?:revenues?|sales)\b",
-    "profit": r"\b(?:operating (?:income|profit)|net (?:income|profit)|earnings per share|EPS)\b",
+    "profit": r"\b(?:operating (?:income|profit)|net (?:income|profit)|(?:diluted )?earnings per (?:diluted )?share|EPS)\b",
     "capex": r"\b(?:capital expenditures?|capex|purchases of property and equipment)\b",
     "free_cash_flow": r"\bfree cash flow\b",
     "guidance": r"\bguidance\b|\boutlook\b",
@@ -272,6 +272,20 @@ def _outside_current_quarter(block, spec):
     return any((y, q) != (year, quarter) for y, q in periods)
 
 
+_PROFIT_KINDS = (("EPS", r"\bearnings per (?:diluted |basic )?share\b|\b(?:diluted |basic )?EPS\b|\bdiluted earnings per share\b"),
+                 ("순이익", r"\bnet (?:income|profit|loss)\b"),
+                 ("영업이익", r"\boperating (?:income|profit|loss)\b"))
+
+
+def profit_kind(sentence):
+    """Name which profit measure a quoted sentence actually states, and its basis."""
+    kinds = [name for name, pattern in _PROFIT_KINDS if re.search(pattern, sentence, re.I)]
+    gaap = bool(re.search(r"(?<!non-)\bGAAP\b", sentence, re.I))
+    adjusted = bool(re.search(r"\bnon-GAAP\b|\badjusted\b", sentence, re.I))
+    basis = "GAAP·조정" if gaap and adjusted else "GAAP" if gaap else "조정(non-GAAP)" if adjusted else "기준 미표기"
+    return {"measures": kinds, "basis": basis}
+
+
 def _prose_metrics(blocks, spec):
     metrics = {key: _metric("", "missing", spec, reason="not_in_supported_source_text") for key in _METRICS}
     for key, pattern in _METRICS.items():
@@ -292,7 +306,8 @@ def _prose_metrics(blocks, spec):
             if re.search(r"\b(?:define|defined|definition)\b", block, re.I) or (not ttm and _outside_current_quarter(current_clause, spec)):
                 continue
             scope = "trailing_twelve_months" if ttm else spec["fiscal_period"]
-            metrics[key] = _metric(block, "reported", spec, period_scope=scope, extraction="source_sentence")
+            extra = {"profit_kind": profit_kind(current_clause)} if key == "profit" else {}
+            metrics[key] = _metric(block, "reported", spec, period_scope=scope, extraction="source_sentence", **extra)
             break
     deferred = next((b for b in blocks if re.search(r"will (?:provide|discuss).{0,80}(?:guidance|outlook)", b, re.I)
                      and re.search(r"conference call|webcast", b, re.I)), None)
