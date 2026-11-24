@@ -491,6 +491,7 @@ partial-bar audit. Keep these private files out of Git.
 ## Next Task Only
 
 **#5 follow-up: corrected 15:55 KST. The 15:47 report had 8 time-budget withholds (KR 0 / US 8), not 38; the 12 KR issuers withheld at 15:31 all show reported revenue/profit. Diagnostics: dart_accounts 15 hits / 13 misses, DART 54 requests, discovery 23.43s. The remaining US 8 are bounded by the SEC 0.2s fair-access spacing (117 requests in 24s). Next: confirm KR stays at 0 in one more normal report; reducing US withholds would need a cache-policy decision from the user (do not change budget/spacing).**
+**#5 cold-start cause (16:07 KST report, first after reboot):** the DART corporate-code ZIP took 32.8s and ran before any issuer, so all 74 issuers (US too) were withheld. Fix: the DART directory setup now runs beside the US pool; only KR issuers wait for it (no budget/timeout/retry change). Pending: a production check after reboot; ask the user whether to use the stored official snapshot first on cold start (a policy change).
 
 #5 review (order is held-first; 24s shared budget; 2–4 cold DART calls per KR issuer; 10-min caches go cold between reports): `docs/maintenance/20261124_dart_budget_review.md`.
 Other open decisions for the user (do not change without approval):
