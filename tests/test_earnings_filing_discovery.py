@@ -325,3 +325,38 @@ def test_cached_dart_identity_cannot_outlive_snapshot_validity():
     assert collected["events"] == [] and not collected["sources"][0]["attempted"]
     assert collected["sources"][0]["reason"] == "dart_corporate_mapping_snapshot_expired"
     get.assert_not_called()
+
+
+def test_slow_dart_directory_does_not_hold_back_sec_issuers(monkeypatch):
+    """A cold DART directory download runs beside the US pool, not ahead of it."""
+    import threading
+    from stock_lab_core import dart_corporate_codes
+    sources.clear_cache()
+    release_dart = threading.Event()
+    us_started = threading.Event()
+
+    def slow_directory(*args, **kwargs):
+        # Finishes only after a US issuer has started its own requests.
+        assert us_started.wait(5), "US issuer was blocked behind the DART directory"
+        release_dart.set()
+        return dart_corporate_codes.CorporateCodeMap(diagnostic={"cause": "read_timeout"})
+
+    monkeypatch.setattr(dart_corporate_codes, "fetch_corporate_codes", slow_directory)
+    monkeypatch.setattr("stock_lab_core.dart_corporate_snapshot.use_corporate_snapshot", lambda data, now: data)
+
+    def get(url, **kwargs):
+        if url.endswith("company_tickers.json"):
+            return Response({"0": {"ticker": "CYBR", "cik_str": 1234}})
+        if "data.sec.gov/submissions" in url:
+            # An issuer worker, not setup: the old order ran DART setup first.
+            us_started.set()
+            missing = Response(b"{}")
+            missing.status_code = 404
+            return missing
+        raise AssertionError("no DART issuer request without a directory")
+
+    collected = sources.collect_filing_earnings(["CYBR", "123456.KS"], NOW, sec_user_agent="ua", dart_api_key="key", get=get)
+    reasons = {row["ticker"]: row["reason"] for row in collected["sources"]}
+    assert release_dart.is_set()
+    assert reasons["123456.KS"] == "dart_corporate_mapping_read_timeout"
+    assert reasons["CYBR"] == "http_404"

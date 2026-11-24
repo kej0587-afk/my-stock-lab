@@ -197,19 +197,14 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
     probe = FilingProbe(get)
     get = probe.request
     symbols = list(dict.fromkeys(tickers))
-    directory, codes, setup_errors, mapping = {}, {}, {}, {}
+    directory, setup_errors = {}, {}
     auth = hashlib.sha256((user_agent + "\0" + dart_key).encode()).hexdigest()
-    if any(not t.endswith((".KS", ".KQ")) for t in symbols):
-        if user_agent:
-            try:
-                with measure("external_data", "earnings_discovery.setup_sec"):
-                    directory, _ = _cached(("sec_directory", auth), now, lambda: _json(
-                        "https://www.sec.gov/files/company_tickers.json", user_agent=user_agent, deadline=deadline, get=get), ttl=86400)
-            except ValueError as error:
-                setup_errors["US"] = str(error)
-        else:
-            setup_errors["US"] = "sec_user_agent_missing"
-    if any(t.endswith((".KS", ".KQ")) for t in symbols):
+    # The DART corporate directory is a multi-MB ZIP; a slow cold download must not
+    # hold back SEC issuers. It runs beside the US pool; KR issuers wait for it.
+    # Budget, timeouts, retry and snapshot rules are unchanged.
+    kr_setup = {"codes": {}, "mapping": {}, "error": None}
+
+    def setup_kr():
         if dart_key:
             try:
                 def code_map():
@@ -232,21 +227,39 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
                         ("mapping_source", "snapshot_origin", "snapshot_asof", "snapshot_valid_until")
                         if key in data.diagnostic}}
                 with measure("external_data", "earnings_discovery.setup_dart"):
-                    (codes, mapping), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
-                if mapping.get("snapshot_valid_until") and now > datetime.fromisoformat(mapping["snapshot_valid_until"]):
+                    (kr_setup["codes"], kr_setup["mapping"]), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
+                if kr_setup["mapping"].get("snapshot_valid_until") and now > datetime.fromisoformat(kr_setup["mapping"]["snapshot_valid_until"]):
                     raise ValueError("dart_corporate_mapping_snapshot_expired")
             except ValueError as error:
-                setup_errors["KR"] = str(error)
+                kr_setup["error"] = str(error)
         else:
-            setup_errors["KR"] = "dart_api_key_missing"
+            kr_setup["error"] = "dart_api_key_missing"
 
+    kr_pool_setup = ThreadPoolExecutor(max_workers=1)
+    kr_ready = submit_with_context(kr_pool_setup, setup_kr) if any(t.endswith((".KS", ".KQ")) for t in symbols) else None
+
+    if any(not t.endswith((".KS", ".KQ")) for t in symbols):
+        if user_agent:
+            try:
+                with measure("external_data", "earnings_discovery.setup_sec"):
+                    directory, _ = _cached(("sec_directory", auth), now, lambda: _json(
+                        "https://www.sec.gov/files/company_tickers.json", user_agent=user_agent, deadline=deadline, get=get), ttl=86400)
+            except ValueError as error:
+                setup_errors["US"] = str(error)
+        else:
+            setup_errors["US"] = "sec_user_agent_missing"
     def collect(ticker):
         market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
         diagnostic = dict(ticker=ticker, provider="official_filing_discovery", checked_at=now.isoformat(),
                           status="unavailable", attempted=False, from_cache=False)
-        if market == "KR":
-            diagnostic.update(mapping)
         try:
+            codes, mapping = {}, {}
+            if market == "KR":
+                kr_ready.result()
+                codes, mapping = kr_setup["codes"], kr_setup["mapping"]
+                diagnostic.update(mapping)
+                if kr_setup["error"]:
+                    raise ValueError(kr_setup["error"])
             if market in setup_errors:
                 raise ValueError(setup_errors[market])
             def fetch():
@@ -294,6 +307,7 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
             with measure("external_data", "earnings_discovery.worker_join"):
                 collected = [future.result() for future in futures]
     finally:
+        kr_pool_setup.shutdown(wait=True)
         probe.finish()
     return dict(events=[pair[0] for pair, _ in collected if pair[0]],
                 results=[pair[1] for pair, _ in collected if pair[1]],
