@@ -18,6 +18,14 @@ OBSERVATORY_DAILY = {"EWZ": ("브라질 ETF", "USD"), "INDA": ("인도 ETF", "US
                      "VNM": ("베트남 ETF", "USD"), "EWJ": ("일본 ETF", "USD"),
                      "^SKEW": ("SKEW", "pt"), "^VVIX": ("VVIX", "pt"), "^OVX": ("OVX", "pt")}
 COUNTRY_ETFS = ("EWZ", "INDA", "VNM", "EWJ")
+# Local benchmark indices beside the country ETFs (status #12). Local currency,
+# local exchange calendar; a bar counts only after that exchange's close + 30 min.
+# Report-only: never added to rotation, scores or trading inputs. VN-Index is not
+# connected: the Yahoo daily series checked on 2026-11-24 returned a single bar.
+LOCAL_INDICES = {"^N225": ("닛케이225", "JPY", "Asia/Tokyo", (15, 30), "EWJ"),
+                 "^NSEI": ("니프티50", "INR", "Asia/Kolkata", (15, 30), "INDA"),
+                 "^BVSP": ("보베스파", "BRL", "America/Sao_Paulo", (18, 0), "EWZ")}
+LOCAL_INDEX_MISSING = {"VNM": "베트남 VN-Index · 미연결(공급 일봉 불안정, 추정하지 않음)"}
 
 
 def observatory_daily_observations(frames, now):
@@ -36,6 +44,57 @@ def observatory_daily_observations(frames, now):
                           "return": current / previous - 1 if previous else None,
                           "source": frame.attrs.get("source") or "Yahoo Finance daily"}
     return result
+
+
+def _local_closed(frame, zone, close, now):
+    """Completed local sessions only: earlier dates, or today after close + 30 minutes."""
+    import math
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    import pandas as pd
+    if not isinstance(frame, pd.DataFrame) or "Close" not in frame or not isinstance(frame.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+    local = now.astimezone(ZoneInfo(zone))
+    closed_at = local.replace(hour=close[0], minute=close[1], second=0, microsecond=0) + timedelta(minutes=30)
+    dates = frame.index.tz_localize(None).date
+    mask = (dates < local.date()) | ((dates == local.date()) & (local >= closed_at))
+    out = frame.loc[mask].sort_index()
+    out = out.loc[~out.index.duplicated(keep="last")]
+    values = pd.to_numeric(out["Close"], errors="coerce")
+    return out.loc[values.gt(0) & values.map(lambda v: isinstance(v, float) and math.isfinite(v))]
+
+
+def local_index_observations(frames, now):
+    """Last two completed local closes per index; missing stays empty, never filled."""
+    result = {}
+    for ticker, (_, _, zone, close, _) in LOCAL_INDICES.items():
+        frame = _local_closed((frames or {}).get(ticker), zone, close, now)
+        if frame.empty:
+            result[ticker] = {}
+            continue
+        current = float(frame["Close"].iloc[-1])
+        previous = float(frame["Close"].iloc[-2]) if len(frame) > 1 else None
+        result[ticker] = {"price": current, "date": str(frame.index[-1].date()), "previous_price": previous,
+                          "previous_date": str(frame.index[-2].date()) if previous is not None else "",
+                          "return": current / previous - 1 if previous else None,
+                          "source": frame.attrs.get("source") or "Yahoo Finance daily"}
+    return result
+
+
+def local_index_table_lines(context):
+    """Local index rows in local currency; absent items stay 미연결."""
+    observed = context.get("local_indices") or {}
+    rows = []
+    for ticker, (name, unit, _, _, etf) in LOCAL_INDICES.items():
+        obs = observed.get(ticker) or {}
+        value = number(obs.get("price"))
+        dates = f"{obs.get('previous_date') or '미연결'} → {obs.get('date') or '미연결'}" if obs else "미연결"
+        rows.append(" | ".join(_cell(x) for x in (
+            f"{name}({ticker}) · {etf} 비교", f"{value:,.2f} {unit}" if value is not None else "미연결",
+            _pct(obs.get("return")) + (" · 현지 마감 일봉 · 이전 관측 대비" if obs else ""), dates,
+            obs.get("source") or "미연결")))
+    rows.extend(f"{label} | 미연결 | - | - | -" for label in LOCAL_INDEX_MISSING.values())
+    return ["현지 지수 | 수준(현지 통화) | 등락·비교 기준 | 현지 기준일 | 출처", "--- | --- | --- | --- | ---", *rows, ""]
 
 
 def observatory_table_lines(context, tickers):
