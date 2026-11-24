@@ -25,7 +25,8 @@ def prepare_rebalance_holdings(holdings_table):
     return eligible
 
 
-def build_base_allocations(eligible, target_w_sum, total_invest, _signal_cache, always_invest_set, signal_multiplier):
+def build_base_allocations(eligible, target_w_sum, total_invest, _signal_cache, always_invest_set, signal_multiplier,
+                           signal_decisions=None):
     calc_rows = []
     for _, row in eligible.iterrows():
         ticker   = str(row.get("티커", ""))
@@ -72,7 +73,10 @@ def build_base_allocations(eligible, target_w_sum, total_invest, _signal_cache, 
         is_dip = dip_level > 0   # 표시용 플래그 유지
 
         base_alloc = total_invest * (target_w / target_w_sum)
-        multiplier = signal_multiplier(tap_raw, bucket, dip_level=dip_level)
+        # B-3: pass the engine decision so the multiplier is read from its code (same values).
+        decision = (signal_decisions or {}).get(ticker)
+        multiplier = (signal_multiplier(tap_raw, bucket, dip_level=dip_level, decision=decision) if isinstance(decision, dict)
+                      else signal_multiplier(tap_raw, bucket, dip_level=dip_level))
         if ticker in always_invest_set and bucket != "leverage":
             multiplier = 1.0
             tap_disp = f"📌 항상투자" if tap_disp in ("-", "신호없음", "ETF (신호없음)") else f"{tap_disp} → 📌무시"
@@ -195,10 +199,11 @@ def apply_share_counts(calc_rows, usdkrw, accumulated):
 
 
 def build_rebalance_plan(eligible, target_w_sum, total_invest, usdkrw, signal_cache,
-                         always_invest_set, redistribute_mode, accumulated, signal_multiplier):
+                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, signal_decisions=None):
     """Build new rows; never modify the caller's holdings or accumulated-money map."""
     calc_rows = build_base_allocations(
         eligible, target_w_sum, total_invest, signal_cache, always_invest_set, signal_multiplier,
+        signal_decisions=signal_decisions,
     )
     redistribute_allocations(calc_rows, total_invest, redistribute_mode)
     apply_share_counts(calc_rows, usdkrw, accumulated)

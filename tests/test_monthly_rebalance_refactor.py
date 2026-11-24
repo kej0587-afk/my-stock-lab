@@ -324,6 +324,16 @@ def test_all_extracted_statements_match_baseline_except_target_conversion(source
             target.value = ast.parse('row.get("목표비중")', mode="eval").body
         if name == "apply_share_counts":
             before[0] = ast.parse("_accum = dict(accumulated)").body[0]
+        if name == "build_base_allocations":
+            # B-3 (2026-11-24): the only change is passing the engine decision to the multiplier;
+            # without a decision the original call runs unchanged.
+            loop = next(n for n in after if isinstance(n, ast.For))
+            loop.body = [n for n in loop.body if not (isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name)
+                                                       and n.targets[0].id == "decision")]
+            for n in loop.body:
+                if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "multiplier" \
+                        and isinstance(n.value, ast.IfExp):
+                    n.value = n.value.orelse
         assert ast.dump(ast.Module(body=before, type_ignores=[])) == ast.dump(
             ast.Module(body=after, type_ignores=[])), name
 

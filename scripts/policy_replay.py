@@ -15,6 +15,7 @@ Read-only. No decision rule is changed; this only calls the existing engine on h
 Run:
   python -X utf8 scripts/policy_replay.py stocks   --px DIR --out DIR
   python -X utf8 scripts/policy_replay.py leverage --px DIR --out DIR
+  python -X utf8 scripts/policy_replay.py parity   --px DIR --out DIR --step 20   # B-stage identity check
   python -X utf8 scripts/policy_replay.py rr_gate  --px DIR --out DIR --stocks-csv DIR/stocks.csv
 Record: docs/maintenance/20261124_decision_policy_validation_plan.md
 """
@@ -321,6 +322,116 @@ def replay_leverage(args):
     return out
 
 
+# ── parity: B-stage "results must be identical" check ─────────────────────────────────
+PARITY_ETFS = {"QQQ": "us_etf_nasdaq", "SPY": "us_etf_sp", "SOXX": "us_etf_nasdaq", "XLK": "us_etf_sp",
+               "069500.KS": "kr_etf", "091160.KS": "kr_etf"}
+
+
+def _multiplier(app, c, bucket, dip_level):
+    """Rebalance multiplier through whatever entry point the app currently uses."""
+    fn = getattr(app, "rebalance_signal_multiplier_for_decision", None)
+    if fn is not None:
+        return fn(c, bucket, dip_level=dip_level)
+    return app._rebcalc_signal_multiplier(c["dec"], bucket, dip_level=dip_level)
+
+
+def _parity_row(app, c, name, ticker, is_etf, has_pos, my_price, chart_df, guard=None):
+    from stock_lab_core.decision_workflow import build_decision_workflow, attach_market_execution_context
+    from stock_lab_core.execution_gate import build_execution_gate
+
+    row = {"code": c["decision_code"], "dec": c["dec"], "group": c.get("decision_group"),
+           "buy_amt": c.get("buy_amt"), "core_dca_rate": c.get("core_dca_rate"), "core_dca_amt": c.get("core_dca_amt"),
+           "sizing_hint": c.get("sizing_hint"), "grade": c.get("grade"), "safety": c.get("safety_state")}
+    for bucket in ("core", "swing", "leverage"):
+        for dip in (0, 2):
+            row[f"mult_{bucket}_{dip}"] = _multiplier(app, c, bucket, dip)
+    # Today chain: MTF guard (weekly/monthly) → dashboard override → precision override → pattern → gate
+    try:
+        mtf = app.build_precision_multi_timeframe_pack(ticker, chart_df, _include_daily_snapshot=False)
+        t = app.apply_precision_mtf_decision_guard(c, mtf, has_pos=has_pos)
+    except Exception as e:
+        t = dict(c, mtf_bias_label="자료부족", data_state="상위시간대 조회 실패")
+    t = app.apply_leveraged_dca_dashboard_override(t)
+    t = app.apply_leveraged_precision_decision_override(t, name, ticker, has_pos, my_price)
+    try:
+        timing, reason, bucket_ = app.summarize_chart_pattern_for_dashboard(app.detect_chart_pattern_candidates(chart_df), t)
+    except Exception:
+        timing, reason, bucket_ = "-", "", ""
+    w = build_decision_workflow(name, ticker, t, is_etf=is_etf, has_pos=has_pos,
+                                pattern_timing=timing, pattern_bucket=bucket_, pattern_reason=reason)
+    if guard is not None:
+        w = attach_market_execution_context(pd.DataFrame([w]), guard).iloc[0].to_dict()
+    g = build_execution_gate(w)
+    row.update({"t_code": t.get("decision_code"), "t_dec": t.get("dec"), "t_group": t.get("decision_group"),
+                "t_mtf": t.get("mtf_bias_label"), "t_buy_amt": t.get("buy_amt"), "t_sizing": t.get("sizing_hint"),
+                "pattern": timing, "w_group": w.get("판정분류"), "w_read": w.get("최종읽기"),
+                "gate": g["게이트상태"], "gate_why": g["게이트근거"]})
+    for bucket in ("core", "swing", "leverage"):
+        row[f"t_mult_{bucket}"] = _multiplier(app, t, bucket, 2)
+    # Precision chain: MTF guard (with daily snapshot) → precision override → non-core panic scope
+    shared = getattr(app, "apply_precision_post_decision", None)  # B-7 helper when present
+    try:
+        mtf_p = app.build_precision_multi_timeframe_pack(ticker, chart_df)
+    except Exception:
+        mtf_p = None
+    if shared is not None and mtf_p is not None:
+        p = shared(c, mtf_p, name=name, ticker=ticker, has_pos=has_pos, my_price=my_price,
+                   non_core_panic_scope=True, is_etf=is_etf)
+    else:
+        try:
+            p = app.apply_precision_mtf_decision_guard(c, mtf_p, has_pos=has_pos) if mtf_p is not None else dict(c)
+        except Exception:
+            p = dict(c)
+        p = app.apply_leveraged_precision_decision_override(p, name, ticker, has_pos, my_price)
+        p = app.enforce_non_core_panic_scope_on_result(p, is_core_dca_allowed=float(p.get("core_dca_rate") or 0) > 0, is_etf=is_etf)
+    row.update({"p_code": p.get("decision_code"), "p_dec": p.get("dec"), "p_group": p.get("decision_group"),
+                "p_buy_amt": p.get("buy_amt"), "p_sizing": p.get("sizing_hint")})
+    return row
+
+
+def replay_parity(args):
+    kind, ticker, start, end, step = args
+    app = setup_app()
+    from stock_lab_core.ta_engine import build_indicators
+
+    full = pd.read_csv(os.path.join(PX, f"{ticker}.csv"), index_col=0, parse_dates=True)
+    dates = full.index[(full.index >= start) & (full.index <= end)][::step]
+    out = []
+    for d in dates:
+        ASOF["d"] = d
+        hist = full[full.index <= d]
+        if len(hist) < 260:
+            continue
+        df = build_indicators(hist.tail(252).copy())
+        close = float(hist["Close"].iloc[-1])
+        if kind == "stock":
+            ac = "kr_stock" if ticker.endswith(".KS") else "us_stock"
+            cases = [(False, 0.0, 1.0, 0.0, 0.0, 10.0)] + [(True, close * m, 1.0, 0.0, 5.0, 10.0) for m in (0.85, 1.2)]
+            is_etf = False
+        elif kind == "etf":
+            ac = PARITY_ETFS[ticker]
+            cases = [(True, close * m, fmr, pen, 5.0, 15.0) for m in (0.9, 1.25) for fmr, pen in ((1.0, 0.0), (3.0, 1.5), (4.6, 2.0))]
+            is_etf = True
+        else:
+            ac = LEVERAGED[ticker]
+            cases = [(True, close * m, 1.0, 0.0, 3.0, 9.0) for m in (1.0, 1.15, 1.35, 1.6, 2.0)]
+            is_etf = True
+        for has_pos, my_price, fmr, pen, cw, tw in cases:
+            key = {"kind": kind, "ticker": ticker, "date": str(d.date()), "has_pos": has_pos,
+                   "avg_mult": round(my_price / close, 2) if my_price else 0.0, "macro": fmr}
+            try:
+                c = app.calc_scores_and_decision(ticker, ticker, is_etf, ac, df, my_price, has_pos, 0 if is_etf else 4,
+                                                 user_total_asset=1e7, user_curr_w=cw, user_targ_w=tw,
+                                                 _macro_penalty=pen, _final_macro_risk=fmr, _total_eval=1e7,
+                                                 _cash_available=2e6, _reserve_available=1e6)
+                key.update(_parity_row(app, c, ticker, ticker, is_etf, has_pos, my_price, df,
+                                       guard=GUARDS["정상"] if kind == "leverage" else None))
+            except Exception as e:
+                key["error"] = repr(e)[:160]
+            out.append(key)
+    return out
+
+
 def init_worker(px):
     global PX
     PX = px
@@ -329,7 +440,7 @@ def init_worker(px):
 def main():
     global PX
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["stocks", "leverage", "rr_gate"])
+    ap.add_argument("mode", choices=["stocks", "leverage", "rr_gate", "parity"])
     ap.add_argument("--stocks-csv", default="")
     ap.add_argument("--px", required=True)
     ap.add_argument("--out", required=True)
@@ -341,6 +452,20 @@ def main():
     a = ap.parse_args()
     PX = a.px
     os.makedirs(a.out, exist_ok=True)
+    if a.mode == "parity":
+        jobs = [("stock", t, pd.Timestamp(a.start), pd.Timestamp(a.end), a.step) for t in US_STOCKS + KR_STOCKS]
+        jobs += [("etf", t, pd.Timestamp(a.start), pd.Timestamp(a.end), a.step) for t in PARITY_ETFS]
+        jobs += [("leverage", t, pd.Timestamp(a.start), pd.Timestamp(a.end), a.step) for t in LEVERAGED]
+        if a.tickers:
+            keep = set(a.tickers.split(","))
+            jobs = [j for j in jobs if j[1] in keep]
+        with Pool(a.workers, initializer=init_worker, initargs=(a.px,)) as pool:
+            rows = [r for part in pool.imap_unordered(replay_parity, jobs) for r in part]
+        frame = pd.DataFrame(rows).sort_values(["kind", "ticker", "date", "has_pos", "avg_mult", "macro"])
+        path = os.path.join(a.out, "parity.csv")
+        frame.to_csv(path, index=False, encoding="utf-8-sig")
+        print(path, len(frame), "errors", int(frame["error"].notna().sum()) if "error" in frame else 0)
+        return
     if a.mode == "rr_gate":
         src = pd.read_csv(a.stocks_csv)
         src = src[src["family"].notna()]

@@ -30,30 +30,11 @@ from stock_lab_core.today_snapshot import (
     save_today_queue_summary_snapshot,
 )
 
-TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES = frozenset({
-    "HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT",
-})
+from stock_lab_core import decision_code_sets as _code_sets
 
-TODAY_QUEUE_DEFENSE_CODES = {
-    "PANIC_FINAL_DEPLOY",
-    "PANIC_CASH_DEPLOY",
-    "CRISIS_CORE_FOCUS",
-    "CRISIS_PANIC_SELL_OFF",
-    "DRAWDOWN_20_HOLDING_STOP_CHECK",
-    "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
-    "DRAWDOWN_20_NO_ENTRY",
-    "DOWNTREND_NO_ENTRY",
-    "REVERSE_TREND_NO_ENTRY",
-    "STRONG_REVERSE_NO_ENTRY",
-    "COST_MINUS_15_TREND_RISK",
-    "COST_MINUS_15_CAUSE_CHECK",
-    "TREND_RISK_CAUSE_CHECK",
-    "MACRO_STORM_HOLDING_CAUTION",
-    "HARD_BLOCK_MACRO_STORM",
-    "LEVERAGED_DAILY_DROP_NO_ADD",
-    "LEVERAGED_RECOVERY_DCA_BLOCK",
-    "MTF_DAMAGE_NO_ADD",
-}
+TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES = _code_sets.OVERHEAT_HARD_BLOCK_CODES
+
+TODAY_QUEUE_DEFENSE_CODES = _code_sets.DEFENSE_CODES
 
 TODAY_QUEUE_DEFENSE_PREFIXES = (
     "STRUCTURE_DAMAGE",
@@ -83,28 +64,9 @@ TODAY_QUEUE_CORE_ACCUMULATION_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
-TODAY_QUEUE_EXECUTION_BLOCK_CODES = {
-    "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
-    "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
-    "COST_MINUS_15_CAUSE_CHECK", "TREND_RISK_CAUSE_CHECK",
-    "MACRO_STORM_HOLDING_CAUTION",
-    "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
-    "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
-    "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
-    "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD", "LEVERAGED_RECOVERY_DCA_BLOCK",
-    "HARD_BLOCK_FINANCIAL_F", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED",
-    "HARD_BLOCK_MACRO_STORM",
-}
+TODAY_QUEUE_EXECUTION_BLOCK_CODES = _code_sets.EXECUTION_BLOCK_CODES
 
-TODAY_QUEUE_EXECUTION_WAIT_CODES = {
-    "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
-    "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
-    "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
-    "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
-    "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
-    "LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
-    "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
-}
+TODAY_QUEUE_EXECUTION_WAIT_CODES = _code_sets.EXECUTION_WAIT_CODES
 
 
 def _json_safe_scalar(value):
@@ -582,7 +544,7 @@ def apply_leveraged_dca_dashboard_override(decision: dict) -> dict:
     if not bool(decision.get("is_leveraged_or_inverse")):
         return decision
     code = str(decision.get("decision_code", "") or "")
-    panic_codes = {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}
+    panic_codes = _code_sets.CORE_PANIC_DEPLOY_CODES
     if code in panic_codes:
         out = dict(decision)
         dd = clean_float(out.get("dd"), math.nan)
@@ -720,7 +682,7 @@ def format_dashboard_candidate_grade(decision: dict) -> str:
         return "🛡️추세방어(신규금지)"
     if code == "MTF_DAMAGE_NO_ADD":
         return "🛡️상위추세방어(추매금지)"
-    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+    if code in _code_sets.CORE_PANIC_DEPLOY_CODES:
         return "🛡️패닉진입대기(계획확인)"
     if code == "CRISIS_PANIC_SELL_OFF":
         return "🛡️위기방어(회피)"
@@ -817,7 +779,7 @@ def build_dashboard_final_read(
     if "하락패턴 유효" in pattern_timing:
         if code.startswith("QUALITY_RECOVERY"):
             return "👀회복관찰"
-        if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+        if code in _code_sets.CORE_PANIC_DEPLOY_CODES:
             return "🛡️패닉진입대기"
         if code == "CRISIS_PANIC_SELL_OFF":
             return "🛡️위기방어(회피)"
@@ -841,7 +803,7 @@ def build_dashboard_final_read(
         return "⏳추매대기"
     if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
         return "⏳리밸런싱대기"
-    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+    if code in _code_sets.CORE_PANIC_DEPLOY_CODES:
         return "🛡️패닉진입대기"
     if code == "CRISIS_PANIC_SELL_OFF":
         return "🛡️위기방어(회피)"

@@ -3829,90 +3829,19 @@ def fetch_dart_disclosures(corp_code: str, days: int = 30) -> list:
         return []
 
 
-def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> float:
-    """기술적타점 문자열 → 배분 배율
-    버킷별 로직:
-      core    : 신호없음=1.0(DCA), 매수=1.0, 과열=0.25, 차단=0.0
-      leverage: 가격/급락/추세방어=0.0, 과열=0.0, 신호없음=0.5(DCA유지),
-                매수=1.5, 매수+약하락(dip1)=1.5, 매수+중하락(dip2)=1.75, 매수+강하락(dip3)=2.0
-                대기/신호없음+약하락=0.75, +중하락=1.0, +강하락=1.25
-      swing   : 명시적 매수 신호 없으면 0.0
-    dip_level: 0=정상, 1=-5%~-10%(약하락), 2=-10%~-15%(중하락), 3=-15%↓(강하락)
-    """
-    tap = str(tap).strip()
-    bucket = str(bucket).strip().lower()
-    is_empty = tap in ("-", "", "nan", "none", "None")
-    no_add_words = [
-        "추매금지", "추매중단", "매수금지", "신규금지", "진입 보류", "진입보류", "DCA 보류",
-        "회복 전", "원인점검", "원인 점검", "종가 확인", "정규장 확인",
-    ]
-    hard_words = [
-        "하드", "차단", "구조", "추세훼손", "가격위험", "단기급락",
-        "가격방어", "급락방어", "추세방어", "비중 초과", "비중초과",
-        "비중 충족", "비중충족", "시장위험", "보유점검", "🔴", "⛔",
-    ]
-    is_no_add = any(k in tap for k in no_add_words)
-    is_hard = is_no_add or any(k in tap for k in hard_words)
-    is_hot = any(k in tap for k in ["과열", "주의", "⚠"])
-    is_wait = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
-    is_buy = (
-        not is_hard
-        and (
-            any(k in tap for k in ["매수", "분할", "🟢", "✅", "🟣"])
-            or ("진입" in tap and "보류" not in tap and "금지" not in tap)
-        )
-    )
+def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0, decision=None) -> float:
+    """Monthly rebalance multiplier. B-3 (2026-11-24): read from decision_code / core DCA stage
+    when the engine decision is known; the old label parse (legacy_label_multiplier) is the
+    fallback for plain text. Results are unchanged (table generated from the old parse)."""
+    from stock_lab_core.rebalance_multiplier import decision_signal_multiplier, legacy_label_multiplier
 
-    # ── 레버리지 버킷 (QLD, TQQQ 등) ────────────────────────────────────────
-    if bucket == "leverage":
-        leverage_block = is_hard or any(k in tap for k in ["급락:", "패닉권", "패닉", "투매"])
-        if leverage_block: return 0.0   # 가격/급락/추세 방어 → 완전 중단
-        if is_hot:  return 0.0   # 과열 → 진입 금물
-        if any(k in tap for k in ["DCA 대기", "타점 대기", "눌림 대기", "추격금지"]):
-            return 0.0
-        if any(k in tap for k in ["회복 DCA", "분할 가능"]):
-            return 1.0
-        if any(k in tap for k in ["조건부 DCA", "소액 1차", "신규 1차 정찰 가능", "타점 가능"]):
-            return 0.5
-        if is_buy:
-            # 매수 신호: 하락 깊이에 따라 배율 상향
-            if dip_level >= 3: return 2.0    # 매수 + 강하락(-15%↓) → 2배 집중
-            if dip_level == 2: return 1.75   # 매수 + 중하락(-10%~-15%) → 1.75배
-            return 1.5                       # 매수 + 약하락 or 정상 → 1.5배
-        if is_wait:
-            return 0.0
-        if is_empty:
-            # 신호없음/대기: 하락 깊이에 따라 DCA 강도 조절
-            if dip_level >= 3: return 1.25   # 강하락 → 1.25배 DCA
-            if dip_level == 2: return 1.0    # 중하락 → 1배 DCA
-            if dip_level == 1: return 0.75   # 약하락 → 0.75배 DCA
-        return 0.5                           # 그외 (정상 구간) → 0.5배 DCA
+    if isinstance(decision, dict) and str(decision.get("dec", "") or "").strip() == str(tap).strip():
+        return decision_signal_multiplier(decision, bucket, dip_level=dip_level)
+    return legacy_label_multiplier(tap, bucket, dip_level=dip_level)
 
-    # ── 코어 버킷 ────────────────────────────────────────────────────────────
-    if tap in ("-", "", "nan", "none", "None"):
-        return 1.0 if bucket == "core" else 0.0
-    if is_hard: return 0.0
-    if bucket == "core":
-        if "200%" in tap:
-            return 2.0
-        if "150%" in tap:
-            return 1.5
-        if "100%" in tap:
-            return 1.0
-        if "50%" in tap:
-            return 0.5
-        if "25%" in tap:
-            return 0.25
-    if is_buy:  return 1.0
-    if is_hot:  return 0.25
-    if is_wait: return 0.0
 
-    # 스윙은 명시적 매수 신호 없으면 0%
-    if bucket == "swing":
-        return 0.0
-
-    # 코어: 보유/중립 → 50%
-    return 0.5
+def rebalance_signal_multiplier_for_decision(decision: dict, bucket: str, dip_level: int = 0) -> float:
+    return _rebcalc_signal_multiplier(str((decision or {}).get("dec", "-")), bucket, dip_level=dip_level, decision=decision)
 
 
 def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summary, monthly_logs_df=None):
@@ -14829,6 +14758,7 @@ def render_refresh_control_panel():
             # 자산관리 탭의 기술적 타점도 다음 렌더에서 재계산되도록 플래그 설정
             st.session_state["asset_management_tech_summary_lazy_ready"] = True
             st.session_state["_ticker_signal_cache"] = {}   # 이전 캐시 초기화
+            st.session_state["_ticker_signal_decision_cache"] = {}
             rerun_with_notice("차트/기술 캐시를 비웠습니다. 기술적 타점이 재계산됩니다.", "success")
 
         if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", width='stretch'):
@@ -16416,7 +16346,7 @@ def build_position_management_context(
     }
 
 
-_CORE_PANIC_DEPLOY_CODES = {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}
+from stock_lab_core.decision_code_sets import CORE_PANIC_DEPLOY_CODES as _CORE_PANIC_DEPLOY_CODES
 
 
 def _non_core_panic_outcome(is_etf, current_dd):
@@ -17614,23 +17544,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         return {"ticker": ticker, "status": "unavailable", "reason": "invalid risk width"}
     rr = (target - cur) / risk
 
-    block_codes = {
-        "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
-        "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
-        "COST_MINUS_15_CAUSE_CHECK", "TREND_RISK_CAUSE_CHECK",
-        "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
-        "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
-        "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
-        "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD", "LEVERAGED_RECOVERY_DCA_BLOCK",
-    }
-    wait_codes = {
-        "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
-        "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
-        "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
-        "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
-        "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
-        "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
-    }
+    from stock_lab_core.decision_code_sets import PRECISION_PLAN_BLOCK_CODES as block_codes
+    from stock_lab_core.decision_code_sets import PRECISION_PLAN_WAIT_CODES as wait_codes
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
     is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, str(c.get("asset_class", "") or ""))
@@ -18573,6 +18488,25 @@ def build_leveraged_dca_timing_state(c, state):
         "recovery_total": recovery_total,
         "recovery_state": recovery_state,
     }
+
+
+def apply_precision_post_decision(c, mtf_pack, *, name, ticker, has_pos, my_price,
+                                  non_core_panic_scope=False, is_etf=False):
+    """B-7: shared post-processing after calc_scores_and_decision on precision screens.
+
+    Order is fixed: MTF guard -> leveraged precision override -> (optional) non-core panic scope.
+    Today runs the same first two steps inline (with per-stage error isolation and the
+    leveraged dashboard override before the precision override); it is kept there on purpose.
+    """
+    c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos)
+    c = apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price)
+    if non_core_panic_scope:
+        c = enforce_non_core_panic_scope_on_result(
+            c,
+            is_core_dca_allowed=clean_float(c.get("core_dca_rate"), 0.0) > 0,
+            is_etf=is_etf,
+        )
+    return c
 
 
 def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price):
@@ -20543,8 +20477,11 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
         hold_reasons.append(f"평단 대비 +{price_vs_avg*100:.1f}%: 안전마진 확보")
 
     # 매크로
-    macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", 0), 0.0)
-    if macro_risk >= 4.5:
+    # Missing macro is 미확인, never 0: no score effect (as before), but say it is unchecked.
+    macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", float("nan")), float("nan"))
+    if not finite_num(macro_risk):
+        cut_reasons.append("매크로 미확인: 시장위험이 점수에 반영되지 않았습니다(확인 필요)")
+    elif macro_risk >= 4.5:
         total_score -= 2
         cut_reasons.append("퍼펙트스톰: 신규/추매 중단, 보유 비중·손절선 점검")
     elif macro_risk >= 2.5:
@@ -21856,8 +21793,8 @@ def render_manual_tab():
 **하드차단: 비중 충족**  
 현재비중이 목표비중에 도달했을 때 뜹니다. 목표를 채웠으니 더 사기보다 관망하라는 뜻입니다.
 
-**하드차단: 퍼펙트스톰**  
-매크로 리스크가 4.5 이상일 때 신규 매수 후보에 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선이라 새 진입을 막습니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다. 이미 보유한 종목은 `시장위험: 추매중단/보유점검`으로 표시해 전량 매도가 아니라 비중·손절선 점검 신호로 구분합니다.
+**시장위험: 추매중단/보유점검 (퍼펙트스톰)**
+매크로 리스크가 4.5 이상일 때 뜹니다. 신규 후보와 보유 종목 모두 이 문구(`시장위험: 추매중단/보유점검`)로 표시되며, 이때는 개별 종목보다 시장 전체 위험이 우선이라 신규 진입과 추가매수를 막습니다. 보유 종목에는 전량 매도 신호가 아니라 비중·손절선 점검 신호입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다. 판정 사전에 남아 있는 `하드차단: 퍼펙트스톰(대피)` 문구는 현재 어떤 경로에서도 나오지 않습니다.
 
 **하드차단: MFI 극단 과열**  
 MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심해서 추격매수를 막습니다.
@@ -33252,8 +33189,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
                                      live_price=demo_live_price, _live_indicator_context=demo_live_context)
         chart_df, live_applied, demo_live_issue = demo_live_context
         mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
-        c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos_value)
-        c = apply_leveraged_precision_decision_override(c, name, tkr, has_pos_value, my_price)
+        c = apply_precision_post_decision(c, mtf_pack, name=name, ticker=tkr, has_pos=has_pos_value, my_price=my_price)
         pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(detect_chart_pattern_candidates(chart_df), c)
         c["input_basis"] = {**build_signal_basis(df, demo_live_context, ticker=tkr, input_price=demo_live_price), **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
@@ -34650,18 +34586,9 @@ if main_page == "precision":
         )
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
-        c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=precision_has_pos)
-        c = apply_leveraged_precision_decision_override(
-            c,
-            name,
-            tkr,
-            precision_has_pos,
-            my_p,
-        )
-        c = enforce_non_core_panic_scope_on_result(
-            c,
-            is_core_dca_allowed=clean_float(c.get("core_dca_rate"), 0.0) > 0,
-            is_etf=is_etf,
+        c = apply_precision_post_decision(
+            c, mtf_pack, name=name, ticker=tkr, has_pos=precision_has_pos, my_price=my_p,
+            non_core_panic_scope=True, is_etf=is_etf,
         )
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
         precision_liquidity_profile = build_liquidity_thermal_profile(chart_df)
@@ -34684,6 +34611,18 @@ if main_page == "precision":
         with precision_execution_slot.container():
             render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
+        # B-4 shadow: shown beside the existing decision, never written back into c.
+        try:
+            from stock_lab_core.tech_review_view import render_tech_review_shadow
+            render_tech_review_shadow(
+                st, c, c.get("execution_workflow"),
+                pattern_candidates=precision_pattern_candidates, liquidity_profile=precision_liquidity_profile,
+                monthly_signal_decision=st.session_state.get("_ticker_signal_decision_cache", {}).get(tkr),
+                multiplier_fn=rebalance_signal_multiplier_for_decision,
+            )
+        except Exception:
+            logging.exception("Tech review shadow failed: ticker=%s", tkr)
+            st.caption("기술검토(그림자) 계산 실패: 기존 판정에는 영향 없음")
         from stock_lab_core.data_freshness import input_freshness_rows
         c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
         st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
@@ -35510,6 +35449,7 @@ if main_page == "asset":
 
                     signal_rows.append({
                         "티커": tkr,
+                        "_signal_decision": {key: c.get(key) for key in ("decision_code", "dec", "core_dca_label", "core_dca_rate")},
                         "기술적타점": c["dec"],
                         "ADJ점수": round(c["adj"], 1),
                         "후보등급": c["grade"],
@@ -35541,6 +35481,13 @@ if main_page == "asset":
                 str(row["티커"]): str(row["기술적타점"])
                 for _, row in signal_df.iterrows()
             }
+            # B-3: the engine decision behind each label, so the rebalance multiplier reads codes.
+            st.session_state["_ticker_signal_decision_cache"] = {
+                str(row["티커"]): row["_signal_decision"]
+                for _, row in signal_df.iterrows()
+                if isinstance(row.get("_signal_decision"), dict)
+            }
+            signal_df = signal_df.drop(columns=["_signal_decision"], errors="ignore")
             st.session_state["_ticker_signal_detail_df"] = stamp_portfolio_signal_context(signal_df)
             dash_df = dash_df.merge(signal_df, on="티커", how="left")
 
