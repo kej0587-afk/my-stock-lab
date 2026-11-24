@@ -571,6 +571,24 @@ def _basis_lines(context, sessions, states, now, missing):
     return lines
 
 
+def _observation_axis_lines(sector_facts, kr_summary, story_releases):
+    """The "관측 축" table: US sector closes, KOSPI close and recent key releases."""
+    from stock_lab_core.report_analysis import comparison_metrics
+    economic_summary = []
+    for indicator, name in (("US_PPI", "미국 PPI"), ("KR_EXPORTS", "한국 수출")):
+        row = next((r for r in story_releases if r.get("indicator") == indicator and r.get("basis") == ("MoM" if indicator == "US_PPI" else "YoY")
+                    and number(r.get("actual")) is not None and r.get("status") not in {"pending", "stale"}), None)
+        if row:
+            delta = comparison_metrics(row)["delta"]
+            economic_summary.append(f"{name} {row.get('period', '')} {'전월비' if indicator == 'US_PPI' else '전년비'} {row['actual']}%"
+                                    + (f" · 이전 대비 {delta:+.2f}%p" if delta is not None else "")
+                                    + (" (수동 보완값)" if row.get("status") == "verified_snapshot" else ""))
+    return ["", "관측 축 | 확인된 수치·범위", "--- | ---",
+            "미국 업종 종가 | " + _cell(" · ".join(sector_facts) or "업종 종가 미연결"),
+            "한국 지수 종가 | " + _cell(kr_summary),
+            "최근 발표 지표 | " + _cell(" / ".join(economic_summary) or "최근 3거래일 이내 발표일이 확인된 주요 발표치 없음/미연결"), ""]
+
+
 def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     """Return report front matter and explicit missing-data reasons."""
     context = context or {}
@@ -670,19 +688,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         used_story_news.add(news_article_key(reversal))
     releases = records(context.get("economic_releases"))
     story_releases = recent_economic_releases(releases, context, now)
-    economic_summary = []
-    for indicator, name in (("US_PPI", "미국 PPI"), ("KR_EXPORTS", "한국 수출")):
-        row = next((r for r in story_releases if r.get("indicator") == indicator and r.get("basis") == ("MoM" if indicator == "US_PPI" else "YoY")
-                    and number(r.get("actual")) is not None and r.get("status") not in {"pending", "stale"}), None)
-        if row:
-            delta = comparison_metrics(row)["delta"]
-            economic_summary.append(f"{name} {row.get('period', '')} {'전월비' if indicator == 'US_PPI' else '전년비'} {row['actual']}%"
-                                    + (f" · 이전 대비 {delta:+.2f}%p" if delta is not None else "")
-                                    + (" (수동 보완값)" if row.get("status") == "verified_snapshot" else ""))
-    lines.extend(["", "관측 축 | 확인된 수치·범위", "--- | ---",
-                  "미국 업종 종가 | " + _cell(" · ".join(sector_facts) or "업종 종가 미연결"),
-                  "한국 지수 종가 | " + _cell(kr_summary),
-                  "최근 발표 지표 | " + _cell(" / ".join(economic_summary) or "최근 3거래일 이내 발표일이 확인된 주요 발표치 없음/미연결"), ""])
+    lines.extend(_observation_axis_lines(sector_facts, kr_summary, story_releases))
     candidates = []
     candidate_keys = set(used_story_news)
     for row in synthesis.get("background_news", []) + [item for market in ("KR", "US") for item in market_cause_candidates(news, market, sessions.get(market))]:
