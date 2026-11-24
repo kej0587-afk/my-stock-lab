@@ -490,7 +490,7 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Waiting on the user's decision for #5 (DART receipt-keyed statements kept 1 day instead of 10 min). If approved, set the `dart_accounts` cache TTL to 86400 only (filing list stays 10 min), test, deploy, compare withheld counts under performance condition A.**
+**#5 approved and implemented (receipt-keyed DART statements kept 1 day; filing list stays 10 min). Verify in production: after reboot, generate two reports more than 10 minutes apart and compare '공식 공시 수집 시간 한도' withheld counts.**
 
 #5 review (order is held-first; 24s shared budget; 2–4 cold DART calls per KR issuer; 10-min caches go cold between reports): `docs/maintenance/20261124_dart_budget_review.md`.
 Other open decisions for the user (do not change without approval):
