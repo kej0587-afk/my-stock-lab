@@ -19,3 +19,9 @@ def test_bank_quoted_as_forecaster_is_classified_by_topic_not_as_finance():
     # The bank's own results remain financial news.
     assert _comprehensive_theme({"title": 'JP모건 "3분기 순이익 20% 증가"'}) == "금융"
     assert _comprehensive_theme({"title": "JP모건, 3분기 실적 호조"}) == "금융"
+
+
+def test_broker_sector_call_is_not_filed_under_finance():
+    theme = _comprehensive_theme({"title": '키움증권 "이차전지, 내년부터 실적회복…업종 투자의견 상향"'})
+    assert theme != "금융"
+    assert _comprehensive_theme({"title": '키움증권 "3분기 순이익 사상 최대"'}) == "금융"

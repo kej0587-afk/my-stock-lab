@@ -55,9 +55,13 @@ def brief_theme(row, *, comprehensive=False):
 # not the article subject; its own results/dividends stay financial news.
 _FORECASTER_QUOTE = re.compile(
     r"(?:JP\s*모건|제이피모건|골드만\s*삭스|모[건간]\s*스탠리|씨티(?:그룹)?|뱅크오브아메리카|BofA|UBS|노무라|바클레이즈|"
-    r"J\.?\s*P\.?\s*Morgan|Goldman\s+Sachs|Morgan\s+Stanley|Citi(?:group)?|Barclays|Nomura)"
+    r"J\.?\s*P\.?\s*Morgan|Goldman\s+Sachs|Morgan\s+Stanley|Citi(?:group)?|Barclays|Nomura|"
+    r"[가-힣A-Za-z]{1,8}(?:투자증권|증권|證|자산운용))"
     r"\s*(?:은|는|이|가)?\s*(?=[\"“‘'])", re.I)
 _OWN_FINANCE = re.compile(r"실적|순이익|순익|배당|자사주|충당금|연체율|\b(?:earnings|profits?|dividends?|buybacks?)\b", re.I)
+# A quote naming another sector is about that sector, even when it says "실적".
+_OTHER_SUBJECT = re.compile(r"반도체|이차전지|2차전지|배터리|자동차|조선|방산|바이오|제약|유가|원유|건설|소비|업종|"
+                            r"(?<![A-Za-z])AI(?![A-Za-z])|\b(?:chips?|semiconductors?|oil|autos?)\b", re.I)
 
 
 def _comprehensive_theme(row):
@@ -65,7 +69,8 @@ def _comprehensive_theme(row):
     from stock_lab_core.earnings_discovery import issuer_catalog, _name_match
 
     title = text(row.get("title"))
-    if _FORECASTER_QUOTE.search(title) and not _OWN_FINANCE.search(title):
+    speaker = _FORECASTER_QUOTE.search(title)
+    if speaker and (not _OWN_FINANCE.search(title) or _OTHER_SUBJECT.search(title[speaker.end():])):
         title = _FORECASTER_QUOTE.sub("", title)
         row = dict(row, title=title)
     legacy = brief_theme(row)
