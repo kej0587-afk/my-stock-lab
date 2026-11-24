@@ -450,6 +450,10 @@ def _session_article_keys(row):
     publisher = str(row.get("publisher") or "").strip()
     if publisher:
         title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
+    # Wire updates of one story ("(종합)", "(종합2보)", "[속보]", ∼ vs ~) share a key.
+    title = re.sub(r"^\s*\[(?:속보|\d보|종합)\]\s*", "", title)
+    title = re.sub(r"\s*\((?:종합\d*보?|\d보)\)\s*$", "", title)
+    title = title.replace("∼", "~").replace("〜", "~")
     title = re.sub(r"\s+", " ", title).casefold()
     raw_link = str(row.get("link") or "")
     try:
