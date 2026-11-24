@@ -34,6 +34,14 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[News dedup/classification](docs/maintenance/20261124_news_dedup_classification.md) (status #15):
+article title keys drop wire-update marks ("(종합)", "(종합N보)", "[속보]") and unify ∼/~, so one
+story's versions collapse; a bank quoted as forecaster (JP모건 "…AI 자본지출…") is classified by
+the quoted topic unless the title is about its own results/dividends. Facts/links unchanged.
+Report+news 1621 pass, related 318 pass, gate 208.
+
+### Previous completed schedule split
+
 [Schedule split](docs/maintenance/20261124_report_schedule_split.md) (status #16): the 7-day table
 is now 이번 주 남은 일정 (today or later; multi-day events until `end_date`) → 이후 확정 일정·90일
 → 최근 지난 일정 · 결과 확인. Collection, states and wording unchanged. Bundle 1662; gate 208.
@@ -482,10 +490,12 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**News dedup/classification (status #15).**
+**Check #15 in production, then consensus month matching (status #13).**
 
-Report 61: duplicate Yonhap sentences and mis-filed
-news (e.g. JP모건 AI 전망 under 금융); fix grouping/dedup only, never article facts.
+After merge/reboot, confirm in one report that no story appears twice in 한국/미국 시황 as
+"(종합)" and plain versions, and that analyst-quote headlines are not filed under 금융. Then #13:
+consensus values must attach only to the same indicator, period (target month) and release date
+(see 경제지표 "컨센서스 연결" notes); never carry a survey to another month.
 
 ## Verification Discipline
 

@@ -51,11 +51,23 @@ def brief_theme(row, *, comprehensive=False):
     return "시장·업종"
 
 
+# A bank quoted as a forecaster ("JP모건 \"내년 AI 자본지출 …\"") is the speaker,
+# not the article subject; its own results/dividends stay financial news.
+_FORECASTER_QUOTE = re.compile(
+    r"(?:JP\s*모건|제이피모건|골드만\s*삭스|모[건간]\s*스탠리|씨티(?:그룹)?|뱅크오브아메리카|BofA|UBS|노무라|바클레이즈|"
+    r"J\.?\s*P\.?\s*Morgan|Goldman\s+Sachs|Morgan\s+Stanley|Citi(?:group)?|Barclays|Nomura)"
+    r"\s*(?:은|는|이|가)?\s*(?=[\"“‘'])", re.I)
+_OWN_FINANCE = re.compile(r"실적|순이익|순익|배당|자사주|충당금|연체율|\b(?:earnings|profits?|dividends?|buybacks?)\b", re.I)
+
+
 def _comprehensive_theme(row):
     """Display taxonomy from named issuers/businesses, never a price cause."""
     from stock_lab_core.earnings_discovery import issuer_catalog, _name_match
 
     title = text(row.get("title"))
+    if _FORECASTER_QUOTE.search(title) and not _OWN_FINANCE.search(title):
+        title = _FORECASTER_QUOTE.sub("", title)
+        row = dict(row, title=title)
     legacy = brief_theme(row)
     if row.get("is_close_wrap") or legacy in {"사이버보안", "자동차·모빌리티", "방산·군수", "암호화폐"}:
         return legacy
@@ -354,10 +366,11 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
                 _holding_links(held, context_title, entities, theme, market, constituent_evidence=constituents))
         catalyst = bool(re.search(r"공급|계약|규제|제한|공개|출시|투자|실적|조달|인수|정책|earnings|guidance|funding|financing|contract|launch|chip|restrict|upgrade", title, re.I))
         topic = news_theme(title)
+        from stock_lab_core.today_news import _session_article_keys
         key = ((market, target, "market_close") if row.get("is_close_wrap") else
-               (market, target, topic, tuple(entities)) if topic else (market, target, row.get("event_key") or title.casefold()))
+               (market, target, topic, tuple(entities)) if topic else
+               (market, target, row.get("event_key") or _session_article_keys(row)[1]))
         if comprehensive:
-            from stock_lab_core.today_news import _session_article_keys
             key = (market, target, *_session_article_keys(row))
         score = (priority, int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
         candidates.append((score, published, key, theme, row, link, active))
