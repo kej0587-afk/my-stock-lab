@@ -170,7 +170,7 @@ def content_checks(context, reading, now):
     repeated, links = [], 0
     for title in ("한국 시황", "미국 시황"):
         # A link reused by a different table (e.g. sector evidence citing a news
-        # row) is citation reuse; the same story twice in one table is a repeat.
+        # row) is citation reuse; the same story twice in one news table is a repeat.
         tables, current = [], []
         for line in _section(reading, title).splitlines():
             if " | " in line:
@@ -180,12 +180,18 @@ def content_checks(context, reading, now):
                 current = []
         tables += [current] if current else []
         for rows in tables:
+            # Only the news tables ("분야 | …"); sector/evidence tables may cite one
+            # article for several sectors or repeat a templated reading.
+            if not rows[0].startswith("분야 |"):
+                continue
             seen_links, seen_text = {}, {}
             for line in rows:
                 for link in set(re.findall(r"\]\((https?://[^)\s]+)\)", line)):
                     seen_links[link] = seen_links.get(link, 0) + 1
                 cells = line.split(" | ")
-                body = re.sub(r"\[[^\]]*\]\([^)]*\)|\d{2}/\d{2} \d{2}:\d{2} KST", "", cells[1] if len(cells) > 1 else "").strip()
+                # Keep link text (it carries the headline); drop only URL and clock.
+                body = re.sub(r"\]\([^)]*\)", "]", cells[1] if len(cells) > 1 else "")
+                body = re.sub(r"\d{2}/\d{2} \d{2}:\d{2} KST", "", body).strip()
                 if len(body) >= 30:
                     seen_text[body] = seen_text.get(body, 0) + 1
             links += len(seen_links)
@@ -193,7 +199,7 @@ def content_checks(context, reading, now):
             repeated += [f"{title} 같은 문장 '{body[:30]}…'" for body, count in seen_text.items() if count > 1]
     checks.append(("시황 본문 기사 중복", "실패" if repeated else "통과" if links else "미확인",
                    ("같은 원문이 여러 행에 반복: " + " / ".join(repeated[:3])) if repeated else
-                   f"한국·미국 시황 표마다 같은 원문·같은 문장은 한 행(원문 링크 {links}건)" if links else "시황 본문 원문 링크 없음"))
+                   f"한국·미국 시황 뉴스 표마다 같은 원문·같은 문장은 한 행(원문 링크 {links}건)" if links else "시황 뉴스 표 원문 링크 없음"))
     attached = [row for row in records(context.get("economic_releases")) if row.get("forecast") is not None]
     mismatched = [f"{text(row.get('indicator'))} {text(row.get('period'))}≠{text(row.get('forecast_period'))}"
                   for row in attached if text(row.get("forecast_period")) and text(row.get("forecast_period")) != text(row.get("period"))]

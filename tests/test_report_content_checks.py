@@ -11,11 +11,11 @@ def states(context, reading=""):
 
 
 def test_repeated_story_in_market_body_fails_and_other_sections_do_not_count():
-    reading = ("## 한국 시황\n\na | [x](https://a.example/1)\nb | [y](https://a.example/1)\n"
-               "## 주요 기업과 사건\n\nc | [z](https://b.example/2)\nd | [z](https://b.example/2)\n")
+    reading = ("## 한국 시황\n\n분야 | 재료 | 확인\na | [x](https://a.example/1)\nb | [y](https://a.example/1)\n"
+               "## 주요 기업과 사건\n\n분야 | 재료 | 확인\nc | [z](https://b.example/2)\nd | [z](https://b.example/2)\n")
     state, detail = states({}, reading)["시황 본문 기사 중복"]
     assert state == "실패" and "https://a.example/1" in detail and "b.example" not in detail
-    assert states({}, "## 미국 시황\n\na | [x](https://a.example/1)\n")["시황 본문 기사 중복"][0] == "통과"
+    assert states({}, "## 미국 시황\n\n분야 | 재료 | 확인\na | [x](https://a.example/1)\n")["시황 본문 기사 중복"][0] == "통과"
 
 
 def test_consensus_month_mismatch_fails_and_unlabeled_is_unknown():
@@ -44,3 +44,18 @@ def test_link_reused_by_another_table_is_not_a_repeat_but_same_sentence_is():
                f"반도체 | {same} [연합 · 원문](https://a.example/2) · 11/24 00:35 KST | x\n")
     state, detail = states({}, reading)["시황 본문 기사 중복"]
     assert state == "실패" and "같은 문장" in detail
+
+
+def test_title_only_rows_with_shared_boilerplate_are_not_repeats():
+    # 2026-11-24 15:07 production: title-only rows differ only inside the link text.
+    reading = ("## 한국 시황\n\n분야 | 재료 | 확인\n--- | --- | ---\n"
+               "시장 | [연합뉴스 · 코스피 급등에 매수 사이드카 발동](https://a.example/1) (제목 확인·기사 주장) · 11/24 09:06 KST / KR 2026-11-24 장중 관측 | x\n"
+               "시장 | [파이낸셜뉴스 · 외국인 순매수 전환](https://a.example/2) (제목 확인·기사 주장) · 11/24 09:08 KST / KR 2026-11-24 장중 관측 | x\n")
+    assert states({}, reading)["시황 본문 기사 중복"][0] == "통과"
+
+
+def test_sector_evidence_table_repeats_are_not_checked():
+    reading = ("## 미국 시황\n\n업종 | 사실 | 해석\n--- | --- | ---\n"
+               "XLK | 사실: 일간 +3.23% · 2026-11-23 [확정 종가] | [a](https://a.example/1)\n"
+               "SOXX | 사실: 일간 +3.23% · 2026-11-23 [확정 종가] | [a](https://a.example/1)\n")
+    assert states({}, reading)["시황 본문 기사 중복"][0] == "미확인"
