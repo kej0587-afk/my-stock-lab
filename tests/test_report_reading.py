@@ -215,7 +215,28 @@ def test_macro_summary_only_promotes_recent_verified_period_rows():
     assert "+2bp" in result and result.count("0.3% | 0.4% | 0.2%") == 1
     assert "CPI" not in result
     context["economic_releases"] = [old, dict(current, status="stale")]
-    assert not _recent_releases({"경제지표": source}, context, NOW)
+    fallback = "\n".join(_recent_releases({"경제지표": source}, context, NOW))
+    # Nothing recent: the last confirmed publication is shown, labelled as older;
+    # the stale row is still never promoted.
+    assert "최근 3거래일 안 새 발표 없음" in fallback and "최근 발표 · 변화가 큰" not in fallback
+    assert "발표 2026-11-01" in fallback and "4% | 3% | 2%" in fallback
+    assert "0.3% | 0.4% | 0.2%" not in fallback
+
+
+def test_release_fallback_orders_by_date_and_skips_undated_or_future_rows():
+    from stock_lab_core.report_reading import _recent_releases
+    base = dict(period="2026-10", basis="MoM", unit="%", actual=.3, previous=.2, status="released",
+                source_url="https://www.bls.gov/")
+    rows = [dict(base, indicator="US_CPI", release_at="2026-11-01"),
+            dict(base, indicator="US_PAYROLLS", release_at=""),
+            dict(base, indicator="KR_EXPORTS", release_at="2026-11-05"),
+            dict(base, indicator="US_PPI", release_at="2026-11-30")]
+    context = dict(CONTEXT, economic_releases=rows)
+    source = ("지표 | 발표치 | 예상 | 이전 | 해석 | 반응\n--- | --- | --- | --- | --- | ---\n"
+              "CPI | 1 | - | - | a | a\nNFP | 2 | - | - | b | b\nEXP | 3 | - | - | c | c\nPPI | 4 | - | - | d | d")
+    result = "\n".join(_recent_releases({"경제지표": source}, context, NOW))
+    assert result.index("EXP") < result.index("CPI")  # Newest publication first.
+    assert "NFP" not in result and "PPI" not in result  # Undated and future rows stay out.
 
 
 def test_macro_rows_are_grouped_by_ticker_without_changing_cells():
