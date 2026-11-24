@@ -303,9 +303,18 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         market_blocks[market] = lines
     order = ("KR", "US") if _korea_first(states) else ("US", "KR")
 
-    rendered = "\n".join([*board, *macro_lines])
+    from stock_lab_core.report_dashboard import COUNTRY_ETFS, OBSERVATORY_DAILY, observatory_table_lines
+    collected = context.get("observatory_daily") or {}
+    options = [ticker for ticker in OBSERVATORY_DAILY if ticker not in COUNTRY_ETFS]
+    # Only items with an actual observation count as shown; a 미연결 row is not.
+    rendered = "\n".join([*board, *macro_lines, *(f"({ticker})" for ticker, obs in collected.items() if obs)])
+    if any(collected.get(ticker) for ticker in options):
+        # Right after the 심리·변동성 group, before central-bank and news rows.
+        at = 2 + len(macro)
+        macro_lines[at:at] = ["**옵션 위험 · 관측실 지표**", *observatory_table_lines(context, options)]
     world = ["## 세계 시장과 국가 ETF", "",
-             "매크로 관측실에 등록된 국가 ETF의 현재 연결 상태입니다. 다른 국가 현지 지수는 아직 수집 대상이 아닙니다.", "",
+             "미국 상장 국가 ETF의 달러 가격(완료 일봉)입니다. 현지 지수와 다를 수 있고, 다른 국가 현지 지수는 아직 수집 대상이 아닙니다.", "",
+             *observatory_table_lines(context, COUNTRY_ETFS),
              *_observatory_status_lines(rendered, country=True), ""]
     observatory = ["## 관측실 지표 연결 상태", "",
                    "매크로 관측실 등록 지표 가운데 이 보고서 표에 들어온 항목과 아직 연결되지 않은 항목입니다. "
