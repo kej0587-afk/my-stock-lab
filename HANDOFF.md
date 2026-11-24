@@ -490,7 +490,7 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check the corrected duplicate check in production (자동점검 '시황 본문 기사 중복' should be 통과 on a normal report), then record performance condition A twice more (#18), then #19.**
+**#5 DART time-budget withholding: check holdings/watchlist order and budget split inside existing limits (do not raise budgets, TTLs or rate limits).**
 
 Verified in production 2026-11-24 afternoon (first report after PR #10/#11): 키움증권 "이차전지…" is under 시장·업종;
 PPI 2026-10 YoY row shows "6.6% Trading Economics · 대상월 2026-10" and the 컨센서스 연결 line names the row's month and
@@ -500,7 +500,7 @@ verified in production at 14:47 KST: 7 local index rows with local dates (11-24 
 Known pre-existing failures on main (not from these PRs): test_bok_report_calendar (reading report),
 test_summary_ownership_restore RAM (looks under "## 내 보유 종목 영향"; table moved by the reading reorder),
 test_company_market_reading app adapter, test_dart_evidence_view, SEC review tests.
-#18 baseline protocol and first record (Today 78.8s, report 106.2s after reboot): `docs/maintenance/20261124_performance_baseline.md`.
+Duplicate-check fix verified in production 15:17 KST (통과, 39 links). #18 condition A recorded twice (Today 78.8/114.8s, report 106.2/132.1s; >30% noise, so no speed claims below that): `docs/maintenance/20261124_performance_baseline.md`.
 
 ## Verification Discipline
 
