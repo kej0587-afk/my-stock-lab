@@ -34,6 +34,21 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Report reading order](docs/maintenance/20261124_report_reading_order.md), step 1 of the
+2026-11-24 report-overhaul request, started at `36f7b425`. `compose_reading_report` now
+reads quick summary (session basis, interpretation, index table, existing action line,
+stale/recalculation warnings) → 지금 상태 3줄 → 지수 → US/KR (Korea first during a KR
+session or after the KR close outside US hours) → 세계 시장과 국가 ETF (status only) →
+매크로 → 물가·고용·소비·경기 (recent releases moved) → 관측실 지표 연결 상태 (every
+macro_monitor item shown as 본문 표시/미연결) → themes, flow → 주요 기업과 사건 →
+오늘의 판단 + account lines (moved from the top, unchanged text) → portfolio → schedule
+→ appendix. Order/placement only; no calculations, scores, gates, collectors or TTLs.
+Four tests that pinned the old order were updated to the new order without dropping any
+checked value. Report gate 208 before/after. Full suite 9,879 pass / 32 fail; the 32 failures are the
+identical set on base `f16e103` (old-commit app.py comparisons, date-dependent tests). Not yet generated in production.
+
+### Previous completed DART task
+
 [DART identity persistence](docs/maintenance/20261124_dart_identity_persistence.md),
 started clean at `f16e103`. Cause reproduced: the bundled corporate list was
 retrieved 2026-11-07 and expired 11-14 (7-day limit); no code saved live successes.
@@ -48,8 +63,13 @@ Related tests 273 pass (+17 new); 1 pre-existing failure identical before/after
 (`test_existing_parser_and_app_functions_preserved` compares app.py to old `5cadb203`).
 Report gate 208 before/after. SQL `docs/20261124_dart_corporate_codes.sql` prepared,
 **not executed**; until it runs the store reports `schema_unavailable` and the old
-behaviour remains. Not yet deployed/verified in production. The DART connect failure
-cause itself could not be probed here (sandbox proxy blocks opendart).
+behaviour remains. The DART connect failure cause itself could not be probed here
+(sandbox proxy blocks opendart).
+Production (owner-reported, 2026-11-24 ~12:00 KST): PR #1 merged as `60f8a298`, SQL
+executed, app rebooted. Financial-input DART diagnostic: cause=ok, http200,
+mapped_count4020, elapsed9.606s, persist_status=unchanged_recent (an earlier post-reboot
+lookup had already saved the identical list); table has one row. Restore after a real
+outage is covered only by fixed-input tests so far; not observed in production.
 
 ### Previous completed SEC task
 
@@ -378,15 +398,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Verify DART identity persistence in production.**
+**Verify the reordered report in production, then report-overhaul step 2.**
 
-Needs the owner to run `docs/20261124_dart_corporate_codes.sql` in Supabase and the
-branch to be merged/deployed. Then: one report/financial check with live DART success
-must show `persist_status=saved` and one table row (count/sha matching); after reboot,
-a transport failure (or fixed failure replay) must use `persistent_last_success` with
-correct date/age. Do not change TTLs, retry or the 7-day limit. Afterwards the next
-bounded task is the report overhaul step 1 (section reordering only, per
-`/mnt/project-files/status` plan and the 2026-11-24 report-overhaul request).
+After merge/reboot, generate one auto report and check: section order, quick summary
+values equal the 지수 table and 지금 상태 3줄, no duplicated appendix rows for moved
+recent releases, observatory status lines present. Then step 2 (one bounded change):
+split the single 매크로 table into 금리·중앙은행 / 환율 / 원자재 / 심리 groups by
+ticker (rows copied, no recomputation). Open DART items stay as listed in the DART record.
 
 ## Verification Discipline
 

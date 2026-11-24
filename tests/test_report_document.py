@@ -31,11 +31,17 @@ def test_existing_decision_and_conditions_precede_data_without_changing_inputs()
     before = deepcopy((context, rows))
     report = REPORT + "\n" + GUARD
     output = compose_reading_report(report, context=context, news=[], summary_rows=rows, now=NOW)
-    top = output.split("## 이번 주 테마", 1)[0]
+    # Market first: the first screen keeps the existing action and stale-input warnings,
+    # while the full judgment and boundaries move to the account area unchanged.
+    top = output.split("## 지수", 1)[0]
     assert "**기존 실행 방향** · 신규매수 중단 · 현금/리스크 점검" in top
-    for value in ("10점 = 지역 최대 7 + 흐름 3", "35% 이상(+18.7%p)", "기준일 지연 · 미국",
-                  "입력 변경 · 이전 계산 결과 · 재계산 필요", "보유 전량 매도 지시가 아닙니다"):
+    for value in ("기준일 지연 · 미국", "입력 변경 · 이전 계산 결과 · 재계산 필요"):
         assert value in top
+    judgment = dict(split_report_sections(output))["오늘의 판단"]
+    for value in ("**기존 실행 방향** · 신규매수 중단 · 현금/리스크 점검", "10점 = 지역 최대 7 + 흐름 3",
+                  "35% 이상(+18.7%p)", "기준일 지연 · 미국",
+                  "입력 변경 · 이전 계산 결과 · 재계산 필요", "보유 전량 매도 지시가 아닙니다"):
+        assert value in judgment
     assert output.count("**핵심 요약**") == output.count("**다음 경계**") == 1
     assert "통합 시장 점수 | 10 | 8 이상 위험 | 8 미만" in output.split("## " + AUDIT_TITLE)[1]
     assert (context, rows) == before

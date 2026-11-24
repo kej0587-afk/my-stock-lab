@@ -133,11 +133,62 @@ def _portfolio_lines(sections):
     return lines
 
 
+def _quick_summary_lines(judgment_lines, current_state, indices, states, interpretation, context):
+    """Reader's first screen: market movement first, account state in one line."""
+    def basis(market, label):
+        state = (states or {}).get(market) or {}
+        close = state.get("last_close") or "미확인"
+        return f"{label} {state.get('label', '거래일정 미확인')} · 마지막 확정 종가 {close}"
+    lines = ["## 빠른 요약", "", "**기준** · " + basis("KR", "한국") + " / " + basis("US", "미국")
+             + " · 숫자는 이 보고서 생성시점 기준입니다.", ""]
+    if interpretation:
+        lines += ["**시장 해석** · " + interpretation, ""]
+    if indices:
+        lines += ["**주요시장**", *indices]
+    guard = (context.get("market_guard") or {}).get("action")
+    action = str(guard or "").strip() or "시장 게이트 입력 미연결"
+    lines += ["**기존 실행 방향** · " + action + " · 근거와 해제 조건은 아래 「오늘의 판단」에 있습니다.", ""]
+    # Stale-input warnings must stay on the first screen, not only in the account area.
+    lines += [line for line in judgment_lines if line.startswith(("> ", "**기준일 지연"))]
+    if lines[-1] != "":
+        lines.append("")
+    # The existing current-state block keeps its own heading right below.
+    if current_state:
+        lines += [current_state, ""]
+    return lines
+
+
+def _korea_first(states):
+    """Korean session report reads Korea first; otherwise the US close leads."""
+    kr = ((states or {}).get("KR") or {}).get("phase")
+    us = ((states or {}).get("US") or {}).get("phase")
+    return kr == "intraday" or (kr == "closed" and us != "intraday")
+
+
+def _observatory_status_lines(rendered, *, country):
+    """Every registered observatory item keeps a visible status instead of vanishing."""
+    from stock_lab_core.macro_monitor import METRICS
+    # Same series under another provider symbol already shown in the report tables.
+    equivalent = {"VIXCLS": "^VIX", "DGS10": "^TNX", "KRW=X": "USDKRW=X"}
+    groups = {}
+    for metric in METRICS:
+        if (metric.group == "국가 ETF") != country:
+            continue
+        shown = f"({equivalent.get(metric.symbol, metric.symbol)})" in rendered
+        groups.setdefault(metric.group, []).append(
+            f"{metric.name}({metric.symbol}) · {'본문 표시' if shown else '미연결'}")
+    lines = []
+    for group, items in groups.items():
+        lines.append(f"- **{group}**: " + " / ".join(items))
+    return lines
+
+
 def compose_reading_report(report, *, context, news, summary_rows, now):
-    """Expose one reading path; retain additional evidence once in the appendix.
+    """Quick summary -> market body -> appendix; one reading path, evidence once.
 
     The legacy renderer stays independently testable. Tables are copied, not
     recomputed; all per-row missing/stale/session qualifiers remain attached.
+    Section order only: no scores, gates or collectors change here.
     """
     from stock_lab_core.report_brief import build_news_brief, brief_theme
     from stock_lab_core.report_market_summary import _market_fact, korean_flow_tables, market_summary
@@ -159,23 +210,42 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     from stock_lab_core.report_digest import weekly_themes, weekly_theme_lines, weekly_source_lines, connection_checks, check_lines
     digest = weekly_themes(context, news, summary_rows, now)
     synthesis = market_summary(context, news, context.get("closed_flow_rows", []), states, now)
-    lines = [title, "", *decision_summary_lines(sections, context=context, summary_rows=summary_rows,
-        interpretation=synthesis.get("interpretation", "")), *weekly_theme_lines(digest), "## 매크로", "", *macro]
-    lines += _recent_releases(sections, context, now)
+    interpretation = synthesis.get("interpretation", "")
+
+    # Existing decision block, split into the account preamble and the judgment.
+    decision = decision_summary_lines(sections, context=context, summary_rows=summary_rows,
+                                      interpretation=interpretation)
+    cut = decision.index("## 오늘의 판단") if "## 오늘의 판단" in decision else len(decision)
+    account_preamble, judgment = decision[:cut], decision[cut:]
+    current_state = sections.get("지금 상태 3줄", "").strip()
+    if current_state and current_state in judgment:
+        judgment = [line for line in judgment if line != current_state]
+    judgment = [line for line in judgment if not line.startswith("**시장 해석** · ")]
+
+    head = [title, ""]
+    quick = _quick_summary_lines(judgment, current_state, indices, states, interpretation, context)
+    board = ["## 지수", "", *indices]
+
+    macro_lines = ["## 매크로", "", *macro]
     policy = tables(sections.get("중앙은행 공식 결과", ""))
     if policy:
-        lines += ["**중앙은행 공식 발표**"]
+        macro_lines += ["**중앙은행 공식 발표**"]
         for header, rows in policy:
-            lines += _table(header, rows)
+            macro_lines += _table(header, rows)
     if macro_brief["article_keys"]:
-        lines += macro_brief["lines"] + [""]
+        macro_lines += macro_brief["lines"] + [""]
+    economy = _recent_releases(sections, context, now)
+    economy_lines = ["## 물가·고용·소비·경기", "", *(economy or ["최근 발표로 고른 지표가 없습니다. 전체 경제지표 표는 상세 근거에 있습니다.", ""])]
+
     shared = context_news_lines(context, now, bucket="other_market_news", excluded=macro_brief["article_keys"], summary_rows=summary_rows)
-    if shared:
-        lines += ["**해외·공통 재료**", *shared]
-    lines += ["## 지수", "", *indices]
+    events = ["## 주요 기업과 사건", "", *(["**해외·공통 재료**", *shared] if shared else
+                                      ["시장별 기업 실적·사건은 미국·한국 시장 구역에 있습니다.", ""])]
+
     pipeline = build_earnings_pipeline(context, summary_rows, news, now)
     explained = {(r.get("link") or r.get("url")) for r in synthesis.get("background_news", [])}
+    market_blocks = {}
     for market, label in (("KR", "한국 시황"), ("US", "미국 시황")):
+        lines = []
         fact = _market_fact(context, market, states, now)
         # The event/implication/check table immediately below carries the body
         # evidence once; keep only observed market context in this introduction.
@@ -207,38 +277,52 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                                    excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained], summary_rows=summary_rows)
         if after:
             lines += ["**장 마감 후 · 다음 세션 재료**", *after]
-    lines += _portfolio_lines(sections)
-    lines += _flow_lines(sections)
-    lines += ["## 다음 일정", ""]
-    calendar_start = len(lines)
+        market_blocks[market] = lines
+    order = ("KR", "US") if _korea_first(states) else ("US", "KR")
+
+    rendered = "\n".join([*board, *macro_lines])
+    world = ["## 세계 시장과 국가 ETF", "",
+             "매크로 관측실에 등록된 국가 ETF의 현재 연결 상태입니다. 다른 국가 현지 지수는 아직 수집 대상이 아닙니다.", "",
+             *_observatory_status_lines(rendered, country=True), ""]
+    observatory = ["## 관측실 지표 연결 상태", "",
+                   "매크로 관측실 등록 지표 가운데 이 보고서 표에 들어온 항목과 아직 연결되지 않은 항목입니다. "
+                   "미연결 항목은 관측실 화면에서만 조회됩니다.", "",
+                   *_observatory_status_lines(rendered, country=False), ""]
+
+    calendar_lines = ["## 다음 일정", ""]
+    calendar_start = len(calendar_lines)
     calendar = sections.get("다가오는 일정", "")
     # Future calendar table only. Released results are in the market catalysts.
     scheduled = calendar.split("**기업 실적 촉매**", 1)[0]
     for header, rows in tables(scheduled):
         connected = [row for row in rows if not any("미연결" in cell for cell in row)]
         if connected:
-            lines += _table(header, connected)
+            calendar_lines += _table(header, connected)
     for header, rows in tables(calendar):
         if header[0] == "기업·상태":
             future = [row for row in rows if row[0].endswith(" · 예정")]
             if future:
-                lines += _table(header, future)
-    if len(lines) == calendar_start:
-        lines += ["확인된 향후 일정 미연결. 상세 연결 상태는 아래 근거에서 확인할 수 있습니다.", ""]
+                calendar_lines += _table(header, future)
+    if len(calendar_lines) == calendar_start:
+        calendar_lines += ["확인된 향후 일정 미연결. 상세 연결 상태는 아래 근거에서 확인할 수 있습니다.", ""]
     from stock_lab_core.report_event_watch import event_watch_lines
     watch = event_watch_lines(context, news, summary_rows, now, pipeline=pipeline)
     if watch:
-        lines[calendar_start:] = watch
+        calendar_lines[calendar_start:] = watch
         # Keep distinct policy/debt deadlines; IPO news already has a watch row.
         for header, rows in tables(scheduled):
             if header[0] == "일정·촉매":
                 extra = [row for row in rows if row[0] != "최근 IPO 보도"
                          and not any("미연결" in cell for cell in row)]
                 if extra:
-                    lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
+                    calendar_lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
+
+    lines = [*head, *quick, *board, *market_blocks[order[0]], *market_blocks[order[1]], *world,
+             *macro_lines, *economy_lines, *observatory, *weekly_theme_lines(digest), *_flow_lines(sections),
+             *events, *judgment, *account_preamble, *_portfolio_lines(sections), *calendar_lines]
     # Keep unique evidence; do not append a second complete legacy report.
     reading = "\n".join(lines)
-    status, checks = check_lines(connection_checks(context, summary_rows, digest, "\n".join(lines), now))
+    status, checks = check_lines(connection_checks(context, summary_rows, digest, reading, now))
     lines += [status, "", f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", "", *checks, *weekly_source_lines(digest)]
     lines.append(additional_evidence(report, reading))
     return "\n".join(lines).strip()
