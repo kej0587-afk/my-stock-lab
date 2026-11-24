@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Decision system audit](docs/maintenance/20261124_decision_system_audit.md) (user request 11-24, read-only): traced
+`calc_scores_and_decision` → quality / timing·structure / decision / gate / sizing, the priority map (P1–P4, Q1–Q4,
+finalization), 107 codes with labels/groups/thresholds, screen overlays (Today, precision, asset page, rebalance), and
+classified R/R, SMC, liquidity, flow, RS, macro, account weight and leverage into the six roles the user defined
+(candidate grade vs final decision kept as intended separation). Fixed-input divergences reproduced by
+`scripts/decision_audit_cases.py`. No logic, threshold, label, code, gate or sizing change. Decision gate 1637 passed /
+1 known failure (same as main).
+
+### Previous: daily market reading
+
 [Daily market reading](docs/maintenance/20261124_daily_market_reading.md) (user request on report 62): the quick
 summary's '시장 해석' was a condition-selected fixed sentence (two macro-burden names + SOXX/SMH·IGV 3M sign) in
 `report_market_summary.market_summary`; daily index moves, news, flows and sectors never reached it. New
@@ -499,6 +509,13 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Decision system audit (2026-11-24):** waiting for the user's review of
+`docs/maintenance/20261124_decision_system_audit.md`; the user will choose the decision-overhaul direction from it.
+Open user decisions are in its §10.3 (asset/rebalance using raw engine label vs Today overlays, label-text rebalance
+multipliers, two hold panels, US storm 100% DCA vs gate, core panic -40/-50% gate, macro-missing handling, four
+leveraged stage tables, macro double-count). Do not change decision logic before that choice. In a fresh cloud clone run
+`git fetch --unshallow origin` before the decision gate (parity tests read old commits).
 
 **Daily market reading (2026-11-24):** verified in production 17:57 KST (after 17:53 reboot, PR #30): 시장 해석 starts
 with "코스피가 +6.32% 급등해 전 거래일 -3.31% 급락을 하루 만에 되돌렸습니다", '오늘 달라진 점' lists 4 index flips + "외국인(KOSPI)
