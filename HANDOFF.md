@@ -490,13 +490,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check #12 local indices in production, then #14 KR retail-flow wording, then #17 content QA.**
+**Check #12 local indices and #14 flow-history note in production, then continue #17 content QA, then #18 performance baseline.**
 
 Verified in production 2026-11-24 ~15:10 KST (one report after PR #10/#11): 키움증권 "이차전지…" is under 시장·업종;
 PPI 2026-10 YoY row shows "6.6% Trading Economics · 대상월 2026-10" and the 컨센서스 연결 line names the row's month and
 says the 2026-09 verified survey was not used. #12 (local indices: `docs/maintenance/20261124_report_local_indices.md`)
 needs one production report: 닛케이·니프티·보베스파·대만·상하이·항셍·유로스톡스50 rows with local dates; VN-Index stays 미연결.
-#17: "상장사 자사주…" policy headline was tracked as an IPO plan; fixed (`docs/maintenance/20261124_report_listing_news_scope.md`). Continue #17 with other content checks.
+#17: "상장사 자사주…" policy headline was tracked as an IPO plan; fixed (`docs/maintenance/20261124_report_listing_news_scope.md`). Continue #17 with other content checks. #14: flow-history table now states its completed-day base date and that today's provisional flow is excluded (`docs/maintenance/20261124_report_kr_flow_history_note.md`).
 Known pre-existing failures on main (not from these PRs): test_bok_report_calendar (reading report),
 test_summary_ownership_restore RAM (looks under "## 내 보유 종목 영향"; table moved by the reading reorder),
 test_company_market_reading app adapter, test_dart_evidence_view, SEC review tests.
