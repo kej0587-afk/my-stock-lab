@@ -18,13 +18,17 @@ OBSERVATORY_DAILY = {"EWZ": ("브라질 ETF", "USD"), "INDA": ("인도 ETF", "US
                      "VNM": ("베트남 ETF", "USD"), "EWJ": ("일본 ETF", "USD"),
                      "^SKEW": ("SKEW", "pt"), "^VVIX": ("VVIX", "pt"), "^OVX": ("OVX", "pt")}
 COUNTRY_ETFS = ("EWZ", "INDA", "VNM", "EWJ")
-# Local benchmark indices beside the country ETFs (status #12). Local currency,
+# Local benchmark indices beside the country ETFs and other regions (status #12). Local currency,
 # local exchange calendar; a bar counts only after that exchange's close + 30 min.
 # Report-only: never added to rotation, scores or trading inputs. VN-Index is not
 # connected: the Yahoo daily series checked on 2026-11-24 returned a single bar.
 LOCAL_INDICES = {"^N225": ("닛케이225", "JPY", "Asia/Tokyo", (15, 30), "EWJ"),
                  "^NSEI": ("니프티50", "INR", "Asia/Kolkata", (15, 30), "INDA"),
-                 "^BVSP": ("보베스파", "BRL", "America/Sao_Paulo", (18, 0), "EWZ")}
+                 "^BVSP": ("보베스파", "BRL", "America/Sao_Paulo", (18, 0), "EWZ"),
+                 "^TWII": ("대만 가권", "TWD", "Asia/Taipei", (13, 30), ""),
+                 "000001.SS": ("상하이종합", "CNY", "Asia/Shanghai", (15, 0), ""),
+                 "^HSI": ("항셍", "HKD", "Asia/Hong_Kong", (16, 10), ""),
+                 "^STOXX50E": ("유로스톡스50", "EUR", "Europe/Berlin", (17, 30), "")}
 LOCAL_INDEX_MISSING = {"VNM": "베트남 VN-Index · 미연결(공급 일봉 불안정, 추정하지 않음)"}
 
 
@@ -90,7 +94,7 @@ def local_index_table_lines(context):
         value = number(obs.get("price"))
         dates = f"{obs.get('previous_date') or '미연결'} → {obs.get('date') or '미연결'}" if obs else "미연결"
         rows.append(" | ".join(_cell(x) for x in (
-            f"{name}({ticker}) · {etf} 비교", f"{value:,.2f} {unit}" if value is not None else "미연결",
+            f"{name}({ticker})" + (f" · {etf} 비교" if etf else ""), f"{value:,.2f} {unit}" if value is not None else "미연결",
             _pct(obs.get("return")) + (" · 현지 마감 일봉 · 이전 관측 대비" if obs else ""), dates,
             obs.get("source") or "미연결")))
     rows.extend(f"{label} | 미연결 | - | - | -" for label in LOCAL_INDEX_MISSING.values())

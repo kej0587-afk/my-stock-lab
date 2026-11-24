@@ -30,3 +30,12 @@ def test_missing_and_vietnam_stay_unconnected_and_rows_keep_local_currency():
     assert "2026-11-19 → 2026-11-23" in table
     assert "닛케이225(^N225) · EWJ 비교 | 미연결" in table
     assert "베트남 VN-Index · 미연결" in table
+
+
+def test_regional_index_without_etf_has_no_comparison_label():
+    frames = {"^HSI": frame(["2026-11-23", "2026-11-24"], [22383.74, 22305.01])}
+    early = local_index_observations(frames, datetime(2026, 11, 24, 17, 30, tzinfo=KST))["^HSI"]
+    late = local_index_observations(frames, datetime(2026, 11, 24, 17, 45, tzinfo=KST))["^HSI"]
+    assert early["date"] == "2026-11-23" and late["date"] == "2026-11-24"
+    table = "\n".join(local_index_table_lines({"local_indices": {"^HSI": late}}))
+    assert "항셍(^HSI) | 22,305.01 HKD" in table and "유로스톡스50(^STOXX50E) | 미연결" in table
