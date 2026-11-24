@@ -191,7 +191,11 @@ def parse_sec_release(data, ticker, cik, filing, url, now, *, issuer_name=None):
             title = body[:match.end()]
     if not title:
         raise ValueError("result_heading_unavailable")
-    name = re.sub(r"\b(?:incorporated|inc|corporation|corp|limited|ltd|plc)\b[.]?", "", issuer_name or ticker, flags=re.I)
+    # EDGAR appends state/status tags to conformed names ("APPLIED MATERIALS INC /DE",
+    # "... /NEW/"). Only trailing uppercase slash tags are dropped (user-approved
+    # 2026-11-24); the rest of the name must still match the headline exactly.
+    name = re.sub(r"(?:\s*/[A-Z]{2,4}/?)+\s*$", "", issuer_name or ticker)
+    name = re.sub(r"\b(?:incorporated|inc|corporation|corp|limited|ltd|plc)\b[.]?", "", name, flags=re.I)
     normalize = lambda value: re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
     if not name.strip() or not re.search(r"\b" + re.escape(normalize(name)) + r"\b", normalize(title)):
         raise ValueError("release_issuer_mismatch")
