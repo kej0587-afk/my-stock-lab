@@ -87,3 +87,22 @@ def test_export_preserves_call_mode_and_public_close_repair_only():
         assert repair['price'] == 30.88 and repair['date']=='2026-11-20'
         assert b'never-export' not in z.read('snapshot.json')
     assert selection_basis(is_free=None,has_position=None,selection_type='bad')['분석경로']=='미확인'
+
+
+def test_held_free_input_uses_account_path_like_today():
+    """User decision 2026-11-24: a held ticker found by free input is judged like Today."""
+    from stock_lab_core.signal_basis import decision_uses_free_path
+    assert decision_uses_free_path(selection_is_free=True, has_position=True) is False
+    assert decision_uses_free_path(selection_is_free=True, has_position=False) is True
+    assert decision_uses_free_path(selection_is_free=True, has_position=None) is True
+    assert decision_uses_free_path(selection_is_free=False, has_position=True) is False
+    assert decision_uses_free_path(selection_is_free=False, has_position=False) is False
+
+
+def test_precision_view_passes_the_decision_path_not_the_selection_type():
+    import ast
+    from pathlib import Path
+    source = Path(__file__).resolve().parents[1].joinpath("app.py").read_text(encoding="utf-8")
+    assert "precision_has_pos, fin_score, precision_decision_is_free," in source
+    assert "precision_has_pos, fin_score, is_free," not in source
+    ast.parse(source)
