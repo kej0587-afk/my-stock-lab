@@ -379,9 +379,14 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             key = (market, target, *_session_article_keys(row))
         score = (priority, int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
         candidates.append((score, published, key, theme, row, link, active))
-    selected, seen, counts, seen_links, seen_titles = [], set(), {}, set(), set()
+    selected, seen, counts, seen_links, seen_titles, seen_facts = [], set(), {}, set(), set(), set()
     for item in sorted(candidates, key=lambda item: ((news_observation(item[4], context)[0] if comprehensive else 0), item[0], item[1]), reverse=True):
         _, _, key, theme, row, _, _ = item
+        # Two article IDs carrying the same verified body sentence are one story
+        # (e.g. a re-filed update under a new headline); show it once.
+        facts = tuple(sorted(fact["summary"] for fact in verified_body_facts(row) if fact.get("summary")))
+        if facts and (key[:2], facts) in seen_facts:
+            continue
         if comprehensive:
             scope, url, title_key = key[:2], key[2], key[3]
             if (*scope, url) in seen_links or (*scope, title_key) in seen_titles:
@@ -392,6 +397,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             continue
         selected.append(item)
         seen.add(key)
+        if facts:
+            seen_facts.add((key[:2], facts))
         counts[theme] = counts.get(theme, 0) + 1
         if not comprehensive and len(selected) >= limit:
             break

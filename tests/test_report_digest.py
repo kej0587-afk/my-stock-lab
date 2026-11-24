@@ -117,5 +117,6 @@ def test_checks_do_not_mark_missing_data_or_wrong_date_passed():
     assert states["US 대표지수 기준일"] == "통과"
     assert states["상위 테마 본문"] == states["개인 수급 이력"] == states["계좌 입력"] == "미확인"
     summary, detail = check_lines(checks)
-    assert "통과 1 · 실패 1 · 미확인 4" in summary
+    # Content checks (#17) add three rows; with no report text/data they stay 미확인.
+    assert "통과 1 · 실패 1 · 미확인 7" in summary
     assert "정확도 보증은 아닙니다" in "\n".join(detail)
