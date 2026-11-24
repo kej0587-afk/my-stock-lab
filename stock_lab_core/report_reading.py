@@ -167,7 +167,7 @@ def _portfolio_lines(sections):
     return lines
 
 
-def _quick_summary_lines(judgment_lines, current_state, indices, states, interpretation, context):
+def _quick_summary_lines(judgment_lines, current_state, indices, states, interpretation, context, changes=()):
     """Reader's first screen: market movement first, account state in one line."""
     def basis(market, label):
         state = (states or {}).get(market) or {}
@@ -177,6 +177,8 @@ def _quick_summary_lines(judgment_lines, current_state, indices, states, interpr
              + " · 숫자는 이 보고서 생성시점 기준입니다.", ""]
     if interpretation:
         lines += ["**시장 해석** · " + interpretation, ""]
+    if changes:
+        lines += ["**오늘 달라진 점**", *("- " + change for change in changes), ""]
     if indices:
         lines += ["**주요시장**", *indices]
     guard = (context.get("market_guard") or {}).get("action")
@@ -281,7 +283,8 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     judgment = [line for line in judgment if not line.startswith("**시장 해석** · ")]
 
     head = [title, ""]
-    quick = _quick_summary_lines(judgment, current_state, indices, states, interpretation, context)
+    quick = _quick_summary_lines(judgment, current_state, indices, states, interpretation, context,
+                                 changes=synthesis.get("daily_changes", ()))
     board = ["## 지수", "", *indices]
 
     macro_lines = ["## 매크로", "", *macro]

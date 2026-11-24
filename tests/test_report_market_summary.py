@@ -32,8 +32,13 @@ def test_us_intraday_never_overwrites_korean_credit_background_macro_or_flow():
     assert "AI 신용우려" in headline and "기사 주장" in headline
     assert "코스피는 하락했습니다(-3.73%" in headline
     assert "미국 반도체는 반등을 시도 중입니다(+0.42%" in headline and "2026-10-20 장중·확정 아님" in headline
-    assert "금리" in headline and "반도체 중기 약세" in headline
-    assert "계좌" not in headline and "%p" not in headline
+    # The interpretation is written once (quick summary), not appended to the story.
+    reading = result["interpretation"]
+    assert reading not in headline and "금리" not in headline
+    assert reading.startswith("미국 반도체가 +0.42% 소폭 상승 중입니다") and "코스피 -3.73%로 급락" in reading
+    assert "제목 기준" in reading and "원인으로 확정하지 않습니다" in reading
+    assert "10Y 금리 5.14%" in reading and "3개월 -7.70%" in reading
+    assert "계좌" not in headline + reading and "%p" not in headline + reading
     assert (context, news) == original
 
 
@@ -146,7 +151,10 @@ def test_us_credit_background_is_not_attached_to_korean_market_move():
                "link": "https://www.reuters.com/us-credit-fixture"}
     result = market_summary(context, [article], [], market_session_states(NOW, context["sessions"]), NOW)
     assert result["headline"].index("코스피") < result["headline"].index("AI 신용우려")
-    assert "약세 확산 여부" in result["headline"] and "반등 지속성" not in result["headline"]
+    reading = result["interpretation"]
+    assert reading.startswith("미국 반도체가 -2.00% 하락 중입니다")
+    assert "미국장 배경으로는 AI 신용우려" in reading and "한국장 배경" not in reading.split("미국장 배경")[0]
+    assert "하락이 다른 업종으로 번지는지" in reading and "반등폭" not in reading
 
 
 def test_next_session_material_is_not_used_as_generic_story_fallback():
@@ -218,8 +226,12 @@ def test_close_summary_explains_rebound_divergence_and_distinct_medium_trends():
     assert "오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다" in headline
     assert "최근 5거래일은 -4.55%" in headline
     assert "지수 방향이 엇갈린 혼조" in headline
-    assert "반도체 중기 약세" in headline and "소프트웨어 중기 강세" in headline
-    assert len(headline.split("\n\n")) == 3
+    reading = result["interpretation"]
+    assert reading.startswith("코스피가 +3.29% 급등했습니다(2026-10-21 확정 종가)")
+    assert "나스닥 -0.02%, S&P500 +0.28%로 혼조" in reading
+    assert "코스피 5거래일 수익률 -4.55%" in reading and "반도체(SMH) 3개월 -6.91%" in reading
+    assert "소프트웨어(IGV)" not in reading  # a medium-term strength is not a remaining risk
+    assert len(headline.split("\n\n")) == 2
     assert "기사 주장" not in headline  # No news supplied, so no invented catalyst.
     assert context == original
 

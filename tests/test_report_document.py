@@ -66,8 +66,8 @@ def test_top_uses_existing_interpretation_without_repeating_market_overview():
     before = deepcopy((context, news))
     synthesis = market_summary(context, news, [], market_session_states(summary_now, context["sessions"]), summary_now)
     interpretation = synthesis["interpretation"]
-    assert interpretation and interpretation in synthesis["headline"]
-    assert len(interpretation) < 200
+    assert interpretation and interpretation not in synthesis["headline"]
+    assert len(interpretation) < 700
     output = compose_reading_report(REPORT, context=context, news=news, summary_rows=[], now=summary_now)
     top = output.split("## 지금 상태 3줄", 1)[0].split("## 이번 주 테마", 1)[0]
     assert "**시장 해석** · " + interpretation in top
