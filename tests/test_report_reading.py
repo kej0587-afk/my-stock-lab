@@ -234,3 +234,27 @@ def test_macro_rows_are_grouped_by_ticker_without_changing_cells():
         assert macro.count(row) == 1
     assert macro.index("유가(CL=F)") < macro.index("**심리·변동성**")
     assert macro.index("신규지표(ZZZ)") > macro.index("**기타**")
+
+
+def test_observatory_values_are_copied_and_only_collected_items_count_as_shown():
+    context = deepcopy(CONTEXT)
+    context["observatory_daily"] = {
+        "EWZ": {"price": 30.5, "date": "2026-11-13", "previous_price": 30.0, "previous_date": "2026-11-12",
+                "return": 30.5 / 30.0 - 1, "source": "Yahoo Finance daily"},
+        "INDA": {}, "VNM": {}, "EWJ": {},
+        "^VVIX": {"price": 101.25, "date": "2026-11-13", "previous_price": None, "previous_date": "",
+                  "return": None, "source": "Yahoo Finance daily"}, "^SKEW": {}, "^OVX": {}}
+    sections = dict(split_report_sections(render(context)))
+    world, macro, status = sections["세계 시장과 국가 ETF"], sections["매크로"], sections["관측실 지표 연결 상태"]
+    assert "브라질 ETF(EWZ) | 30.50 USD | +1.67% · 완료 일봉 · 이전 관측 대비 | 2026-11-12 → 2026-11-13 | Yahoo Finance daily" in world
+    assert "인도 ETF(INDA) | 미연결 | 미연결 | 미연결 | 미연결" in world
+    assert "브라질 ETF(EWZ) · 본문 표시" in world and "인도 ETF(INDA) · 미연결" in world
+    assert "VVIX(^VVIX) | 101.25 pt" in macro and "SKEW(^SKEW) | 미연결" in macro
+    assert "VVIX(^VVIX) · 본문 표시" in status and "SKEW(^SKEW) · 미연결" in status
+    assert macro.index("**옵션 위험 · 관측실 지표**") > macro.index("10Y 금리(^TNX)")
+
+
+def test_no_observatory_data_keeps_status_only():
+    sections = dict(split_report_sections(render()))
+    assert "옵션 위험" not in sections["매크로"]
+    assert "브라질 ETF(EWZ) · 미연결" in sections["세계 시장과 국가 ETF"]

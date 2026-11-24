@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Observatory values](docs/maintenance/20261124_report_observatory_values.md) (status #10/#11 part),
+started at `8d15a36a`. Country ETFs EWZ/INDA/VNM/EWJ (세계 시장과 국가 ETF) and SKEW/VVIX/OVX
+(매크로 · 옵션 위험) now show completed-daily values from the same one-year Yahoo batch; 미연결 per
+row when absent; kept out of alignment/live/rotation via `daily_only`. Only items with an actual
+observation count as 본문 표시. Remaining 미연결: FRED/CNN/Cboe items, JPY=X, BTC-USD, Npay 005930,
+local indices (each needs a new request in the report path; measure first).
+Report bundle 1636 pass; earnings/SEC/DART/macro 690 pass / 6 known failures; gate 208.
+
+### Previous completed earnings market pools
+
 [Earnings market pools](docs/maintenance/20261124_earnings_market_pools.md) (status #5), started
 at `90d0cd1c`. KR (DART) issuers shared one 3-worker pool with US issuers that sit in SEC's 0.2 s
 fair-access wait, so KR work queued behind SEC. Now one 3-worker pool per market; the 24 s shared
@@ -250,6 +260,12 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
+PR #5 (`8d15a36a`, market pools) after Claude reboot, cold cache, same 78 issuers, one run each:
+`collection_time_budget` withheld 51 → 41 (KR 18 → 13); 정기보고서 확인 10 → 15; 공식 발표 확인
+9 → 12. Single samples under live provider latency, not a controlled benchmark. Still withheld KR:
+디아이, 삼성E&A, 케이씨, 원익홀딩스, 프로텍, 로보티즈, 나노신소재, 나무가, 코스맥스, 심텍,
+케이씨텍, 효성중공업, 티엘비. Successes stay cached (existing TTLs), so later runs fill more.
+
 PR #4 (`90d0cd1c`) after Claude reboot, report 2026-11-24 ~13:5x KST: NVDA FY2027Q3 이익·EPS row
 shows "EPS (GAAP·조정)" with the $2.70/$2.68 diluted EPS sentence; PANW shows 영업이익 (GAAP).
 Cold-cache earnings coverage in the same run: 78 checked, 51 `collection_time_budget` (baseline
@@ -442,13 +458,12 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Measure the market-pool change in production, then connect observatory/country ETF values (#10, #11).**
+**Check observatory values in production, then 물가·고용·소비·경기 selection (empty on 11-24 runs).**
 
-After merge/reboot, generate one report on a cold cache (right after reboot, same 78 issuers) and
-count `공식 공시 수집 시간 한도` rows against the baseline 51. Report the number as measured; if
-KR rows remain withheld, look at per-request latency before touching any budget. Then #10/#11:
-show observatory indicators and the 4 country ETFs with real values from existing collectors
-(no new provider without checking its terms), keeping 미연결 where nothing is collected.
+After merge/reboot, confirm EWZ/INDA/VNM/EWJ and SKEW/VVIX/OVX values and dates in one report and
+that the 관측실 status marks only those with values as 본문 표시. Then find why `_recent_releases`
+picked no recent release on 2026-11-24 (check its window and the release dates in the appendix
+경제지표 table); fix only the selection, never the release values.
 
 ## Verification Discipline
 

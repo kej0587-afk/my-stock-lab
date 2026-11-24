@@ -12,6 +12,46 @@ COMMODITY_BOARD = {"GC=F": ("금 선물", "USD/트로이온스"),
                    "HG=F": ("구리 선물", "USD/파운드")}
 
 
+# Observatory items already priced by the same Yahoo daily batch (2026-11-24, status #10/#11).
+# Report-only: never added to rotation, scores or trading inputs.
+OBSERVATORY_DAILY = {"EWZ": ("브라질 ETF", "USD"), "INDA": ("인도 ETF", "USD"),
+                     "VNM": ("베트남 ETF", "USD"), "EWJ": ("일본 ETF", "USD"),
+                     "^SKEW": ("SKEW", "pt"), "^VVIX": ("VVIX", "pt"), "^OVX": ("OVX", "pt")}
+COUNTRY_ETFS = ("EWZ", "INDA", "VNM", "EWJ")
+
+
+def observatory_daily_observations(frames, now):
+    """Last two completed daily closes per item; missing stays empty, never filled."""
+    from stock_lab_core.report_evidence import closed_daily_frame
+    result = {}
+    for ticker in OBSERVATORY_DAILY:
+        frame = closed_daily_frame(frames.get(ticker), ticker, now)
+        if frame.empty:
+            result[ticker] = {}
+            continue
+        current = float(frame["Close"].iloc[-1])
+        previous = float(frame["Close"].iloc[-2]) if len(frame) > 1 else None
+        result[ticker] = {"price": current, "date": str(frame.index[-1].date()), "previous_price": previous,
+                          "previous_date": str(frame.index[-2].date()) if previous is not None else "",
+                          "return": current / previous - 1 if previous else None,
+                          "source": frame.attrs.get("source") or "Yahoo Finance daily"}
+    return result
+
+
+def observatory_table_lines(context, tickers):
+    """Copy collected observations into a reader table; absent items stay 미연결."""
+    rows = []
+    for ticker in tickers:
+        name, unit = OBSERVATORY_DAILY[ticker]
+        obs = (context.get("observatory_daily") or {}).get(ticker) or {}
+        value = number(obs.get("price"))
+        dates = f"{obs.get('previous_date') or '미연결'} → {obs.get('date') or '미연결'}" if obs else "미연결"
+        rows.append(" | ".join(_cell(x) for x in (
+            f"{name}({ticker})", f"{value:,.2f} {unit}" if value is not None else "미연결",
+            _pct(obs.get("return")) + (" · 완료 일봉 · 이전 관측 대비" if obs else ""), dates, obs.get("source") or "미연결")))
+    return ["대상 | 수준 | 등락·비교 기준 | 기준일 | 출처", "--- | --- | --- | --- | ---", *rows, ""]
+
+
 def _pct(value, unit="%"):
     value = number(value)
     return f"{round(value * 100, 2) or 0:+.2f}{unit}" if value is not None else "미연결"
