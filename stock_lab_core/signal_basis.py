@@ -26,6 +26,15 @@ def selection_basis(*, is_free, has_position, selection_type):
     }
 
 
+def decision_uses_free_path(*, selection_is_free, has_position):
+    """A held ticker searched by free input is judged on the account path, like Today.
+
+    User decision 2026-11-24: one ticker, one verdict path across screens. Only an
+    unheld free-input ticker keeps the free-input path.
+    """
+    return bool(selection_is_free) and has_position is not True
+
+
 def source_bar_observation(frame, provenance, ticker):
     """Audit daily rows against the *selected* quote, never discard/reclassify them."""
     date = source_date(frame)

@@ -67,7 +67,7 @@ if not all(hasattr(_precision_selection, name) for name in ("remember_precision_
     from importlib import reload as _reload_precision_selection
     _reload_precision_selection(_precision_selection)
 from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection, apply_precision_quick_target
-from stock_lab_core.signal_basis import build_signal_basis, quote_display_label, render_signal_basis, selection_basis
+from stock_lab_core.signal_basis import build_signal_basis, quote_display_label, render_signal_basis, selection_basis, decision_uses_free_path
 from stock_lab_core.precision_chart_view import (
     build_price_figure, finish_price_figure, frame_last_date, render_chart_basis,
 )
@@ -34635,11 +34635,13 @@ if main_page == "precision":
         chart_df, _precision_live_ohlcv_applied, _precision_live_issue = precision_live_context
         precision_signal_basis = build_signal_basis(df, precision_live_context, ticker=tkr,
                                                      input_price=display_cur_p, manual=manual_cur_p > 0)
+        # A held ticker found by free input uses the account path, as in Today.
+        precision_decision_is_free = decision_uses_free_path(selection_is_free=is_free, has_position=bool(has_p))
         precision_signal_basis.update(selection_basis(
-            is_free=is_free, has_position=bool(has_p), selection_type=selected_option.get("type")))
+            is_free=precision_decision_is_free, has_position=bool(has_p), selection_type=selected_option.get("type")))
         precision_has_pos = has_p
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
-                                     precision_has_pos, fin_score, is_free,
+                                     precision_has_pos, fin_score, precision_decision_is_free,
                                      app_mode, 0.0, 0.0, 0.0,
                                      live_price=display_cur_p, _live_indicator_context=precision_live_context)
         precision_review_download.update(
@@ -34862,7 +34864,7 @@ if main_page == "precision":
             c["chart_structure"] = {}
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)
             p_line = my_p
-            _show_avg = p_line > 0 and not is_free and has_p
+            _show_avg = p_line > 0 and not precision_decision_is_free and has_p
             avg_line = p_line if _show_avg else 0.0
             show_chart_patterns = st.checkbox(
                 "차트 패턴/추세선 표시",
