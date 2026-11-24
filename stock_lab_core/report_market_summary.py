@@ -304,7 +304,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     facts = [_market_fact(context, market, states, now) for market in ("KR", "US")]
     from stock_lab_core.article_context import verified_body_facts, body_context_sentence
     from stock_lab_core.article_market_events import event_context_sentence
-    claims, market_claims, selected_news, body_sources = [], {}, {}, {}
+    claims, market_claims, selected_news, body_sources, eligible_news = [], {}, {}, {}, {}
     for fact in facts:
         if fact["change"] is None:
             continue
@@ -315,6 +315,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                     and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
         if fact["live"]:
             eligible = [row for row in eligible if row.get("news_bucket") == "current_session_news"]
+        eligible_news[fact["market"]] = eligible
         candidates = market_cause_candidates(eligible, fact["market"], fact["date"])
         local_claims, local_news = [], []
         if fact["market"] == "KR" and fact["change"] < 0:
@@ -380,22 +381,15 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                      if context.get("sessions", {}).get("US") and row.get("as_of") == context["sessions"]["US"]}
     stress = macro_stress(aligned_macro)
     burdens = [row for row in stress["rows"] if row["contribution"] > 0]
-    names = {"10Y 금리": "금리", "유가": "유가", "MOVE": "채권 변동성", "VIX": "주식 변동성", "환율": "환율"}
     burdens.sort(key=lambda row: (-row["contribution"], row["name"]))
-    burden = "·".join(names.get(row["name"], row["name"]) for row in burdens[:2])
-    flow_text, flow_condition = _flow_evidence(context, flow_rows)
-    inference = []
-    if burden:
-        inference.append(burden + " 부담")
-    if flow_condition:
-        inference.append(flow_condition)
+    flow_text, _ = _flow_evidence(context, flow_rows)
     breadth = broad_market_reading(context, states, now)
     kr_sector = korean_sector_reading(context, facts[0], states, now, news)
     kr_programs = korean_program_reading(context, facts[0])
     kr_investors = korean_investor_reading(context, facts[0], programs_connected=bool(kr_programs))
+    kr_sector_concise = korean_sector_reading(context, facts[0], states, now, news, concise=True)
     kr_observations = ". ".join(part for part in (
-        korean_sector_reading(context, facts[0], states, now, news, concise=True),
-        korean_investor_reading(context, facts[0], concise=True)) if part)
+        kr_sector_concise, korean_investor_reading(context, facts[0], concise=True)) if part)
     sentences, market_observations = [], {}
     for fact in facts:
         topics = market_claims.get(fact["market"], [])
@@ -423,14 +417,23 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         else:
             sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
     headline = ".\n\n".join(sentences)
-    interpretation = ""
-    if inference:
-        caution = burden or "약세" in flow_condition
-        check = "반등 지속성을" if any((fact["change"] or 0) > 0 for fact in facts) else "약세 확산 여부를"
-        ending = (f" 환경에서는 {check} 확인할 국면입니다(종합 해석)" if caution else
-                  "와 당일 방향의 동행 여부를 확인할 국면입니다(종합 해석)")
-        interpretation = ("다만 " if caution else "") + "과 ".join(inference) + ending
-        headline += ".\n\n" + interpretation
+    # Today's change -> reported background -> flows/sectors -> remaining risk.
+    # The quick summary carries it once; the story keeps the observations.
+    from stock_lab_core.report_daily_change import corroborating_outlets, daily_reading
+    from stock_lab_core.report_reading import _korea_first
+    corroboration = {market: [outlet for topic in topics[:2]
+                              for outlet in corroborating_outlets(topic, eligible_news.get(market, []))]
+                     for market, topics in market_claims.items() if market not in body_sources}
+    corroboration = {market: list(dict.fromkeys(outlets)) for market, outlets in corroboration.items()}
+    # A verified body is cited once in the story; the summary names its topic only.
+    reading_claims = {market: ([news_theme(text(row.get("title"))) for row in body_sources[market]]
+                               if market in body_sources else topics)
+                      for market, topics in market_claims.items()}
+    reading = daily_reading(context, states, now, claims=reading_claims, body_markets=set(body_sources),
+                            corroboration=corroboration, burden_rows=burdens[:2], medium=_medium_low(context, flow_rows),
+                            kr_sector_text=kr_sector_concise.replace("관측 업종 ETF", "한국 관측 업종 ETF", 1),
+                            us_sectors=us_sector_spread(context), korea_first=_korea_first(states))
+    interpretation = reading["interpretation"]
     if states["US"]["phase"] == "preopen" and futures_line:
         headline += ".\n\n미국 개장 전 참고: " + futures_line
     incomplete = any(row.get("stress_incomplete") for row in aligned_macro.values()) or any(name not in aligned_macro for name in ("유가", "환율"))
@@ -474,9 +477,8 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         if market_claims.get(market):
             overview += f" {name} 보도상 배경: " + "·".join(market_claims[market]) + "(기사 주장)."
             overview += " 출처는 아래 시장 스토리에 표시합니다."
-    if burden:
-        overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
     return {"headline": headline, "overview": overview, "interpretation": interpretation,
+            "daily_changes": reading["changes"],
             "evidence": evidence, "market_claims": market_claims,
             "market_readings": {fact["market"]: sentence for fact, sentence in zip(facts, sentences)},
             "market_observations": market_observations,
@@ -502,7 +504,21 @@ def broad_market_reading(context, states, now):
             + f"({day} {'장중' if live else '확정 종가'}). " + reading + ".")
 
 
-def broad_sector_reading(context):
+def _medium_low(context, flow_rows):
+    """Weakest dated 3M return among the semiconductor/software ETFs, if negative."""
+    sessions = context.get("sessions", {})
+    found = []
+    for row in records(context.get("closed_flow_rows")) + records(context.get("sector_rows")) + records(flow_rows):
+        ticker = text(first(row, "Ticker", "티커"))
+        ret = number(first(row, "3개월수익률", "3M"))
+        if ticker in {"SMH", "SOXX", "IGV"} and ret is not None and text(first(row, "기준일", "date")) == sessions.get("US"):
+            found.append((ret, ticker))
+    low = min(found, default=None)
+    return (low[1], low[0]) if low and low[0] < 0 else None
+
+
+def us_sector_spread(context):
+    """(high, low, rising, total, falling) over dated US sector ETF closes, or None."""
     from stock_lab_core.report_prices import SECTORS
     names = {**SECTORS, "XLF": "금융", "XLI": "산업재", "XLP": "필수소비", "XLV": "헬스케어", "XLY": "경기소비"}
     seen, items = set(), []
@@ -516,10 +532,17 @@ def broad_sector_reading(context):
         seen.add(ticker)
         items.append((value, names[ticker], ticker))
     if len(items) < 2:
-        return ""
+        return None
     items.sort()
-    low, high = items[0], items[-1]
-    return (f"미국 관측 업종 {len(items)}개 중 상승 {sum(v > 0 for v, _, _ in items)} / 하락 {sum(v < 0 for v, _, _ in items)}. "
+    return items[-1], items[0], sum(v > 0 for v, _, _ in items), len(items), sum(v < 0 for v, _, _ in items)
+
+
+def broad_sector_reading(context):
+    spread = us_sector_spread(context)
+    if not spread:
+        return ""
+    high, low, rising, total, falling = spread
+    return (f"미국 관측 업종 {total}개 중 상승 {rising} / 하락 {falling}. "
             f"상대 상위 {high[1]}({high[2]}) {_pct(high[0])}, 상대 하위 {low[1]}({low[2]}) {_pct(low[0])}. "
             "표본 ETF의 확정 종가 분포이며 시장 전체 종목의 확산률·자금 유입액은 아닙니다.")
 

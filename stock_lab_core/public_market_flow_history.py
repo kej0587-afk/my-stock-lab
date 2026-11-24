@@ -103,7 +103,8 @@ def saved_public_flow_history(snapshots, *, checked_at):
 
 def summarize_daily_values(values, days):
     """Exact-session sums and bounded runs; shared by snapshots and daily backfill."""
-    result = dict(sum_5=None, sum_20=None, streak_days=None, streak_direction="", missing_dates={})
+    result = dict(sum_5=None, sum_20=None, streak_days=None, streak_direction="", missing_dates={},
+                  prior_streak_days=None)
     for window in (5, 20):
         selected = days[-window:]
         missing = [d for d in selected if values[d] is None]
@@ -124,6 +125,23 @@ def summarize_daily_values(values, days):
                 result["streak_days"] = count
                 break
             count += 1
+        # The opposite run just before the current one (a turn's "after N days").
+        # Its start must also be observed; a missing day or the window edge leaves it unknown.
+        if result["streak_days"]:
+            before = list(reversed(days))[result["streak_days"]:]
+            if before and values[before[0]] not in (None, 0):
+                sign, prior = values[before[0]] > 0, 0
+                for d in before:
+                    value = values[d]
+                    if value is None:
+                        prior = None
+                        break
+                    if value == 0 or (value > 0) != sign:
+                        break
+                    prior += 1
+                else:
+                    prior = None
+                result["prior_streak_days"] = prior
     return result
 
 

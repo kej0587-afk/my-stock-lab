@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Daily market reading](docs/maintenance/20261124_daily_market_reading.md) (user request on report 62): the quick
+summary's '시장 해석' was a condition-selected fixed sentence (two macro-burden names + SOXX/SMH·IGV 3M sign) in
+`report_market_summary.market_summary`; daily index moves, news, flows and sectors never reached it. New
+`report_daily_change.py` writes ① the day's biggest change (vs prior day, runs) ② reported background at its
+confirmed level (title-only = not a cause; outlet count) ③ KOSPI flows/turns + sector leaders ④ remaining risk with
+today's numbers and next checks; plus '오늘 달라진 점'. No repeat in 시장 스토리/핵심 해석. Scores/gates untouched.
+Before/after on 11-18/20/23/24 public closes in the doc. Report gate 208/208; full suite 33 failures before and after (same list).
+
+### Previous completed news dedup
+
 [News dedup/classification](docs/maintenance/20261124_news_dedup_classification.md) (status #15):
 article title keys drop wire-update marks ("(종합)", "(종합N보)", "[속보]") and unify ∼/~, so one
 story's versions collapse; a bank quoted as forecaster (JP모건 "…AI 자본지출…") is classified by
@@ -489,6 +499,12 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Daily market reading (2026-11-24):** after deploy, check one real report: 시장 해석 starts with the day's index change,
+'오늘 달라진 점' shows below it, and the 시장 스토리 first paragraph has no macro warning. Production check result goes in
+the doc's section 6. Follow-ups: sector-leader change needs the prior day's sector ranking (not stored now); earnings/policy
+"completed" items for '오늘 달라진 점'. Performance: two Today JSONs (83.9s completed; 135s interrupted by a Streamlit rerun,
+1.1s active) are recorded in `docs/maintenance/20261124_performance_baseline.md`; exclude rerun-interrupted runs from comparisons.
 
 **#5 follow-up: corrected 15:55 KST. The 15:47 report had 8 time-budget withholds (KR 0 / US 8), not 38; the 12 KR issuers withheld at 15:31 all show reported revenue/profit. Diagnostics: dart_accounts 15 hits / 13 misses, DART 54 requests, discovery 23.43s. The remaining US 8 are bounded by the SEC 0.2s fair-access spacing (117 requests in 24s). Next: confirm KR stays at 0 in one more normal report; reducing US withholds would need a cache-policy decision from the user (do not change budget/spacing).**
 **#5 cold-start cause (16:07 KST report, first after reboot):** the DART corporate-code ZIP took 32.8s and ran before any issuer, so all 74 issuers (US too) were withheld. Fix: the DART directory setup now runs beside the US pool; only KR issuers wait for it (no budget/timeout/retry change). Verified 16:17 KST (first report after the 16:12 reboot): 16 withheld (KR 7 / US 9) vs 74 before; SEC used its 117-request cap. Open option for the user: use the stored official snapshot first on cold start (policy change).
