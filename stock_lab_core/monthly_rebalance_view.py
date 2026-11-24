@@ -370,6 +370,7 @@ def render_monthly_rebalancing_calculator(
         calc_rows = build_rebalance_plan(
             eligible, target_w_sum, total_invest, usdkrw, _signal_cache,
             always_invest_set, redistribute_mode, st.session_state["rebcalc_accum"], signal_multiplier,
+            signal_decisions=st.session_state.get("_ticker_signal_decision_cache", {}),
         )
         _refresh_accumulated_state(st, calc_rows)
 

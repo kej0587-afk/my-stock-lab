@@ -34,6 +34,21 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Decision policy v1 A/B stage](docs/maintenance/20261124_decision_ab_stage.md) (user request 11-24, no result change):
+A-1 perfect-storm manual wording matches the emitted label; A-2 hold panel says "매크로 미확인" when macro is missing
+(score unchanged). B-1 `decision_behavior_groups.py` (127 codes → 9 groups); B-2 code-based group table +
+`resolve_decision_group` (every emitted label keeps its old group); B-3 `rebalance_multiplier.py` (multiplier from
+decision_code / core DCA stage, legacy parser only as fallback; signal rows carry `_ticker_signal_decision_cache`);
+B-6 `decision_code_sets.py` (Today lists, core panic set, precision plan block/wait as explicit set differences);
+B-7 `app.apply_precision_post_decision` (demo + precision; Today kept inline for per-stage error isolation);
+B-5 `leverage_stage.py` (reads L0/LX/L1/L2 from the final decision, L3 reserved for C); B-4 `tech_review.py` +
+`tech_review_view.py` shadow verdict shown in 정밀관측소 under the role table, never written back.
+Changed files: app.py, stock_lab_core/{decision_engine,today_queue,monthly_rebalance,monthly_rebalance_view,
+print_report_data}.py, the six new modules above + `rebalance_multiplier_table.py`, scripts/{policy_replay,check_refactor}.py,
+tests (5 new files, 3 updated). Verification and parity results: doc §2.
+
+### Previous: decision policy validation plan
+
 [Decision policy validation plan](docs/maintenance/20261124_decision_policy_validation_plan.md) (user decisions 11-24
 on the proposal, docs + read-only replay only): replayed the current engine/gate on history with
 `scripts/policy_replay.py` (33 stocks 2015–2026 weekly = 17,902 rows; TQQQ/QLD/SOXL 2012–2026 × 5 cost levels = 10,875;
@@ -532,7 +547,17 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Decision policy v1 (2026-11-24):** the user adopted the proposal direction (14 decisions, recorded in §1 of
+**Decision policy v1, after A/B (2026-11-24):** A-1/A-2 and B-1..B-7 are done with identical replay output
+(`docs/maintenance/20261124_decision_ab_stage.md`). Next, one item at a time, each with a replay table (현행 / 대안 /
+상승장 / 횡보장 / 하락장 / 실행가능 건수 / 차단·대기 감소량 / 평균 R / 손실 꼬리 / 골든·회귀 테스트) and the user's approval:
+A-4 (PROFIT_TAKE_REVIEW buyish), A-5/A-6 (macro failure 1.5 assumption, missing macro = DATA_CHECK), then C-1/C-1b
+(R/R by type: leader, 52w breakout, MA5/FVG exception, normal pullback, quality recovery; EXCEPTION_ENTRY 정찰, LEADER_MA5
+wait list, BREAKOUT_52W shadowing together), C-3 (leverage L3 inside `leverage_stage.py`; severe market defense still
+blocks leveraged crash DCA), C-2 (macro 2.5–4.5 only after rebuilding the historical macro series; keep the 4.5 guard).
+Before C, reduce survivorship bias (point-in-time constituents or a wider sample). Parity check for any B-type change:
+`scripts/policy_replay.py parity` on main and on the branch, all columns equal.
+
+**Decision policy v1 (2026-11-24, superseded by the line above):** the user adopted the proposal direction (14 decisions, recorded in §1 of
 `docs/maintenance/20261124_decision_policy_validation_plan.md`) and asked for staged work. Next: A-1/A-2 (display bugs),
 then B-1..B-3 (behavior groups, frozen group table, code-based rebalance multiplier reproducing current values), each
 with `scripts/policy_replay.py` output identical before/after. A-4..A-6 and every C item change results: show the replay

@@ -220,6 +220,14 @@ def test_active_holdings_are_prepared_once_per_render_and_not_cached_between_run
     assert second == run(sources[0], changed)
 
 
+class _UndoDecisionMultiplier(ast.NodeTransformer):
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Name) and node.func.id == "_decision_multiplier":
+            return ast.copy_location(ast.parse('signal_multiplier(signal or "-", bucket, dip_level=dip_level)', mode="eval").body, node)
+        return node
+
+
 def test_moved_helper_bodies_are_unchanged_except_explicit_inputs_and_empty_guard(sources):
     root = next(n for n in ast.parse(sources[0]).body if isinstance(n, ast.FunctionDef) and n.name == MAIN)
     moved = {}
@@ -255,6 +263,8 @@ def test_moved_helper_bodies_are_unchanged_except_explicit_inputs_and_empty_guar
             new_body.pop(matching[0])
         if old.name in {"_build_monthly_plan_report", "_build_total_needed_shares_report"}:
             body = [ExplicitInputs().visit(statement) for statement in body]
+            # B-3 (2026-11-24): the multiplier call also passes the cached engine decision.
+            new_body = [_UndoDecisionMultiplier().visit(statement) for statement in new_body]
         assert ast.dump(ast.Module(body=body, type_ignores=[])) == ast.dump(
             ast.Module(body=new_body, type_ignores=[])), old.name
 

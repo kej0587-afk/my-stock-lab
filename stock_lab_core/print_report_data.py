@@ -15,6 +15,13 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 
 
+
+def _decision_multiplier(signal_multiplier, signal, bucket, dip_level, decision):
+    """B-3: read the multiplier from the engine decision code when it matches the cached label."""
+    if isinstance(decision, dict):
+        return signal_multiplier(signal or "-", bucket, dip_level=dip_level, decision=decision)
+    return signal_multiplier(signal or "-", bucket, dip_level=dip_level)
+
 def make_report_asset_df(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw):
     base_df = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
     total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
@@ -154,7 +161,8 @@ def build_monthly_plan_report(active_df, state, usdkrw, *, sanitize_asset_name, 
             elif pct_drop <= -0.05:
                 dip_level = 1
         try:
-            multiplier = signal_multiplier(signal or "-", bucket, dip_level=dip_level)
+            multiplier = _decision_multiplier(signal_multiplier, signal, bucket, dip_level,
+                                              state.get("_ticker_signal_decision_cache", {}).get(ticker))
         except Exception:
             multiplier = 1.0 if bucket == "core" else 0.0
 
@@ -264,7 +272,8 @@ def build_total_needed_shares_report(active_df, state, usdkrw, portfolio_summary
             elif pct_drop <= -0.05:
                 dip_level = 1
         try:
-            timing_multiplier = signal_multiplier(signal or "-", bucket, dip_level=dip_level)
+            timing_multiplier = _decision_multiplier(signal_multiplier, signal, bucket, dip_level,
+                                                     state.get("_ticker_signal_decision_cache", {}).get(ticker))
         except Exception:
             timing_multiplier = 1.0 if bucket == "core" else 0.0
         if needed_shares < -0.5:

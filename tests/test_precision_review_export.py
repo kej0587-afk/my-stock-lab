@@ -859,3 +859,34 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
     assert captured["manifest"]["completion"] == "complete"
     assert captured["manifest"]["stage"] == "panels"
     assert before_complete <= datetime.fromisoformat(captured["manifest"]["captured_at"]) <= after_complete
+
+
+def test_hold_or_cut_panel_reports_missing_macro_as_unchecked_not_zero():
+    """A-2 (2026-11-24): missing macro keeps the old score (no penalty) but is shown as 미확인."""
+    def run(state):
+        ui = _UI()
+        ui.session_state = state
+        render = _load_render_function("render_hold_or_cut_panel", {
+            "st": ui, "clean_float": lambda value, default: default if value is None else float(value),
+            "finite_num": np.isfinite, "escape_html_value": str,
+            "build_leveraged_precision_state": lambda *args: {},
+            "qualify_hold_action_plan": qualify_hold_action_plan,
+            "detect_fin_trend_direction": lambda meta: {"score": 0, "label": "stable", "has_data": False},
+        })
+        return render("Test", "MSFT", False, 4, {}, {
+            "cur_p": 120, "dd": -0.05, "trend": "정배열", "rs_label": "🚀강함",
+        }, 100, True)
+
+    missing, normal = run({}), run({"_app_final_macro_risk": 1.0})
+    assert missing["total_score"] == normal["total_score"]
+    assert missing["decision"] == normal["decision"]
+    assert any("매크로 미확인" in reason for reason in missing["cut_reasons"])
+    assert not any("매크로 미확인" in reason for reason in normal["cut_reasons"])
+
+
+def test_hold_or_cut_export_accepts_unchecked_macro():
+    archive, data = _read(hold_or_cut={"ticker": "MSFT", "displayed": True, "decision": "조건부 보유",
+                                       "action": "현재 매수 허가가 아닙니다", "macro_risk": float("nan"),
+                                       "cut_reasons": ["매크로 미확인: 시장위험이 점수에 반영되지 않았습니다(확인 필요)"]})
+    assert "hold_or_cut.csv" in archive.namelist()
+    assert data["sections"]["hold_or_cut"]["macro_risk"] in (None, "미확인") or data["sections"]["hold_or_cut"]["macro_risk"] != data["sections"]["hold_or_cut"]["macro_risk"]

@@ -37,6 +37,8 @@ SCOPES = {
         "test_portfolio_dashboard_bridge", "test_portfolio_connection_audit",
         "test_portfolio_holding_review", "test_dashboard_consistency", "test_dashboard_view",
         "test_portfolio_candidate_view", "test_portfolio_helpers", "test_portfolio_renderer_refactor",
+        "test_decision_group_freeze", "test_decision_behavior_groups", "test_rebalance_multiplier_table",
+        "test_tech_review_shadow",
     ),
     "report": (
         "test_theme_selection",

@@ -1153,6 +1153,101 @@ DECISION_GROUP_BY_CODE = {
     "FUND_OVERSOLD_REBALANCE_REVIEW": "caution",
 }
 
+# B-2 (2026-11-24): groups that build_decision_outcome used to infer from label words, frozen
+# to the exact value the inference gave for every label these codes emit. Values are not a policy
+# review (e.g. PROFIT_TAKE_REVIEW stays buyish until A-4 is decided); see
+# docs/maintenance/20261124_decision_policy_validation_plan.md §9 B-2.
+DECISION_GROUP_BY_CODE.update({
+    "ABOVE_COST_HOLD": "neutral",
+    "ABOVE_COST_WAIT": "neutral",
+    "ABOVE_COST_WAIT_PULLBACK": "neutral",
+    "A_GRADE_ADD_ON_REVIEW": "neutral",
+    "A_GRADE_TECH_REBOUND": "neutral",
+    "A_UPTREND_SEARCH_ENTRY": "neutral",
+    "BAND_UPPER_WAIT": "caution",
+    "BELOW_COST_TARGET_FILLED": "caution",
+    "BREAKOUT_52W_ENTRY": "buyish",
+    "CONCENTRATED_ETF_UPPER_WAIT": "caution",
+    "COST_MINUS_3_7_DCA": "buyish",
+    "COST_MINUS_7_15_CONDITIONAL_DCA": "buyish",
+    "CRISIS_PANIC_SELL_OFF": "caution",
+    "DOWNTREND_NO_ENTRY": "caution",
+    "DRAWDOWN_20_HOLDING_CAUSE_CHECK": "caution",
+    "DRAWDOWN_20_HOLDING_STOP_CHECK": "caution",
+    "DRAWDOWN_20_NO_ENTRY": "caution",
+    "EARLY_ENTRY": "buyish",
+    "EARLY_REVERSAL_ENTRY": "buyish",
+    "ETF_DCA_OK": "buyish",
+    "ETF_LARGE_GAP_DCA_OK": "buyish",
+    "EXCEPTION_ADD_ON": "buyish",
+    "EXCEPTION_ENTRY": "buyish",
+    "EXTREME_OVERHEAT_NO_CHASE": "caution",
+    "HARD_BLOCK_FINANCIAL_F": "caution",
+    "HARD_BLOCK_MFI_OVERHEAT": "caution",
+    "HARD_BLOCK_OVERWEIGHT": "caution",
+    "HARD_BLOCK_TARGET_FILLED": "caution",
+    "HOLD_WAIT_SIGNAL": "neutral",
+    "LEADER_MA5_FAST_PULLBACK_ENTRY": "buyish",
+    "LEADER_MA5_PULLBACK_ENTRY": "buyish",
+    "LEVERAGED_TARGET_FILLED_DCA_EXCLUDED": "neutral",
+    "LEVERAGED_TARGET_ZERO_DCA_EXCLUDED": "neutral",
+    "LIVE_GAP_SHOCK_HOLDING_CHECK": "caution",
+    "LIVE_GAP_SHOCK_WAIT": "neutral",
+    "MTF_DAMAGE_NO_ADD": "caution",
+    "MTF_OVERHEAT_SCOUT_ONLY": "buyish",
+    "NEAR_COST_WAIT": "neutral",
+    "NEAR_UPPER_WAIT": "caution",
+    "NEW_ENTRY_LEADER": "buyish",
+    "OVERHEAT_EXTENSION_WAIT_MA5": "caution",
+    "OVERHEAT_WAIT": "buyish",
+    "OVERSOLD_ADD_ON": "buyish",
+    "OVERSOLD_DCA": "buyish",
+    "OVERSOLD_NEW_ENTRY": "buyish",
+    "PANIC_CASH_DEPLOY": "caution",
+    "PANIC_FINAL_DEPLOY": "caution",
+    "PROFIT_TAKE_REVIEW": "buyish",
+    "QUALITY_PULLBACK_ENTRY": "buyish",
+    "REVERSE_TREND_NO_ENTRY": "caution",
+    "SEARCH_NEW_ENTRY": "neutral",
+    "SHORT_OVERHEAT_NO_ADD": "caution",
+    "SHORT_OVERHEAT_NO_ENTRY": "caution",
+    "STRENGTH_ADD_ON_OK": "buyish",
+    "S_GRADE_ADD_ON_OK": "buyish",
+    "S_GRADE_OVERHEAT_WAIT": "neutral",
+    "S_GRADE_OVERSOLD_BUY": "buyish",
+    "S_PULLBACK_ADD_ON": "buyish",
+    "S_PULLBACK_ENTRY": "buyish",
+    "S_UPTREND_WAIT_PULLBACK": "buyish",
+    "TARGET_FILLED_HOLD": "neutral",
+    "TARGET_FILLED_S_GRADE_WAIT": "buyish",
+    "TREND_PULLBACK_EXPLORE": "buyish",
+    "UPTREND_PULLBACK_CONFIRM": "buyish",
+    "UPTREND_PULLBACK_DCA": "buyish",
+    "WATCH_WAIT_ENTRY": "neutral",
+})
+
+# Codes whose existing labels infer different groups: frozen per (code, label).
+DECISION_GROUP_BY_CODE_LABEL = {
+    ("HARD_BLOCK_BOLLINGER_UPPER", "⏳볼린저 상단 초과: 추격대기"): "neutral",
+    ("HARD_BLOCK_BOLLINGER_UPPER", "⏳볼린저 상단권: 추격대기"): "caution",
+    ("HARD_BLOCK_BOLLINGER_UPPER", "🚫하드차단: 볼린상단 이탈"): "caution",
+    ("LEVERAGED_RECOVERY_DCA_BLOCK", "⚡레버리지 급락권: 회복조건 확인"): "neutral",
+    ("LEVERAGED_RECOVERY_DCA_BLOCK", "⚡레버리지 패닉권: DCA 보류"): "caution",
+    ("LEVERAGED_RECOVERY_DCA_BLOCK", "⚡레버리지 회복 전: DCA 보류"): "caution",
+}
+
+
+def resolve_decision_group(code: str, label: str) -> str:
+    """Code-based group. Label words are read only for codes absent from the tables
+    (generic codes such as BUYISH_GENERIC, or a label never seen for a split code)."""
+    by_code = DECISION_GROUP_BY_CODE.get(code)
+    if by_code:
+        return by_code
+    by_pair = DECISION_GROUP_BY_CODE_LABEL.get((code, label))
+    if by_pair:
+        return by_pair
+    return classify_decision_signal(label)
+
 
 def infer_decision_code(decision_label: str) -> str:
     text = str(decision_label or "").strip()
@@ -1216,7 +1311,7 @@ def build_decision_outcome(
         code=final_code,
         label=label,
         color=str(color or "#64748b"),
-        group=DECISION_GROUP_BY_CODE.get(final_code) or classify_decision_signal(label),
+        group=resolve_decision_group(final_code, label),
         reasons=tuple(reasons),
     )
 

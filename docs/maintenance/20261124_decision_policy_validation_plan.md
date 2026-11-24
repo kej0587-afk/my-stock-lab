@@ -541,3 +541,4 @@ python -X utf8 scripts/policy_replay.py rr_gate  --px PX --out OUT --stocks-csv 
 - 코어 위기 비교와 VIX 구간 비교는 가격 계산이며 엔진을 쓰지 않았다.
 - decision 게이트(`scripts/check_refactor.py --scope decision`, 문서·스크립트 작성 후): 1637 passed / 1 failed. 실패는 `test_extracted_policies_preserve_all_original_conditions_and_literals` 하나로 `main`의 기존 실패와 같다.
 - 운영 화면 확인: 하지 않았다. 문서와 읽기 전용 스크립트만 바뀐다.
+- A/B 단계(같은 날 후속): A-1, A-2, B-1~B-7 반영. 재생 41,391행 변경 전후 바이트 동일. [기록](20261124_decision_ab_stage.md).
