@@ -46,7 +46,30 @@ def _board(sections):
     for row in rows:
         target = indices if any(row[0].endswith(f"({ticker})") for ticker in INDEX_BOARD) else macro
         target.append(row)
-    return _table(header, macro), _table(header, indices)
+    return _macro_groups(header, macro), _table(header, indices)
+
+
+# Reader grouping only: rows are copied unchanged from the dashboard table.
+MACRO_GROUPS = (
+    ("금리", ("^TNX", "^TYX")),
+    ("환율·달러", ("USDKRW=X", "DX-Y.NYB")),
+    ("원자재", ("CL=F", "BZ=F", "NG=F", "GC=F", "SI=F", "HG=F")),
+    ("심리·변동성", ("^VIX", "^MOVE")),
+)
+
+
+def _macro_groups(header, rows):
+    """Split the macro rows by ticker; unknown tickers stay visible under 기타."""
+    remaining = list(rows)
+    lines = []
+    for title, tickers in MACRO_GROUPS:
+        picked = [row for row in remaining if any(row[0].endswith(f"({t})") for t in tickers)]
+        if picked:
+            remaining = [row for row in remaining if row not in picked]
+            lines += [f"**{title}**", *_table(header, picked)]
+    if remaining:
+        lines += ["**기타**", *_table(header, remaining)]
+    return lines
 
 
 def _sector_table(sections, market):
