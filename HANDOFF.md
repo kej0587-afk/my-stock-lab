@@ -34,6 +34,17 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Decision policy validation plan](docs/maintenance/20261124_decision_policy_validation_plan.md) (user decisions 11-24
+on the proposal, docs + read-only replay only): replayed the current engine/gate on history with
+`scripts/policy_replay.py` (33 stocks 2015–2026 weekly = 17,902 rows; TQQQ/QLD/SOXL 2012–2026 × 5 cost levels = 10,875;
+R/R counterfactual gate 5,878). Findings: executable rate is lowest in bull markets (1.9%); pivot R/R blocks leaders
+(measured-move target: 16%→81% executable, 0.18R→0.68R) but EXCEPTION_ENTRY ("정찰" word → ⏳눌림대기) and LEADER_MA5_*
+(wait list) stay 0% whatever the target; BREAKOUT_52W_ENTRY never fired; macro 2.5–4.5 downgrades come from the adj
+penalty alone; leveraged ETFs never reach 실행가능 while the rebalance multiplier gives 0.5x in 2,904 states. A/B/C plan
+with order, tests and replay method in §9. No rule changed. Decision gate 1637 passed / 1 known failure.
+
+### Previous: decision policy proposal
+
 [Decision policy proposal](docs/maintenance/20261124_decision_policy_proposal.md) (user request 11-24, docs only):
 compared the early 관제탑 manual with Git history and current code, grouped all 127 emitted codes (107 literal + 20
 variable-emitted; the audit's dictionary-only list is corrected) into 9 behavior groups, designed a technical-review
@@ -520,6 +531,13 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Decision policy v1 (2026-11-24):** the user adopted the proposal direction (14 decisions, recorded in §1 of
+`docs/maintenance/20261124_decision_policy_validation_plan.md`) and asked for staged work. Next: A-1/A-2 (display bugs),
+then B-1..B-3 (behavior groups, frozen group table, code-based rebalance multiplier reproducing current values), each
+with `scripts/policy_replay.py` output identical before/after. A-4..A-6 and every C item change results: show the replay
+diff to the user and get approval one item at a time. Do not change R/R, macro, leverage, DCA or tech-review authority
+before the C replay comparison. Cloud replay needs the Yahoo hosts allowed (added to the Default environment 11-24).
 
 **Decision policy proposal (2026-11-24):** waiting for the user's review of
 `docs/maintenance/20261124_decision_policy_proposal.md`. The user picks among its §10 decisions D1–D13 (R/R target
