@@ -490,7 +490,14 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**#5 DART time-budget withholding: check holdings/watchlist order and budget split inside existing limits (do not raise budgets, TTLs or rate limits).**
+**Waiting on the user's decision for #5 (DART receipt-keyed statements kept 1 day instead of 10 min). If approved, set the `dart_accounts` cache TTL to 86400 only (filing list stays 10 min), test, deploy, compare withheld counts under performance condition A.**
+
+#5 review (order is held-first; 24s shared budget; 2–4 cold DART calls per KR issuer; 10-min caches go cold between reports): `docs/maintenance/20261124_dart_budget_review.md`.
+Other open decisions for the user (do not change without approval):
+- #8 AMAT: EDGAR name "APPLIED MATERIALS INC /DE" fails issuer match. Stripping a trailing EDGAR state tag ("/DE", "/NEW/") would fix it, but `test_legal_suffix_is_not_silently_removed_without_verified_alias` deliberately pins the current refusal. Needs explicit approval. AAPL stays withheld (no publication dateline).
+- #6 preferred share 009155: needs an official issuer link; no code-convention guess.
+- #3 free-input vs held-account path policy.
+Then #19 bounded refactor (one responsibility at a time, report gate before/after).
 
 Verified in production 2026-11-24 afternoon (first report after PR #10/#11): 키움증권 "이차전지…" is under 시장·업종;
 PPI 2026-10 YoY row shows "6.6% Trading Economics · 대상월 2026-10" and the 컨센서스 연결 line names the row's month and
