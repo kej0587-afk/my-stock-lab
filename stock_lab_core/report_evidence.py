@@ -535,30 +535,12 @@ def _cell(value):
     return text(value).replace("|", "/").replace("\n", " ") or "미제공"
 
 
-def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
-    """Return report front matter and explicit missing-data reasons."""
-    context = context or {}
-    from stock_lab_core.report_analysis import comparison_metrics, economic_reaction_text, economic_story_dates, economic_story_lines, recent_economic_releases, outlier_check, sector_evidence
-    from stock_lab_core.report_economic_reading import economic_reading_with_reaction
-    from stock_lab_core.report_presentation import account_metrics, candidate_fields, is_preopen_outlook, is_preopen_price_recap, kst_time, market_cause_candidates, sector_related_news
-    from stock_lab_core.report_session import report_mode, market_session_states, kst_now, MODE_LABELS, next_check, us_extended_session
-    from stock_lab_core.economic_cache import collection_status
-    from stock_lab_core.report_scenario import latest_futures_line
-    observations = context.get("prices", {})
-    sessions = context.get("sessions", {})
-    now = kst_now(now)
-    states = context.get("market_states") or market_session_states(now, sessions)
-    mode = report_mode(now, is_trading_day=context.get("kr_is_trading_day"))
-    outlook_count = sum(is_preopen_outlook(row) for row in news) if mode == "closed" else 0
-    if mode == "closed":
-        news = [row for row in news if not is_preopen_outlook(row)]
-    else:
-        news = [dict(row, news_timing="장전전망(결과와 다름)") if is_preopen_outlook(row) else row for row in news]
-    story_news = [row for row in news if not is_preopen_outlook(row) and not is_preopen_price_recap(row)
-                  and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
-    scenario_context = context.get("scenario_observations") or context.get("scenario_context")
-    futures_line = latest_futures_line(scenario_context)
-    missing = list(context.get("missing", []))
+def _basis_lines(context, sessions, states, now, missing):
+    """Front matter: report mode, closing-date basis per market and input counts.
+
+    Appends a market to ``missing`` when its closing date is not collected.
+    """
+    from stock_lab_core.report_session import us_extended_session
     lines = ["## 기준일", f"생성 {now:%Y-%m-%d %H:%M} KST"]
     lines.append(f"- 보고서 모드: {states['KR']['label']} · 한국 정규장 시간대 기준, 특별 휴장·거래시간 변경은 별도 확인")
     lines.extend(["", "시장·확정 종가 기준 | 생성 시점 상태 | 진행 중 세션 | 달력 확인", "--- | --- | --- | ---"])
@@ -586,6 +568,35 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             f"{label} {int(counts[key])}개" for key, label in (("registered", "등록 원천"), ("auto_flow_candidates", "자동 돈흐름 후보"), ("calculated", "최종 계산"))
             if number(counts.get(key)) is not None))
     lines.append("‘관심’ 건수는 최종 계산 목록의 미보유 종목 수로, 직접 등록 종목 수와 다릅니다. 등록·자동 후보는 중복/보유 포함 가능하며 종목별 입력 출처가 없으면 분리 추정하지 않습니다.")
+    return lines
+
+
+def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
+    """Return report front matter and explicit missing-data reasons."""
+    context = context or {}
+    from stock_lab_core.report_analysis import comparison_metrics, economic_reaction_text, economic_story_dates, economic_story_lines, recent_economic_releases, outlier_check, sector_evidence
+    from stock_lab_core.report_economic_reading import economic_reading_with_reaction
+    from stock_lab_core.report_presentation import account_metrics, candidate_fields, is_preopen_outlook, is_preopen_price_recap, kst_time, market_cause_candidates, sector_related_news
+    from stock_lab_core.report_session import report_mode, market_session_states, kst_now, MODE_LABELS, next_check, us_extended_session
+    from stock_lab_core.economic_cache import collection_status
+    from stock_lab_core.report_scenario import latest_futures_line
+    observations = context.get("prices", {})
+    sessions = context.get("sessions", {})
+    now = kst_now(now)
+    states = context.get("market_states") or market_session_states(now, sessions)
+    mode = report_mode(now, is_trading_day=context.get("kr_is_trading_day"))
+    outlook_count = sum(is_preopen_outlook(row) for row in news) if mode == "closed" else 0
+    if mode == "closed":
+        news = [row for row in news if not is_preopen_outlook(row)]
+    else:
+        news = [dict(row, news_timing="장전전망(결과와 다름)") if is_preopen_outlook(row) else row for row in news]
+    story_news = [row for row in news if not is_preopen_outlook(row) and not is_preopen_price_recap(row)
+                  and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
+    scenario_context = context.get("scenario_observations") or context.get("scenario_context")
+    futures_line = latest_futures_line(scenario_context)
+    missing = list(context.get("missing", []))
+    lines = _basis_lines(context, sessions, states, now, missing)
+    kr, us = sessions.get("KR"), sessions.get("US")
     from stock_lab_core.report_input_status import history_panel_lines
     history_lines = history_panel_lines(records(summary_rows), context)
     index_rows = [(ticker, observations[ticker]) for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")

@@ -497,7 +497,7 @@ Other open decisions for the user (do not change without approval):
 - #8 AMAT: EDGAR name "APPLIED MATERIALS INC /DE" fails issuer match. Stripping a trailing EDGAR state tag ("/DE", "/NEW/") would fix it, but `test_legal_suffix_is_not_silently_removed_without_verified_alias` deliberately pins the current refusal. Needs explicit approval. AAPL stays withheld (no publication dateline).
 - #6 preferred share 009155: needs an official issuer link; no code-convention guess.
 - #3 free-input vs held-account path policy.
-Then #19 bounded refactor (one responsibility at a time, report gate before/after).
+#19 bounded refactor, step 1 done: `report_sections` "기준일" block moved to `_basis_lines` (report gate 208/208 before and after, output byte-identical on 3 inputs): [doc](docs/maintenance/20261124_refactor_report_basis_lines.md). Next step: the "관측 축" table. One responsibility at a time, report gate before/after.
 
 Verified in production 2026-11-24 afternoon (first report after PR #10/#11): 키움증권 "이차전지…" is under 시장·업종;
 PPI 2026-10 YoY row shows "6.6% Trading Economics · 대상월 2026-10" and the 컨센서스 연결 line names the row's month and
