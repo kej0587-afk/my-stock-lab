@@ -66,9 +66,17 @@ def test_recovered_quarter_still_requires_real_dateline_not_filing_or_call_date(
         parse(data)
 
 
-def test_legal_suffix_is_not_silently_removed_without_verified_alias():
+@pytest.mark.parametrize("issuer_name", ["Example Cyber Inc /DE", "EXAMPLE CYBER INC /DE/", "Example Cyber Inc /NEW/"])
+def test_trailing_edgar_state_tag_is_ignored_but_name_still_matched(issuer_name):
+    event, result = parse(release(), issuer_name=issuer_name)
+    assert result["ticker"] == "CYBR"
+
+
+@pytest.mark.parametrize("issuer_name", ["Other Cyber Inc /DE", "Example /DE Cyber Inc", "Example Cyber Holdings Inc /DE",
+                                         "Example Cyber Inc /de"])
+def test_state_tag_rule_does_not_loosen_the_name_match(issuer_name):
     with pytest.raises(ValueError, match="release_issuer_mismatch"):
-        parse(release(), issuer_name="Example Cyber Inc /DE")
+        parse(release(), issuer_name=issuer_name)
 
 
 def test_fallback_requires_one_explicit_heading_quarter():

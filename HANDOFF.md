@@ -494,7 +494,7 @@ partial-bar audit. Keep these private files out of Git.
 
 #5 review (order is held-first; 24s shared budget; 2–4 cold DART calls per KR issuer; 10-min caches go cold between reports): `docs/maintenance/20261124_dart_budget_review.md`.
 Other open decisions for the user (do not change without approval):
-- #8 AMAT: EDGAR name "APPLIED MATERIALS INC /DE" fails issuer match. Stripping a trailing EDGAR state tag ("/DE", "/NEW/") would fix it, but `test_legal_suffix_is_not_silently_removed_without_verified_alias` deliberately pins the current refusal. Needs explicit approval. AAPL stays withheld (no publication dateline).
+- #8 AMAT: user approved (15:58 KST) ignoring trailing EDGAR state tags ("/DE", "/NEW/"); the rest of the name must still match exactly. Done in [doc](docs/maintenance/20261124_sec_edgar_state_tag.md); production check pending. AAPL stays withheld (no publication dateline).
 - #6 preferred share 009155: needs an official issuer link; no code-convention guess.
 - #3 free-input vs held-account path policy.
 #19 bounded refactor, step 1 done: `report_sections` "기준일" block moved to `_basis_lines` (report gate 208/208 before and after, output byte-identical on 3 inputs): [doc](docs/maintenance/20261124_refactor_report_basis_lines.md). Next step: the "관측 축" table. One responsibility at a time, report gate before/after.
