@@ -496,7 +496,7 @@ Verified in production 2026-11-24 ~15:10 KST (one report after PR #10/#11): 키�
 PPI 2026-10 YoY row shows "6.6% Trading Economics · 대상월 2026-10" and the 컨센서스 연결 line names the row's month and
 says the 2026-09 verified survey was not used. #12 (local indices: `docs/maintenance/20261124_report_local_indices.md`)
 needs one production report: 닛케이·니프티·보베스파·대만·상하이·항셍·유로스톡스50 rows with local dates; VN-Index stays 미연결.
-#17 candidate found: "증시 급락에…금융당국, 상장사 자사주 1일 취득한도 확대" is listed under 일정·공모 계획 보도 (policy, not an IPO).
+#17: "상장사 자사주…" policy headline was tracked as an IPO plan; fixed (`docs/maintenance/20261124_report_listing_news_scope.md`). Continue #17 with other content checks.
 Known pre-existing failures on main (not from these PRs): test_bok_report_calendar (reading report),
 test_summary_ownership_restore RAM (looks under "## 내 보유 종목 영향"; table moved by the reading reorder),
 test_company_market_reading app adapter, test_dart_evidence_view, SEC review tests.

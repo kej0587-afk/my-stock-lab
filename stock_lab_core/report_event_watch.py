@@ -277,9 +277,11 @@ def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
         title = text(row.get("title"))
         if not material_news(row):
             continue
-        if not re.search(r"IPO|기업공개|상장|정상회담|APEC", title, re.I) or re.search(r"상장폐지|delist", title, re.I):
+        # "상장사·상장기업" name already-listed companies (e.g. a buyback rule), not a listing event.
+        listing = re.search(r"IPO|기업공개|(?<!비)상장(?!사|기업|회사|주식|종목|지수|폐지)", title, re.I)
+        if not (listing or re.search(r"정상회담|APEC", title, re.I)) or re.search(r"상장폐지|delist", title, re.I):
             continue
-        family = "IPO·상장" if re.search(r"IPO|기업공개|상장", title, re.I) else "외교·규제"
+        family = "IPO·상장" if listing else "외교·규제"
         link = safe_link(row.get("link") or row.get("url"))
         if not link or link in seen:
             continue
