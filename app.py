@@ -163,7 +163,8 @@ from stock_lab_core.hold_judgement import (
 )
 from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
 from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
-from stock_lab_core.dart_corporate_snapshot import use_corporate_snapshot
+from stock_lab_core.dart_corporate_snapshot import configure_corporate_store, snapshot_notice, use_corporate_snapshot
+from stock_lab_core.dart_corporate_store import SupabaseCorporateCodeStore
 from stock_lab_core.dart_evidence_preview import resolve_identity as resolve_dart_evidence_identity
 from stock_lab_core.dart_evidence_store import SupabaseDartEvidenceStore
 from stock_lab_core.dart_evidence_view import render_dart_evidence
@@ -1970,6 +1971,8 @@ def get_supabase():
 
 
 supabase = None if IS_PUBLIC_DEMO else get_supabase()
+# Keep the latest validated DART identity list across restarts (identity only).
+configure_corporate_store(SupabaseCorporateCodeStore(supabase) if supabase is not None else None)
 
 
 def get_supabase_for_feedback():
@@ -5842,6 +5845,9 @@ def inspect_financial_inputs(ticker, fin_meta):
                 review["기업코드 연결"] = "공식 기업코드 보관본 사용 · 실시간 DART 연결 실패"
                 review["기업코드 보관 기준"] = diagnostic["snapshot_asof"]
                 review["기업코드 보관 유효기한"] = diagnostic["snapshot_valid_until"]
+            notice = snapshot_notice(diagnostic)
+            if notice:
+                review["기업코드 보관 상태"] = notice
     return review
 
 

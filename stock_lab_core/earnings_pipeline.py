@@ -50,6 +50,7 @@ def _source_reason(ticker, context):
                     "release_dateline_unavailable": "공식 발표문 발표일 대조 미완료",
                     "dart_period_report_unavailable": "DART 정기보고서 기준기간 미확인",
                     "dart_ticker_mapping_unavailable": "DART 종목·회사 식별자 미연결",
+                    "dart_ticker_mapping_unavailable_in_snapshot": "DART 종목·회사 식별자 미등록 · 보관 목록 기준(저장 이후 신규 상장 가능)",
                     "dart_api_error": "DART 정기보고서 API 오류·결과 미확인",
                     "dart_no_reports": "조회 기간 내 DART 정기보고서 없음",
                     "unique_earnings_exhibit_unavailable": "SEC 실적 발표문 첨부 대조 미완료",

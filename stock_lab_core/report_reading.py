@@ -144,7 +144,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     from stock_lab_core.report_session import market_session_states
     from stock_lab_core.earnings_pipeline import build_earnings_pipeline
     from stock_lab_core.report_earnings import compact_catalyst_lines
-    from stock_lab_core.report_dart_earnings import filing_actual_lines
+    from stock_lab_core.report_dart_earnings import filing_actual_lines, identity_notice_lines
     from stock_lab_core.report_coverage import sector_coverage_lines, company_coverage_lines, context_news_lines
 
     report = report.lstrip("\ufeff")
@@ -202,6 +202,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         lines += compact_catalyst_lines(pipeline, market, limit=None)
         if market == "KR":
             lines += filing_actual_lines(pipeline)
+            lines += identity_notice_lines(context)
         after = context_news_lines(context, now, bucket="next_session_news", market=market,
                                    excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained], summary_rows=summary_rows)
         if after:
