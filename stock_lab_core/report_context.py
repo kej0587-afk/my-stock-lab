@@ -43,10 +43,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     from stock_lab_core.release_calendar import load_release_calendar
 
     now = kst_now(now or datetime.now(KST))
-    from stock_lab_core.report_dashboard import INDEX_BOARD, COMMODITY_BOARD, OBSERVATORY_DAILY, observatory_daily_observations
+    from stock_lab_core.report_dashboard import (INDEX_BOARD, COMMODITY_BOARD, LOCAL_INDICES, OBSERVATORY_DAILY,
+                                                 local_index_observations, observatory_daily_observations)
     from stock_lab_core.report_energy_basis import REPORT_ONLY_DAILY, energy_daily_observations
     # Report-only daily feeds stay out of alignment, live quotes and rotation rows.
-    daily_only = set(REPORT_ONLY_DAILY) | set(OBSERVATORY_DAILY)
+    daily_only = set(REPORT_ONLY_DAILY) | set(OBSERVATORY_DAILY) | set(LOCAL_INDICES)
     tickers = {*INDEX_BOARD, *COMMODITY_BOARD, "QQQ", "XLF", "XLI", "XLP", "XLV", "IWM", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
     for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
         for row in records((flow_snapshot or {}).get(key))[:5]:
@@ -232,6 +233,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
               "energy_daily": energy_daily_observations(frames, now),
               "observatory_daily": observatory_daily_observations(frames, now),
+              "local_indices": local_index_observations(frames, now),
               "price_alignment": price_alignment,
               "quote_checked_at": quote_now.isoformat(), "extended_quote_status": quote_status,
               "market_states": states, "intraday_prices": intraday, "extended_prices": extended,
