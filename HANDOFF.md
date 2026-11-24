@@ -500,9 +500,9 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Daily market reading (2026-11-24):** after deploy, check one real report: 시장 해석 starts with the day's index change,
-'오늘 달라진 점' shows below it, and the 시장 스토리 first paragraph has no macro warning. Production check result goes in
-the doc's section 6. Follow-ups: sector-leader change needs the prior day's sector ranking (not stored now); earnings/policy
+**Daily market reading (2026-11-24):** verified in production 17:57 KST (after 17:53 reboot, PR #30): 시장 해석 starts
+with "코스피가 +6.32% 급등해 전 거래일 -3.31% 급락을 하루 만에 되돌렸습니다", '오늘 달라진 점' lists 4 index flips + "외국인(KOSPI)
+순매도 7거래일 → 순매수 전환", and the story's macro warning is gone (doc section 6). Follow-ups: sector-leader change needs the prior day's sector ranking (not stored now); earnings/policy
 "completed" items for '오늘 달라진 점'. Performance: two Today JSONs (83.9s completed; 135s interrupted by a Streamlit rerun,
 1.1s active) are recorded in `docs/maintenance/20261124_performance_baseline.md`; exclude rerun-interrupted runs from comparisons.
 
