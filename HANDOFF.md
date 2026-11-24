@@ -34,6 +34,22 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Earnings profit row](docs/maintenance/20261124_earnings_profit_kind.md) (status #7), PR #4,
+started at `b126db95`. NVDA's official release states "earnings per diluted share", which the
+profit pattern missed (row showed 미연결); the pattern now accepts diluted-EPS wording with the
+same money/forward/period/definition checks. `profit_kind` names the measures (영업이익/순이익/EPS)
+and basis (GAAP/조정) the quoted sentence holds; the 이익·EPS row shows it, so PANW operating
+income is no longer readable as EPS. Source sentences unchanged, nothing computed.
+Report gate 208; earnings/SEC/DART bundle 710 pass / same 5 pre-existing failures.
+
+### Previous completed report step 2
+
+[Macro groups](docs/maintenance/20261124_report_macro_groups.md), PR #3 (`b126db95`): the reader
+매크로 table is split by ticker into 금리 / 환율·달러 / 원자재 / 심리·변동성 (+기타 for unknown
+tickers). Rows copied unchanged. Report gate 208 before/after.
+
+### Previous completed report step 1
+
 [Report reading order](docs/maintenance/20261124_report_reading_order.md), step 1 of the
 2026-11-24 report-overhaul request, started at `36f7b425`. `compose_reading_report` now
 reads quick summary (session basis, interpretation, index table, existing action line,
@@ -224,6 +240,19 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
+Report overhaul steps 1+2, code **`b126db95`** (PRs #2, #3), owner Reboot by Claude via
+share.streamlit.io. Report generated 2026-11-24 13:24 KST (KR intraday, US closed).
+Order seen: 빠른 요약 → 지금 상태 3줄 → 지수 → 한국 시황 → 미국 시황 (Korea first, correct for
+KR session) → 세계 시장과 국가 ETF → 매크로 → 물가·고용·소비·경기 → 관측실 지표 연결 상태 →
+테마 → 돈흐름 → 주요 기업과 사건 → 오늘의 판단 (open) → 포트폴리오 → 다음 일정. Quick summary
+코스피 +7.08% / 코스닥 +4.70% equal 지금 상태 3줄. 매크로 shows 금리(^TNX, ^TYX) / 환율·달러 /
+원자재(6) / 심리·변동성(^VIX, ^MOVE) then central-bank table. Observatory: 4 country ETFs 미연결;
+VIX, DGS10, KRW=X, DX-Y.NYB, CL=F, HG=F, GC=F, indices 본문 표시. 물가·고용·소비·경기 selected no
+recent release this run (fallback text shown) — check the selection window in a later task.
+PR #4 (EPS row) not yet seen in production.
+
+### Previous direct production verification
+
 [SEC validation audit](docs/maintenance/20261121_sec_release_refusals.md), code
 **`2ac2d94b`**, direct owner Reboot complete. Report
 `3d4dd44113a04b259ac4d4c7bba38e0d` /120.672s, normal generation,18 checks pass.
@@ -398,13 +427,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Verify the reordered report in production, then report-overhaul step 2.**
+**Check PR #4 in production, then DART collection time budget (status #5).**
 
-After merge/reboot, generate one auto report and check: section order, quick summary
-values equal the 지수 table and 지금 상태 3줄, no duplicated appendix rows for moved
-recent releases, observatory status lines present. Then step 2 (one bounded change):
-split the single 매크로 table into 금리·중앙은행 / 환율 / 원자재 / 심리 groups by
-ticker (rows copied, no recomputation). Open DART items stay as listed in the DART record.
+After merge/reboot, open the NVDA FY2027Q3 result row (detailed evidence) once the earnings
+cache refreshes: expect "문장에 있는 항목: EPS (GAAP·조정)" with the $2.70/$2.68 sentence; PANW
+should read 영업이익 (GAAP). Then #5: several KR issuers are withheld with
+`collection_time_budget` (report 61). Measure under the same inputs first; do not loosen
+retries, rate limits or TTLs — look for wasted sequential work instead.
 
 ## Verification Discipline
 
