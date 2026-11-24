@@ -299,3 +299,19 @@ def test_directory_retry_does_not_expand_time_budget(monkeypatch):
     monkeypatch.setattr(sources, "MAX_SECONDS", 5)
     collected = sources.collect_filing_earnings([TICKER], NOW, sec_user_agent="", dart_api_key="test", get=Mock())
     assert fetch.call_count == 1 and not collected["events"]
+
+
+def test_receipt_keyed_accounts_survive_filing_list_refresh_for_one_day(monkeypatch):
+    # User-approved 2026-11-24: statements for one receipt are reused for a day;
+    # the 10-minute filing list still refreshes and a new receipt is fetched anew.
+    setup_codes(monkeypatch)
+    get = Mock(side_effect=[Response(dart_payload()), Response(COMPANY), Response(payload()),
+                            Response(dart_payload()), Response(dart_payload())])
+    args = dict(sec_user_agent="", dart_api_key="test", get=get)
+    first = sources.collect_filing_earnings([TICKER], NOW, **args)
+    later = sources.collect_filing_earnings([TICKER], NOW + timedelta(minutes=11), **args)
+    assert get.call_count == 4  # filing list refreshed; company (1 day) and accounts reused
+    assert later["sources"][0]["financial_from_cache"] and later["results"] == first["results"]
+    sources.collect_filing_earnings([TICKER], NOW + timedelta(hours=23, minutes=50), **args)
+    assert get.call_count == 5  # still inside a day: only the filing list again
+    assert sources.ACCOUNTS_TTL == 86400 and sources.CACHE_TTL == 600

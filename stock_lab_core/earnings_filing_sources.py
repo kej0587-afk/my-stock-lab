@@ -23,6 +23,7 @@ register_loaded_source(__name__, __file__)
 
 CACHE_TTL = 600
 FAILURE_TTL = 90
+ACCOUNTS_TTL = 86400  # receipt-keyed DART statements; user-approved 2026-11-24
 MAX_SECONDS = 24
 MARKET_WORKERS = 3
 MAX_BYTES = 3_000_000
@@ -166,7 +167,11 @@ def _dart_financials(event, auth, api_key, now, deadline, get):
                 with measure("external_data", "earnings_discovery.parse_dart_financials"):
                     return parse_financials(data, event, spec, basis, now)
 
-        pair, cached = _cached(("dart_accounts", event["ticker"], spec["receipt"], auth), now, financials)
+        # Statements are keyed by the filing receipt number, whose content does not
+        # change; a new filing has a new receipt. The 10-minute filing list (which
+        # discovers new receipts) keeps its own TTL.
+        pair, cached = _cached(("dart_accounts", event["ticker"], spec["receipt"], auth), now, financials,
+                               ttl=ACCOUNTS_TTL)
         diagnostic.update(financial_status="connected", financial_reason="direct_reported_accounts", financial_from_cache=cached)
         return pair, diagnostic
     except (ValueError, TypeError, KeyError, AttributeError) as error:
