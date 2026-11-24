@@ -48,8 +48,13 @@ Related tests 273 pass (+17 new); 1 pre-existing failure identical before/after
 (`test_existing_parser_and_app_functions_preserved` compares app.py to old `5cadb203`).
 Report gate 208 before/after. SQL `docs/20261124_dart_corporate_codes.sql` prepared,
 **not executed**; until it runs the store reports `schema_unavailable` and the old
-behaviour remains. Not yet deployed/verified in production. The DART connect failure
-cause itself could not be probed here (sandbox proxy blocks opendart).
+behaviour remains. The DART connect failure cause itself could not be probed here
+(sandbox proxy blocks opendart).
+Production (owner-reported, 2026-11-24 ~12:00 KST): PR #1 merged as `60f8a298`, SQL
+executed, app rebooted. Financial-input DART diagnostic: cause=ok, http200,
+mapped_count4020, elapsed9.606s, persist_status=unchanged_recent (an earlier post-reboot
+lookup had already saved the identical list); table has one row. Restore after a real
+outage is covered only by fixed-input tests so far; not observed in production.
 
 ### Previous completed SEC task
 
@@ -378,15 +383,16 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Verify DART identity persistence in production.**
+**Report overhaul step 1: reorder the reading report into quick summary → body → appendix.**
 
-Needs the owner to run `docs/20261124_dart_corporate_codes.sql` in Supabase and the
-branch to be merged/deployed. Then: one report/financial check with live DART success
-must show `persist_status=saved` and one table row (count/sha matching); after reboot,
-a transport failure (or fixed failure replay) must use `persistent_last_success` with
-correct date/age. Do not change TTLs, retry or the 7-day limit. Afterwards the next
-bounded task is the report overhaul step 1 (section reordering only, per
-`/mnt/project-files/status` plan and the 2026-11-24 report-overhaul request).
+Follow the 2026-11-24 report-overhaul request sections 4 and 15 (copy kept outside Git in
+project files; plan in `/mnt/project-files/status/`). Section order and placement only;
+no new calculations, scores, thresholds, TTLs or collectors. Run
+`scripts/check_refactor.py --scope report` before/after; do not regenerate goldens.
+Open DART items (separate later tasks): collection_time_budget withholds several KR
+issuers; preferred share 009155 has no corp mapping; production observation of
+stored-list restore during a real outage; a snapshot-derived discovery result stays
+cached for the existing 24h TTL.
 
 ## Verification Discipline
 
