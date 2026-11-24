@@ -490,7 +490,7 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**#5 approved and implemented (receipt-keyed DART statements kept 1 day; filing list stays 10 min). Verify in production: after reboot, generate two reports more than 10 minutes apart and compare '공식 공시 수집 시간 한도' withheld counts.**
+**#5 follow-up: the approved 1-day statement cache showed no effect in production (15:31 and 15:47 KST reports both 38 withheld, same names; 12 KR / 26 US). The withheld KR issuers already have their filing receipt found, so the budget runs out after the filing-list stage. Download the app's full timing diagnostics JSON and find which stage/wait consumes the 24s; keep budget, concurrency, retries unchanged.**
 
 #5 review (order is held-first; 24s shared budget; 2–4 cold DART calls per KR issuer; 10-min caches go cold between reports): `docs/maintenance/20261124_dart_budget_review.md`.
 Other open decisions for the user (do not change without approval):
