@@ -34,6 +34,20 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Schedule split](docs/maintenance/20261124_report_schedule_split.md) (status #16): the 7-day table
+is now 이번 주 남은 일정 (today or later; multi-day events until `end_date`) → 이후 확정 일정·90일
+→ 최근 지난 일정 · 결과 확인. Collection, states and wording unchanged. Bundle 1662; gate 208.
+
+### Previous completed release fallback
+
+[Release fallback](docs/maintenance/20261124_report_release_fallback.md), started at `af2a994a`.
+물가·고용·소비·경기 was empty on 11-24 by design: the selection window is the last 3 sessions and
+the latest publications were 11-10/11-13/11-16. When nothing falls inside the window, the section
+now copies up to 6 dated (not future/pending/stale) rows newest first under "최근 3거래일 안 새 발표
+없음 · 마지막으로 확인된 발표". Undated rows are not promoted; cells unchanged. Bundle 1883 pass; gate 208.
+
+### Previous completed observatory values
+
 [Observatory values](docs/maintenance/20261124_report_observatory_values.md) (status #10/#11 part),
 started at `8d15a36a`. Country ETFs EWZ/INDA/VNM/EWJ (세계 시장과 국가 ETF) and SKEW/VVIX/OVX
 (매크로 · 옵션 위험) now show completed-daily values from the same one-year Yahoo batch; 미연결 per
@@ -260,6 +274,11 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
+PR #6 (`af2a994a`, observatory values), report 2026-11-24 13:56 KST after Claude reboot: EWZ 29.24,
+INDA 52.14, VNM 16.71, EWJ 86.90 USD; SKEW 140.37, VVIX 117.36, OVX 49.19 pt; all dated
+2026-11-20 → 2026-11-23, Yahoo Finance daily. 관측실 status marks exactly these 7 (plus existing
+table items) as 본문 표시; PCR, JPY=X, BTC-USD, FRED/CNN items stay 미연결.
+
 PR #5 (`8d15a36a`, market pools) after Claude reboot, cold cache, same 78 issuers, one run each:
 `collection_time_budget` withheld 51 → 41 (KR 18 → 13); 정기보고서 확인 10 → 15; 공식 발표 확인
 9 → 12. Single samples under live provider latency, not a controlled benchmark. Still withheld KR:
@@ -458,12 +477,12 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check observatory values in production, then 물가·고용·소비·경기 selection (empty on 11-24 runs).**
+**Check the release fallback and schedule split in production, then news dedup/classification (#15).**
 
-After merge/reboot, confirm EWZ/INDA/VNM/EWJ and SKEW/VVIX/OVX values and dates in one report and
-that the 관측실 status marks only those with values as 본문 표시. Then find why `_recent_releases`
-picked no recent release on 2026-11-24 (check its window and the release dates in the appendix
-경제지표 table); fix only the selection, never the release values.
+After merge/reboot, in one report confirm 물가·고용·소비·경기 shows "최근 3거래일 안 새 발표 없음 ·
+마지막으로 확인된 발표" rows (or recent rows when the window has any), and 다음 일정 lists 이번 주
+남은 일정 before 최근 지난 일정. Then #15 (report 61): duplicate Yonhap sentences and mis-filed
+news (e.g. JP모건 AI 전망 under 금융); fix grouping/dedup only, never article facts.
 
 ## Verification Discipline
 

@@ -247,7 +247,12 @@ def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
     if rows:
         near = [r for r in rows if (stamp(r['date']).date() - now.date()).days <= 7]
         later = [r for r in rows if r not in near]
-        for label, group in (("이번 주·최근 발표", near), ("이후 확정 일정·90일 이내", later)):
+        # Readers look for what comes next: upcoming first, past dates last.
+        # A multi-day event is still ongoing until its last local day.
+        upcoming = [r for r in near if stamp(r.get('end_date') or r['date']).date() >= now.date()]
+        recent = [r for r in near if r not in upcoming]
+        for label, group in (("이번 주 남은 일정 · 7일 이내", upcoming), ("이후 확정 일정·90일 이내", later),
+                             ("최근 지난 일정 · 결과 확인", recent)):
             if not group:
                 continue
             lines += [f"**{label}**", "", *_table(["일정·현지 / 한국 시각", "상태·근거", "확인할 핵심"], [

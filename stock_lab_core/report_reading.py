@@ -102,6 +102,17 @@ def _recent_releases(sections, context, now):
     header, source = blocks[0]
     if len(header) != 6:
         return []
+    title = "**최근 발표 · 변화가 큰 지표부터**"
+    if not selected:
+        # Nothing inside the recent-session window: show the last confirmed
+        # publications instead of an empty section, labelled as older. Rows
+        # without a known publication date are not promoted.
+        from stock_lab_core.report_evidence import stamp, text
+        dated = [(stamp(text(row.get("release_at"))), row) for row in original
+                 if row.get("status") not in {"pending", "scheduled", "예정", "stale"}]
+        dated = [(at, row) for at, row in dated if at and at <= now]
+        selected = [row for _, row in sorted(dated, key=lambda pair: pair[0], reverse=True)[:6]]
+        title = "**최근 3거래일 안 새 발표 없음 · 마지막으로 확인된 발표(최근 순)**"
     rows = []
     for picked in selected:
         for index, row in enumerate(original):
@@ -111,7 +122,7 @@ def _recent_releases(sections, context, now):
                     values[0] += f" · 발표 {row.get('release_at')} " + citation(row)
                 rows.append(values)
                 break
-    return ["**최근 발표 · 변화가 큰 지표부터**", *_table(header, rows)] if rows else []
+    return [title, *_table(header, rows)] if rows else []
 
 
 def _flow_lines(sections):
