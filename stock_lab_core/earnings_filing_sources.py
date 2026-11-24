@@ -223,7 +223,8 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
                         suffix = "_" + status if re.fullmatch(r"\d{3}", status) else ""
                         raise ValueError("dart_corporate_mapping_" + cause + suffix)
                     return dict(data), {"mapping_attempts": attempts, **{key: data.diagnostic[key] for key in
-                        ("mapping_source", "snapshot_asof", "snapshot_valid_until") if key in data.diagnostic}}
+                        ("mapping_source", "snapshot_origin", "snapshot_asof", "snapshot_valid_until")
+                        if key in data.diagnostic}}
                 with measure("external_data", "earnings_discovery.setup_dart"):
                     (codes, mapping), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
                 if mapping.get("snapshot_valid_until") and now > datetime.fromisoformat(mapping["snapshot_valid_until"]):
@@ -250,7 +251,10 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
                     return _sec_collect(ticker, directory, user_agent, now, deadline, get)
                 corp = codes.get(ticker.split(".")[0])
                 if not corp:
-                    raise ValueError("dart_ticker_mapping_unavailable")
+                    # A dated list cannot know issuers listed after it was saved.
+                    raise ValueError("dart_ticker_mapping_unavailable_in_snapshot"
+                                     if mapping.get("mapping_source") == "official_snapshot"
+                                     else "dart_ticker_mapping_unavailable")
                 data = _json("https://opendart.fss.or.kr/api/list.json", deadline=deadline, get=get,
                              params=dict(crtfc_key=dart_key, corp_code=corp,
                                          bgn_de=(now - timedelta(days=200)).strftime("%Y%m%d"),

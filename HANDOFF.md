@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-21 KST. Read before large source files or edits.
+Updated: 2026-11-24 KST. Read before large source files or edits.
 This is the current work order. Historical next-task instructions are superseded.
 
 ## Resume Safely
@@ -33,6 +33,25 @@ No score thresholds, decision labels, TTLs or trading permissions may be changed
 under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
+
+[DART identity persistence](docs/maintenance/20261124_dart_identity_persistence.md),
+started clean at `f16e103`. Cause reproduced: the bundled corporate list was
+retrieved 2026-11-07 and expired 11-14 (7-day limit); no code saved live successes.
+Nov21 report = connect_timeout x2 + expired bundled list → 31 KR issuers withheld.
+Now a validated live list is saved to Supabase `dart_corporate_code_snapshots`
+(shrink >10% refused, identical list not rewritten within 12h); on transport failure
+the newest valid of {stored last success, bundled file} is used with origin/date/
+age/valid-until shown and marked identity-only. Missing issuers in a dated list are
+`dart_ticker_mapping_unavailable_in_snapshot`, no guessed mapping or filing request.
+Retry count, timeouts, TTLs, 7-day limit and validation unchanged.
+Related tests 273 pass (+17 new); 1 pre-existing failure identical before/after
+(`test_existing_parser_and_app_functions_preserved` compares app.py to old `5cadb203`).
+Report gate 208 before/after. SQL `docs/20261124_dart_corporate_codes.sql` prepared,
+**not executed**; until it runs the store reports `schema_unavailable` and the old
+behaviour remains. Not yet deployed/verified in production. The DART connect failure
+cause itself could not be probed here (sandbox proxy blocks opendart).
+
+### Previous completed SEC task
 
 [SEC release refusals](docs/maintenance/20261121_sec_release_refusals.md), started
 clean at `a791d693`. Code **`2ac2d94b`** pushed, direct owner reboot and production
@@ -359,18 +378,15 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Audit DART corporate-directory timeout and last-success fallback.**
+**Verify DART identity persistence in production.**
 
-Latest completed run3d4dd441 has DART setup10.047s, two existing get attempts
-(one duplicate identity = retry), connect_timeout;31 domestic issuer connections
-are explicitly withheld. Inspect whether a valid prior corporate snapshot existed,
-why it was/was not reused across reboot, and reproduce on fixed failure inputs.
-Distinguish transient provider/connectivity failure from an actual fallback defect.
-Preserve issuer/date validation, scores, TTLs, provider priority and request-rate/
-deadline policy; no guessed mapping, cache-age extension or removal of the retry.
-Only repair demonstrated availability defects, verify operating outcomes, and
-update handoff with one bounded next task. SEC remaining aliases/combined Q4
-headlines are recorded limits, not concurrent work for this step.
+Needs the owner to run `docs/20261124_dart_corporate_codes.sql` in Supabase and the
+branch to be merged/deployed. Then: one report/financial check with live DART success
+must show `persist_status=saved` and one table row (count/sha matching); after reboot,
+a transport failure (or fixed failure replay) must use `persistent_last_success` with
+correct date/age. Do not change TTLs, retry or the 7-day limit. Afterwards the next
+bounded task is the report overhaul step 1 (section reordering only, per
+`/mnt/project-files/status` plan and the 2026-11-24 report-overhaul request).
 
 ## Verification Discipline
 

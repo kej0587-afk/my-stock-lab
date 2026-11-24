@@ -59,3 +59,21 @@ def filing_actual_lines(pipeline, *, detailed=False):
             lines.append(" | ".join(_cell(v) for v in (metric["label"], _value(metric, "quarter_value"), cumulative, note)))
         lines.extend(["회사 전망·발표 당시 예상치·발표 전후 주가 반응은 별도 미연결입니다. 유형자산 취득을 전체 CAPEX로 간주하거나 영업현금흐름에서 빼서 FCF를 만들지 않습니다.", ""])
     return lines
+
+
+def identity_notice_lines(context):
+    """State when KR issuers were identified from a dated list, not a live download."""
+    from stock_lab_core.dart_corporate_snapshot import snapshot_notice
+    for key in ("earnings_sources", "earnings_result_sources"):
+        for row in (context or {}).get(key) or []:
+            if (isinstance(row, dict) and str(row.get("ticker", "")).endswith((".KS", ".KQ"))
+                    and row.get("mapping_source") == "official_snapshot"):
+                diagnostic = {k: row.get(k) for k in ("mapping_source", "snapshot_origin", "snapshot_asof", "snapshot_valid_until")}
+                try:
+                    from datetime import datetime
+                    diagnostic["snapshot_age_days"] = (datetime.fromisoformat(str(row.get("checked_at")))
+                                                       - datetime.fromisoformat(str(row.get("snapshot_asof")))).days
+                except (TypeError, ValueError):
+                    diagnostic["snapshot_age_days"] = "?"
+                return ["", snapshot_notice(diagnostic), ""]
+    return []
