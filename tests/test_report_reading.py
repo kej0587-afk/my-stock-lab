@@ -216,3 +216,21 @@ def test_macro_summary_only_promotes_recent_verified_period_rows():
     assert "CPI" not in result
     context["economic_releases"] = [old, dict(current, status="stale")]
     assert not _recent_releases({"경제지표": source}, context, NOW)
+
+
+def test_macro_rows_are_grouped_by_ticker_without_changing_cells():
+    rows = ["10Y 금리(^TNX) | 5.15 % | +2.20% · 1개월 변화 | 2026-11-13 | fixture",
+            "환율(USDKRW=X) | 1,470.00 원/USD | +0.10% · 1개월 변화 | 2026-11-13 | fixture",
+            "유가(CL=F) | 60.00 USD/배럴 | -1.00% · 1개월 변화 | 2026-11-13 | fixture",
+            "금 선물(GC=F) | 4,000.00 USD/트로이온스 | +0.50% · 전 거래일 대비 | 2026-11-13 | fixture",
+            "VIX(^VIX) | 20.00 pt | +3.00% · 1개월 변화 | 2026-11-13 | fixture",
+            "신규지표(ZZZ) | 1.00 pt | 미연결 | 2026-11-13 | fixture"]
+    report = REPORT.replace("10Y 금리(^TNX) | 5.15 % | +2.20% · 1개월 변화 | 2026-11-13 | fixture", "\n".join(rows))
+    sections = dict(split_report_sections(compose_reading_report(report, context=deepcopy(CONTEXT), news=(), summary_rows=[], now=NOW)))
+    macro = sections["매크로"]
+    order = [macro.index(f"**{title}**") for title in ("금리", "환율·달러", "원자재", "심리·변동성", "기타")]
+    assert order == sorted(order)
+    for row in rows:  # Every cell is copied as-is, exactly once.
+        assert macro.count(row) == 1
+    assert macro.index("유가(CL=F)") < macro.index("**심리·변동성**")
+    assert macro.index("신규지표(ZZZ)") > macro.index("**기타**")
