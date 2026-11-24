@@ -34,6 +34,17 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Decision policy proposal](docs/maintenance/20261124_decision_policy_proposal.md) (user request 11-24, docs only):
+compared the early 관제탑 manual with Git history and current code, grouped all 127 emitted codes (107 literal + 20
+variable-emitted; the audit's dictionary-only list is corrected) into 9 behavior groups, designed a technical-review
+layer (CONFIRM/NEUTRAL/CAUTION/BLOCK/DATA_CHECK, forced structure blocks kept separate), traced upside features and
+leverage rules to their commits, counted 11 macro touch points, and ended with 구현 오류 / 구조 정리 / 투자정책 결정
+lists (I-1..I-16, D1–D13). Main upside bottleneck found: the R/R target (nearest pivot or projection = wait). Evidence:
+`scripts/decision_policy_cases.py`. No score, threshold, code, permission or DCA change. Decision gate 1637 passed / 1
+known failure.
+
+### Previous: decision system audit
+
 [Decision system audit](docs/maintenance/20261124_decision_system_audit.md) (user request 11-24, read-only): traced
 `calc_scores_and_decision` → quality / timing·structure / decision / gate / sizing, the priority map (P1–P4, Q1–Q4,
 finalization), 107 codes with labels/groups/thresholds, screen overlays (Today, precision, asset page, rebalance), and
@@ -509,6 +520,12 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Decision policy proposal (2026-11-24):** waiting for the user's review of
+`docs/maintenance/20261124_decision_policy_proposal.md`. The user picks among its §10 decisions D1–D13 (R/R target
+definition, macro responsibility split, missing-macro handling, single leverage stage table and crash-DCA vs defense
+priority, asset/rebalance use of Today overlays, etc.); §12 lists implementation bugs that can be fixed without a policy
+choice once the user approves. Do not change decision logic before that choice.
 
 **Decision system audit (2026-11-24):** waiting for the user's review of
 `docs/maintenance/20261124_decision_system_audit.md`; the user will choose the decision-overhaul direction from it.
