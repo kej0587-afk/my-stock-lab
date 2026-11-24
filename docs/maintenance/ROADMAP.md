@@ -44,6 +44,7 @@ Updated: 2026-11-24 KST. 현재 실행할 한 건은 루트 `HANDOFF.md`의 **Ne
 컨센서스 대상월 표기([기록](20261124_consensus_target_month.md)), 현지 지수 7개([기록](20261124_report_local_indices.md)),
 '상장사' 정책 기사 공모 일정 오분류([기록](20261124_report_listing_news_scope.md)), 한국 수급 이력 기준일 설명([기록](20261124_report_kr_flow_history_note.md)),
 자동점검 내용 점검·같은 본문 문장 반복 제거([기록](20261124_report_content_checks.md)).
+성능 비교 조건(재부팅 직후 첫 실행)과 첫 기록: [기준선](20261124_performance_baseline.md).
 점수·판정·수치 계산은 바꾸지 않았다.
 
 DART 기업 식별 목록이 만료되어 국내 공시 연결이 빠지던 문제를 재현하고, 실시간 정상 조회 목록을
