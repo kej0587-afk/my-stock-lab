@@ -282,7 +282,8 @@ def profit_kind(sentence):
     kinds = [name for name, pattern in _PROFIT_KINDS if re.search(pattern, sentence, re.I)]
     gaap = bool(re.search(r"(?<!non-)\bGAAP\b", sentence, re.I))
     adjusted = bool(re.search(r"\bnon-GAAP\b|\badjusted\b", sentence, re.I))
-    basis = "GAAP·조정" if gaap and adjusted else "GAAP" if gaap else "조정(non-GAAP)" if adjusted else "기준 미표기"
+    # An unlabelled figure beside a non-GAAP one is not proof both are adjusted.
+    basis = "GAAP·조정" if gaap and adjusted else "GAAP" if gaap else "조정(non-GAAP) 포함" if adjusted else "기준 미표기"
     return {"measures": kinds, "basis": basis}
 
 

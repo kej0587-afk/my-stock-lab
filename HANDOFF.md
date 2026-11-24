@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Earnings market pools](docs/maintenance/20261124_earnings_market_pools.md) (status #5), started
+at `90d0cd1c`. KR (DART) issuers shared one 3-worker pool with US issuers that sit in SEC's 0.2 s
+fair-access wait, so KR work queued behind SEC. Now one 3-worker pool per market; the 24 s shared
+budget, SEC rate lock, per-provider max 3 concurrent, retries, timeouts and TTLs are unchanged.
+Production baseline (cold cache right after reboot, 78 issuers): 51 withheld by
+`collection_time_budget`. Same PR: profit-row wording ("이 문장에 없음: …"; unlabelled + non-GAAP
+figures read "조정(non-GAAP) 포함", e.g. INTC). Earnings bundle 714 pass / same 5 failures; gate 208.
+
+### Previous completed earnings profit row
+
 [Earnings profit row](docs/maintenance/20261124_earnings_profit_kind.md) (status #7), PR #4,
 started at `b126db95`. NVDA's official release states "earnings per diluted share", which the
 profit pattern missed (row showed 미연결); the pattern now accepts diluted-EPS wording with the
@@ -240,6 +250,11 @@ records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
 
+PR #4 (`90d0cd1c`) after Claude reboot, report 2026-11-24 ~13:5x KST: NVDA FY2027Q3 이익·EPS row
+shows "EPS (GAAP·조정)" with the $2.70/$2.68 diluted EPS sentence; PANW shows 영업이익 (GAAP).
+Cold-cache earnings coverage in the same run: 78 checked, 51 `collection_time_budget` (baseline
+for the market-pool change).
+
 Report overhaul steps 1+2, code **`b126db95`** (PRs #2, #3), owner Reboot by Claude via
 share.streamlit.io. Report generated 2026-11-24 13:24 KST (KR intraday, US closed).
 Order seen: 빠른 요약 → 지금 상태 3줄 → 지수 → 한국 시황 → 미국 시황 (Korea first, correct for
@@ -427,13 +442,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Check PR #4 in production, then DART collection time budget (status #5).**
+**Measure the market-pool change in production, then connect observatory/country ETF values (#10, #11).**
 
-After merge/reboot, open the NVDA FY2027Q3 result row (detailed evidence) once the earnings
-cache refreshes: expect "문장에 있는 항목: EPS (GAAP·조정)" with the $2.70/$2.68 sentence; PANW
-should read 영업이익 (GAAP). Then #5: several KR issuers are withheld with
-`collection_time_budget` (report 61). Measure under the same inputs first; do not loosen
-retries, rate limits or TTLs — look for wasted sequential work instead.
+After merge/reboot, generate one report on a cold cache (right after reboot, same 78 issuers) and
+count `공식 공시 수집 시간 한도` rows against the baseline 51. Report the number as measured; if
+KR rows remain withheld, look at per-request latency before touching any budget. Then #10/#11:
+show observatory indicators and the 4 country ETFs with real values from existing collectors
+(no new provider without checking its terms), keeping 미연결 where nothing is collected.
 
 ## Verification Discipline
 

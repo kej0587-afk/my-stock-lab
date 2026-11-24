@@ -24,6 +24,7 @@ register_loaded_source(__name__, __file__)
 CACHE_TTL = 600
 FAILURE_TTL = 90
 MAX_SECONDS = 24
+MARKET_WORKERS = 3
 MAX_BYTES = 3_000_000
 _CACHE = {}
 _LOCK = threading.RLock()
@@ -278,8 +279,13 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
             return (None, None), diagnostic
 
     try:
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [submit_with_context(pool, probe.worker, time.monotonic(), collect, ticker) for ticker in symbols]
+        # One pool per market: DART issuers no longer queue behind SEC fair-access
+        # waits. Each provider still has at most MARKET_WORKERS concurrent issuers,
+        # SEC keeps its shared rate lock, and the wall budget stays shared.
+        with ThreadPoolExecutor(max_workers=MARKET_WORKERS) as kr_pool, \
+                ThreadPoolExecutor(max_workers=MARKET_WORKERS) as us_pool:
+            futures = [submit_with_context(kr_pool if ticker.endswith((".KS", ".KQ")) else us_pool,
+                                           probe.worker, time.monotonic(), collect, ticker) for ticker in symbols]
             with measure("external_data", "earnings_discovery.worker_join"):
                 collected = [future.result() for future in futures]
     finally:
