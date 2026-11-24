@@ -490,13 +490,15 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Consensus month matching (status #13), after confirming the broker-quote fix in production.**
+**Check #13 consensus labels in production, then #12 local indices (status list).**
 
-#15 was checked in production at 2026-11-24 14:18 KST: no duplicate "(종합)"/plain stories. One broker sector
-call (키움증권 "이차전지…") was still under 금융; fixed in the follow-up PR (see
-`docs/maintenance/20261124_news_dedup_classification.md`). Next, #13:
-consensus values must attach only to the same indicator, period (target month) and release date
-(see 경제지표 "컨센서스 연결" notes); never carry a survey to another month.
+#13 (2026-11-24): matching was already exact (indicator, target month, basis, unit, release date); the report text
+wrongly implied a 2026-09 survey was attached. Each attached forecast now shows its own target month and source;
+see `docs/maintenance/20261124_consensus_target_month.md`. After merge/reboot confirm in one report that the PPI
+row shows "대상월 2026-10" and the 컨센서스 연결 line names each row's month. Then #12: show local index levels for
+the country ETF block only from a collected, dated source; never infer them from ETF prices.
+Known pre-existing failure on main: `test_summary_ownership_restore::test_report_lists_error_ram_as_held_with_unknown_weight`
+(test still looks for the holdings table under "## 내 보유 종목 영향"; the reading reorder moved it).
 
 ## Verification Discipline
 

@@ -208,7 +208,7 @@ def _event(spec, period, release, forecast, title, retrieved_at, source_url):
         "release_at": release, "release_precision": "date",
         "release_time_confirmed": True, "raw_title": title,
         "actual": None, "previous": None, "forecast": forecast,
-        "forecast_unit": unit, "forecast_basis": basis,
+        "forecast_unit": unit, "forecast_basis": basis, "forecast_period": period,
         "source": PROVIDER, "source_url": source_url,
         "forecast_source": PROVIDER, "forecast_source_url": source_url,
         "forecast_kind": "survey_consensus", "retrieved_at": retrieved_at,

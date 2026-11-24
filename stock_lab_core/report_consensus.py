@@ -54,7 +54,7 @@ def attach_economic_consensus(release_rows, now, *, api_key="", fetch=None):
     # Prefer an explicitly supplied forecast; the dated survey is only a fallback.
     events = {consensus_key(event): event for event in historical}
     events.update({consensus_key(event): event for event in live["events"]})
-    matched = 0
+    matched, attached = 0, []
     for row in rows:
         event = events.get(consensus_key(row))
         if row.get("forecast") is not None or not event:
@@ -65,6 +65,12 @@ def attach_economic_consensus(release_rows, now, *, api_key="", fetch=None):
         actual, forecast = number(row.get("actual")), number(row.get("forecast"))
         row["actual_minus_forecast"] = round(actual - forecast, 6) if actual is not None and forecast is not None else None
         matched += 1
-    diagnostics = dict(live["diagnostics"], attached_count=matched, verified_survey_count=len(historical),
-                       revised_actual_excluded=revisions, verified_survey_coverage="2026-09 발표 당시 설문 · 사후 기사 검증(10/21)")
+        attached.append({"indicator": row.get("indicator"), "period": row.get("period"), "basis": row.get("basis"),
+                         "forecast_period": event.get("forecast_period") or event.get("period"),
+                         "release_at": row.get("release_at"), "forecast_source": row.get("forecast_source")})
+    used_verified = sum(1 for item in attached if item["forecast_source"] == "Reuters 발표 당시 설문(기사 확인)")
+    diagnostics = dict(live["diagnostics"], attached_count=matched, attached_rows=attached,
+                       verified_survey_count=len(historical), verified_survey_used=used_verified,
+                       revised_actual_excluded=revisions,
+                       verified_survey_coverage="2026-09 발표 당시 설문 · 사후 기사 검증(10/21)")
     return rows, diagnostics
