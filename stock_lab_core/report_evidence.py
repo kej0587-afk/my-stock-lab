@@ -824,6 +824,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         label += f" {citation(row)}"
         if row.get("forecast_source"):
             forecast += " " + citation(dict(title=row["forecast_source"], source_url=row.get("forecast_source_url")))
+            if text(row.get("forecast_period")):
+                forecast += " · 대상월 " + text(row["forecast_period"])
             if row.get("forecast_verified_at"):
                 forecast += " · 확인 " + text(row["forecast_verified_at"])
         if row.get("forecast") is None:
@@ -875,8 +877,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.extend(["", *dict.fromkeys(release_notes)])
     consensus_status = context.get("consensus_diagnostics") or {}
     if consensus_status:
-        lines.extend(["", f"컨센서스 연결: {consensus_status.get('attached_count', 0)}개 · "
-                      + text(consensus_status.get("verified_survey_coverage")),
+        lines.extend(["", consensus_connection_line(consensus_status),
                       "예상치는 설문 출처별로 다를 수 있습니다. 기사 확인값은 해당 대상월·발표일에만 연결하며 다음 달로 넘겨 쓰지 않습니다."])
         if consensus_status.get("reason") == "api_key_required":
             lines.append("향후 자동 컨센서스 API: 키 미설정 · [경제지표용 설정 안내](https://docs.tradingeconomics.com/get_started/). 확인된 발표 당시 설문과 별도입니다.")
@@ -1023,3 +1024,21 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(editorial_lines(context, synthesis, summary_rows, states, now))
     lines = reading_order(lines)
     return lines, list(dict.fromkeys(missing))
+
+
+def consensus_connection_line(status):
+    """Describe each attached forecast by its own target month and source."""
+    rows = [row for row in status.get("attached_rows") or [] if isinstance(row, dict)]
+    count = status.get("attached_count", len(rows))
+    if "attached_rows" not in status:
+        return f"컨센서스 연결: {count}개 · " + text(status.get("verified_survey_coverage"))
+    parts = [f"{text(row.get('indicator'))} {text(row.get('period'))} {text(row.get('basis'))}"
+             f" ← {text(row.get('forecast_source'))}(대상월 {text(row.get('forecast_period'))}"
+             + (f" · 발표 {text(row.get('release_at'))[:10]}" if text(row.get("release_at")) else "") + ")"
+             for row in rows]
+    line = f"컨센서스 연결: {count}개" + (" · " + " / ".join(parts) if parts else "")
+    coverage = text(status.get("verified_survey_coverage"))
+    if coverage and not status.get("verified_survey_used"):
+        why = "같은 대상월에 공급된 예상치를 우선" if status.get("verified_survey_count") else "이번 표의 대상월·발표일과 맞는 행 없음"
+        line += f" · 기사 확인 설문({coverage})은 쓰지 않음: {why}"
+    return line
