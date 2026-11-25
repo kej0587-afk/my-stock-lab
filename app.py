@@ -18626,6 +18626,65 @@ def apply_precision_post_decision(c, mtf_pack, *, name, ticker, has_pos, my_pric
     return c
 
 
+LEVERAGED_L3_AXIS = {"TQQQ": "QQQ", "QLD": "QQQ", "SOXL": "SOXX"}
+
+
+def build_leveraged_l3_read(ticker, profile_key, profile, c, state, has_pos, my_price):
+    """C-3 (2026-11-25, user decision): rebuild the leveraged DCA cycle (L2 qualification, panic latch) from
+    completed daily bars and read L3 on the latest bar. No budget or tranche record is stored yet, so the read
+    is at most an L3 candidate; it never makes the row executable."""
+    from stock_lab_core import leverage_l3_policy as l3
+    if not has_pos:
+        return {}
+    axis = LEVERAGED_L3_AXIS.get(str(profile_key or "").upper())
+    if not axis:
+        axis = next((row[0] for row in (profile or {}).get("watch", []) if row[1] in {"기초 ETF", "기초 자산"}), "")
+    if not axis:
+        return {}
+    try:
+        lev = daily_close(load_price_df(ticker, "5y"))
+        axis_close = daily_close(load_price_df(axis, "5y"))
+        bench = daily_close(load_price_df("SPY", "5y"))
+    except Exception as exc:
+        logging.warning("Leveraged L3 history unavailable for %s (%s)", ticker, type(exc).__name__)
+        return {"status": l3.STATUS_NO_CYCLE, "reasons": ["가격 이력 조회 실패"], "cycle": {}, "axis": axis}
+    bars = l3.build_history_bars(lev, axis_close, bench, avg_cost=clean_float(my_price, np.nan))
+    if not bars:
+        return {"status": l3.STATUS_NO_CYCLE, "reasons": ["가격 이력 부족"], "cycle": {}, "axis": axis}
+    cur = clean_float(c.get("cur_p"), np.nan)
+    ma50 = clean_float(c.get("ma50"), np.nan)
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    day_ret = clean_float(c.get("day_ret"), np.nan)
+    code = str(c.get("decision_code", "") or "")
+    target_w = clean_float(c.get("target_w"), 0.0)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    blocks = []
+    if (finite_num(day_ret) and day_ret <= -0.08) or code == "LEVERAGED_DAILY_DROP_NO_ADD":
+        blocks.append("급락일")
+    if ((finite_num(pct_b) and pct_b >= 0.85) or (finite_num(rsi) and rsi >= 70)
+            or (finite_num(mfi) and mfi >= 75) or (finite_num(day_ret) and day_ret >= 0.08)):
+        blocks.append("과열")
+    if target_w <= 0 or current_w >= target_w or code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}:
+        blocks.append("목표비중 없음·충족")
+    if code.startswith("HARD_BLOCK") and "목표비중 없음·충족" not in blocks:
+        blocks.append("하드차단")
+    overrides = {
+        # Market defense, macro and data are checked by the execution gate on the same row.
+        "market_defense": False,
+        "leveraged_above_ma50": (cur > ma50) if finite_num(cur) and finite_num(ma50) and ma50 > 0 else None,
+        "recovery_passed": int(state.get("recovery_passed", 0) or 0),
+        "blocks": tuple(blocks),
+    }
+    first_date = str(bars[0].date)
+    read = l3.read_current(bars, overrides, budget=None, shortfall=clean_float(c.get("buy_amt"), np.nan),
+                           history_complete=not (bars[0].dd52 is not None and bars[0].dd52 <= l3.CYCLE_START_DD))
+    read["axis"] = axis
+    read["history_start"] = first_date
+    return read
+
+
 def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price):
     if not isinstance(c, dict):
         return c
@@ -18657,13 +18716,22 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
     underlying_1w = clean_float(state.get("underlying_1w_avg"), np.nan)
     underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
     timing_state = build_leveraged_dca_timing_state(out, state)
+    try:
+        l3_read = build_leveraged_l3_read(ticker, state.get("profile_key", ""), state.get("profile"), out, state, has_pos, my_price)
+    except Exception as exc:
+        logging.warning("Leveraged L3 read failed for %s (%s)", ticker, type(exc).__name__)
+        l3_read = {}
+    if l3_read:
+        from stock_lab_core.leverage_l3_policy import summary_text as _l3_summary_text
+        out["leveraged_l3"] = l3_read
+        out["leveraged_l3_summary"] = _l3_summary_text(l3_read)
     reasons = (
         f"레버리지 전용 단계: {dca_stage} {dca_multiple}",
         f"회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}",
         str(timing_state.get("condition_summary", "") or ""),
         state.get("dca_note", ""),
         f"기존 판정: {out.get('dec', '-')}",
-    )
+    ) + ((out["leveraged_l3_summary"],) if out.get("leveraged_l3_summary") else ())
 
     if dca_stage == "미보유 관찰":
         timing_label = str(timing_state.get("status", "") or "레버리지 미보유: 타점 관찰")
@@ -18721,6 +18789,21 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
             "decision_group": "caution",
             "decision_reasons": reasons,
             "sizing_hint": "레버리지 ETF 전용: 회복 체크, 기초축 1W, 눌림 타점이 같이 맞을 때만 회차별 소액 DCA로 해석합니다.",
+        })
+    # C-3 (2026-11-25): an L2-qualified cycle that confirmed recovery is shown as an L3 candidate, even when the
+    # current loss is smaller than -12% (the stage table alone would say "회복 전: DCA 보류"). No budget/tranche record exists yet, so it stays a conditional wait
+    # ("조건부" keeps the gate at 대기); it never becomes executable here.
+    # Only the "before recovery" block is relabelled; an existing conditional row keeps its own timing label
+    # (and a data-check label is never hidden), the L3 line is already in its reasons.
+    if l3_read.get("status") == "L3 후보" and out.get("decision_code") == "LEVERAGED_RECOVERY_DCA_BLOCK":
+        why = ", ".join(l3_read.get("reasons") or []) or "예산 미설정"
+        out.update({
+            "dec": f"⚡레버리지 L3 후보: 회복 확인 · {why} (조건부)",
+            "col": "#8b5cf6",
+            "decision_code": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "레버리지 L3: 사전 레버리지 DCA 예산의 1/3 회차만, 최대 3회. 예산·회차 기록이 저장되기 전에는 실행하지 않습니다.",
         })
     return out
 
@@ -18831,6 +18914,14 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         for label, ok, desc in recovery_checks
     ])
     st.dataframe(check_df, width='stretch', hide_index=True)
+
+    l3_read = c.get("leveraged_l3") if isinstance(c.get("leveraged_l3"), dict) else {}
+    if l3_read:
+        from stock_lab_core.leverage_l3_policy import l3_panel_rows
+        st.markdown("#### L3 회복 DCA 사이클 (C-3)")
+        st.caption("L2 = 이번 하락 사이클에서 평단 대비 -12% 이상 하락해 DCA 후보 자격이 생김 → L3 = 회복 확인 후 사전 예산의 1/3 회차만 실행. "
+                   "레버리지 DCA 예산과 회차 기록이 아직 저장되지 않아 L3는 후보로만 표시하고 실행가능으로 만들지 않습니다.")
+        st.dataframe(pd.DataFrame(l3_panel_rows(l3_read)), width='stretch', hide_index=True)
 
     render_watch_basis(st, ticker, state.get("watch_rows_raw", []))
 
