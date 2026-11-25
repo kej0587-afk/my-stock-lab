@@ -42,6 +42,8 @@ reason "FMR 미확인"); `build_execution_gate` sends UNKNOWN to 데이터확인
 defense checks, so 방어우선 stays. Diagnostics: `stock_lab_core/macro_status.py`, `macro_data_status`,
 `macro_missing_components`, `last_complete_macro_at` (never reused in decisions). 30,278-state replay: only the expected
 V2 changes (580 codes); normal-macro parity byte-identical. Core ETF DCA also stops on missing days (C-13).
+Production: rebooted 2026-11-25 11:44 KST (includes A-4); header `매크로 지수: 0.5pt`, 5 indicator cells, 정밀관측소 GOOGL
+11:45 KST unchanged (`실행 보류 · 상위 시간대 추세훼손`, no nan). A real missing-macro day was not observable; covered by tests.
 
 ### Previous: A-4
 
