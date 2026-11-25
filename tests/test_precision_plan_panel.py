@@ -279,3 +279,33 @@ def test_ram_recovery_exception_does_not_soften_multiple_independent_blocks(disp
     assert summary["final_label"] == "매수 금지"
     assert not summary["execution_allowed"]
     assert summary["action"] == "목표비중/비중초과 우선"
+
+
+def test_exception_entry_plan_is_one_third_scout_with_trend_exit(display_app):
+    """C-1 step 1: EXCEPTION_ENTRY plans only the 1/3 scout tranche and a trailing exit."""
+    app, ui = display_app
+    decision = held_decision(dec="🟣예외승인: 정찰대 진입(MA5/FVG)", decision_code="EXCEPTION_ENTRY",
+                             rr_target=115.0, rr_ratio=1.5, buy_amt=140000, current_w=0, target_w=10,
+                             execution_workflow={"게이트상태": GATE_EXECUTABLE},
+                             chart_final_check={"execution_allowed": True, "block_count": 0, "core_missing_ids": []})
+    before = deepcopy(decision)
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=False)
+    assert plan["status"] == "1/3 정찰 · 추세추적"
+    stages = [row["단계"] for row in plan["rows"]]
+    assert stages == ["총 추가 필요", "1차 진입 (33%)", "2차 추가", "3차 예비", "추세추적 정리", "초기 손절"]
+    first = plan["rows"][1]
+    assert first["가격"] == "$100.00" and first["금액/수량"] == "$33 / 0.33주"
+    assert plan["rows"][2]["금액/수량"] == plan["rows"][3]["금액/수량"] == "-"
+    assert plan["rows"][-1]["가격"] == "$90.00"
+    assert decision == before
+
+
+def test_exception_entry_plan_for_held_position_is_unchanged(display_app):
+    app, ui = display_app
+    decision = held_decision(dec="🟣예외승인: 정찰대 진입(MA5/FVG)", decision_code="EXCEPTION_ENTRY",
+                             rr_target=115.0, rr_ratio=1.5, buy_amt=140000, current_w=1.0, target_w=10,
+                             execution_workflow={"게이트상태": GATE_EXECUTABLE},
+                             chart_final_check={"execution_allowed": True, "block_count": 0, "core_missing_ids": []})
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=True)
+    assert plan["status"] != "1/3 정찰 · 추세추적"
+    assert not any(row["단계"] == "추세추적 정리" for row in plan["rows"])

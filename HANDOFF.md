@@ -570,6 +570,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
+**C-1 policy (2026-11-25, user decision after the C-1/C-1b comparison):** apply one at a time, each with a replay diff
+and regression tests: (1) EXCEPTION_ENTRY = executable 1/3 scout + trend exit — done, `docs/maintenance/20261125_c1_step1_exception_trend_exit.md`;
+(2) NEW_ENTRY_LEADER trend exit in 상승장 only (rule table + tests before code; measured move rejected; 하락장 keeps current limits);
+(3) C-1c: MTF 상승 과열 → 1/3 scout in 상승장 only, compare A current / B leader only / C exception only / D both; never relax
+MTF 추세훼손. Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
+quality recovery R/R (pivot).
+
 **Decision policy v1, after A/B (2026-11-24):** A-4 and A-5/A-6 done 11-25; next report to the user, then C (one item at a time). A-1/A-2 and B-1..B-7 are done with identical replay output
 (`docs/maintenance/20261124_decision_ab_stage.md`). Next, one item at a time, each with a replay table (현행 / 대안 /
 상승장 / 횡보장 / 하락장 / 실행가능 건수 / 차단·대기 감소량 / 평균 R / 손실 꼬리 / 골든·회귀 테스트) and the user's approval:

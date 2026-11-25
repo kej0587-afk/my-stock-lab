@@ -22,6 +22,14 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
 )
 from stock_lab_core.formatters import finite_num as _finite_num
+from stock_lab_core.trend_exit_policy import (
+    EXECUTION_MEMO as TREND_EXECUTION_MEMO,
+    RR_KIND_TREND,
+    TREND_SCOUT_ENTRY_CODES,
+    scout_condition_text,
+    trend_exit_source_text,
+    uses_trend_exit,
+)
 from stock_lab_core.today_snapshot import (
     TODAY_QUEUE_LOGIC_VERSION,
     TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH,
@@ -831,7 +839,9 @@ def build_dashboard_final_read(
             return "⏳눌림대기"
         return "✅정밀확인"
 
-    if re.search(r"상단|과열|대기|R/R\s*<\s*1|정찰", text):
+    # C-1 step 1: a scout-sized entry's own word "정찰" names its size, not a wait.
+    wait_words = r"상단|과열|대기|R/R\s*<\s*1" if code in TREND_SCOUT_ENTRY_CODES else r"상단|과열|대기|R/R\s*<\s*1|정찰"
+    if re.search(wait_words, text):
         return "⏳눌림대기"
     if group == "buyish" or is_dashboard_actionable_signal(decision):
         return "✅정밀확인"
@@ -975,6 +985,7 @@ def build_today_queue_execution_snapshot(
 
     target_is_projection = bool(c.get("rr_target_is_projection", False))
     rr_target_source = str(c.get("rr_target_source", "") or "").strip()
+    trend_scout = uses_trend_exit(str(c.get("decision_code", "") or ""), has_pos=has_pos)
     target_text = "-"
     if target > 0:
         target_prefix = "상단 " if target_is_projection else ""
@@ -984,6 +995,10 @@ def build_today_queue_execution_snapshot(
     rr_kind = "투영상단" if target_is_projection else "차트구조"
     if not rr_target_source:
         rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR" if target_is_projection else "차트 구조 목표가"
+    if trend_scout:
+        # No fixed target: a projected upper target does not cap the exit. The R/R floor stays.
+        rr_kind = RR_KIND_TREND
+        rr_target_source = f"{trend_exit_source_text()} · R/R 하한 기준 {rr_target_source}"
 
     target_w = clean_float(c.get("target_w"), 0.0)
     current_w = clean_float(c.get("current_w"), 0.0)
@@ -1029,6 +1044,8 @@ def build_today_queue_execution_snapshot(
         rr=rr,
         target_is_projection=target_is_projection,
     )
+    if trend_scout and not (is_weight_block or is_hard_blocked or is_poor_rr or is_wait):
+        action = TREND_EXECUTION_MEMO
 
     if is_weight_block or is_hard_blocked:
         if is_weight_block:
@@ -1073,6 +1090,8 @@ def build_today_queue_execution_snapshot(
     else:
         entry_text = format_currency(cur, tkr)
         entry_cond = "현재 보유분 유지, 추가 1차는 소액만" if has_pos else "현재가 부근 1차 정찰"
+        if trend_scout:
+            entry_cond = scout_condition_text()
 
     return {
         "R/R": rr_text,
