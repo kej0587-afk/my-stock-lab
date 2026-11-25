@@ -634,7 +634,7 @@ Next: C-5 tech-review v2 display (no authority), then C-6/C-11.
 price only), formation period as reference, type-aware overheat (leader/exception scout: reference only), L3 tickers shown as
 "레버리지 전용 정책 적용" with the C-3 rows. Never feeds codes, gates, sizing, monthly multipliers or sells; the record goes to the
 review ZIP `signal_evidence.tech_review`. BLOCK stays practically unreachable by design (no condition added). Parity C-4 vs C-5:
-41,391 rows × 40 columns identical. Doc `docs/maintenance/20261125_c5_tech_review_v2.md`. C-4/C-5 closed. Next: C-6/C-11
+41,391 rows × 40 columns identical. Doc `docs/maintenance/20261125_c5_tech_review_v2.md`. PR #54, prod checked 11-26 01:26–01:28 KST (GOOGL, TQQQ). C-4/C-5 closed. Next: C-6/C-11
 (monthly DCA and cross-screen decision integration), wait for the user.
 
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
