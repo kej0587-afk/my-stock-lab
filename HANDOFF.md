@@ -588,7 +588,7 @@ tranches are insert-only audit rows, unique cycle_id + tranche_no). A tranche is
 button in the precision panel, never by reruns or viewing. Executable needs budget, tranche left, cooldown, this month's monthly
 plan (read from the monthly calculator's session value `_monthly_plan_alloc`; unknown → candidate) and amount ≤ shortfall − monthly.
 Executable rows get `LEVERAGED_L3_RECOVERY_DCA` (buyish; gate reason "L3 회복 DCA n/3회차"); market defense, macro and data still
-block at the gate. Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`, replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
+block at the gate. PR #47; Supabase tables created and prod checked 11-25 17:01 KST (SOXL panel: L3 대기, latch held, budget 미설정). Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`, replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
 
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
