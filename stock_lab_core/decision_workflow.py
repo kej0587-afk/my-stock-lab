@@ -90,7 +90,7 @@ def build_decision_workflow(
         "매크로상태": c.get("macro_state", ""),
         "매크로누락": ", ".join(str(x) for x in (c.get("macro_missing_components") or ())),
         "상위시간대상태": c.get("mtf_bias_label", ""),
-        "정찰실행사유": scout_execution_reason(c, has_pos=has_pos),
+        "정찰실행사유": scout_execution_reason(c, has_pos=has_pos) or str(c.get("leveraged_l3_execution_reason") or ""),
         "데이터상태": c.get("data_state", "OK"),
         "수급기준": ("최신 거래량 미확인 · MFI " + str(c.get("live_quote", {}).get("mfi_asof") or "미확인")[:10]) if c.get("live_quote", {}).get("volume_status") else "가격·거래량 원자료",
         **build_today_queue_execution_snapshot(

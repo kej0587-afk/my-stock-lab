@@ -23,11 +23,19 @@ L3 rule (every condition on the same completed bar)
 - not market defense, underlying above MA50, leveraged ETF above MA50, recovery check >= 4/6,
 - L2 qualified in this cycle, panic latch released, no current panic (-50%),
 - existing blocks clear: daily drop, overheat, macro, data, weight (target zero/filled),
-- tranches used < 3, a newer completed bar than the last tranche,
+- tranches used < 3, at least 20 completed trading days after the last recorded tranche (user decision, option A),
 - a pre-set leveraged DCA budget exists. Without one the row is an L3 candidate, never executable.
 Tranche amount = min(budget / 3, budget - invested, target shortfall - this month's monthly plan amount for the
 same ticker). The monthly plan amount is subtracted so the regular monthly contribution and the crisis budget
 never fill the same shortfall twice.
+
+Stored state (Supabase ``leverage_dca_cycles`` / ``leverage_dca_tranches``, see ``db_schema``)
+- The budget and the tranches actually executed live in the store; everything else is rebuilt from bars.
+- A tranche is counted only when the user records it in the app (insert-only audit row, unique per
+  cycle_id + tranche_no). Showing the signal, reruns, refreshes or viewing the panel never consume a tranche.
+- A record applies only to the cycle it was written for (``cycle_id`` = ticker + cycle start). A cycle that
+  ends normally (new 52-week closing high with the latch released, or position closed) starts the next one
+  with no tranches and no cooldown.
 """
 
 from __future__ import annotations
@@ -41,7 +49,8 @@ PANIC_DD = -0.50
 RECOVERY_MIN = 4
 MAX_TRANCHES = 3
 TRANCHE_FRACTION = 1.0 / 3.0
-MIN_BARS_BETWEEN = 1  # "a newer completed bar"; the user's rule does not add a longer spacing
+MIN_BARS_BETWEEN = 20  # user decision 2026-11-25 (option A): >= 20 completed trading days after the last recorded tranche
+POLICY_VERSION = "C3-2026-11-25"
 
 STATUS_NO_CYCLE = "사이클 없음"
 STATUS_EXECUTABLE = "L3 실행가능"
@@ -178,8 +187,11 @@ def step(cycle: LeverageDcaCycle, bar: Bar, i: int, *, budget=None, shortfall=No
     reasons.extend(bar.blocks)
     if cycle.tranches_used >= MAX_TRANCHES:
         reasons.append("3회차 소진")
-    if i - cycle.last_tranche_bar < MIN_BARS_BETWEEN:
+    gap = i - cycle.last_tranche_bar
+    if gap < 1:
         reasons.append("같은 완료봉")
+    elif gap < MIN_BARS_BETWEEN:
+        reasons.append(f"마지막 실행 후 {gap}거래일 (20거래일 미만)")
     if reasons:
         return {"status": STATUS_WAIT, "reasons": reasons, "events": events, "amount": None}
 
@@ -272,12 +284,32 @@ def build_history_bars(lev_close, axis_close, bench_close=None, *, avg_cost=None
     return bars
 
 
-def read_current(bars: list[Bar], last_overrides: dict | None = None, *, budget=None, shortfall=None,
-                 monthly_planned=None, history_complete=True) -> dict:
-    """Rebuild the cycle from past bars, then read the last (live) bar with the app's own values.
+def cycle_id_for(ticker: str, start: str) -> str:
+    return f"{str(ticker or '').upper()}-{start}"
 
-    No tranche record exists yet, so nothing is counted as executed (tranches_used stays 0). The read is therefore
-    a candidate read; an executable read also needs a budget, the tranche record and this month's monthly plan."""
+
+def apply_record(cycle: LeverageDcaCycle, bars: list[Bar], record: dict | None) -> None:
+    """Load the user's recorded tranches into the rebuilt cycle (only explicit records count, never views)."""
+    tranches = sorted((record or {}).get("tranches") or [], key=lambda t: int(t.get("tranche_no", 0)))
+    if not tranches:
+        return
+    cycle.tranches_used = len(tranches)
+    cycle.invested = float(sum(float(t.get("actual_krw") or 0.0) for t in tranches))
+    cycle.tranche_dates = [str(t.get("exec_date")) for t in tranches]
+    last_date = cycle.tranche_dates[-1]
+    dates = [b.date for b in bars]
+    import bisect
+    # index of the recorded completed trading day (or the last bar on/before it)
+    cycle.last_tranche_bar = bisect.bisect_right(dates, last_date) - 1
+
+
+def read_current(bars: list[Bar], last_overrides: dict | None = None, *, ticker: str = "", record: dict | None = None,
+                 shortfall=None, monthly_planned=None, history_complete=True) -> dict:
+    """Rebuild the cycle from past bars, apply the user's recorded tranches for this cycle, then read the last bar.
+
+    ``record`` = {"cycle_id", "budget_krw", "tranches": [{"tranche_no", "exec_date", "actual_krw"}]} from storage.
+    Executable needs: a stored budget for this cycle, this month's monthly plan amount, a complete price history,
+    and every L3 condition. Reading never records anything."""
     if not bars:
         return {"status": STATUS_NO_CYCLE, "reasons": ["가격 이력 부족"], "events": [], "amount": None, "cycle": {}}
     cycle = LeverageDcaCycle()
@@ -286,22 +318,58 @@ def read_current(bars: list[Bar], last_overrides: dict | None = None, *, budget=
     last = bars[-1]
     if last_overrides:
         last = Bar(**{**last.__dict__, **{k: v for k, v in last_overrides.items() if k in last.__dict__}})
-    if monthly_planned is None and _finite(budget):
-        # The monthly contribution and the crisis budget must not fill the same shortfall twice.
+    # A cycle can start on the last bar itself; peek with a copy to know its id.
+    probe = LeverageDcaCycle(**{k: (list(v) if isinstance(v, list) else v) for k, v in cycle.__dict__.items()})
+    step(probe, last, len(bars) - 1)
+    cid = cycle_id_for(ticker, probe.start) if probe.active else ""
+    rec = record if record and cid and str(record.get("cycle_id", "")) == cid else None
+    if rec:
+        apply_record(cycle, bars, rec)
+    budget = rec.get("budget_krw") if rec else None
+    if _finite(budget) and monthly_planned is None:
         res = step(cycle, last, len(bars) - 1, budget=None, shortfall=shortfall)
         if res["status"] == STATUS_CANDIDATE:
-            res["reasons"] = ["이번 달 월적립 배분 미확인"]
+            res["reasons"] = ["이번 달 월적립 배분 미확인 (월 적립 계산기에서 확인)"]
     else:
         res = step(cycle, last, len(bars) - 1, budget=budget, shortfall=shortfall,
                    monthly_planned=monthly_planned or 0.0)
-    if res["status"] == STATUS_EXECUTABLE:
-        # Without the tranche record the count of tranches already bought is unknown: never executable here.
-        res = {**res, "status": STATUS_CANDIDATE, "reasons": ["회차 기록 미연결"], "amount": res.get("amount")}
     if cycle.active and not history_complete:
+        if res["status"] == STATUS_EXECUTABLE:
+            res = {**res, "status": STATUS_CANDIDATE}
+            res["reasons"] = []
         res["reasons"] = list(res.get("reasons", [])) + ["사이클 시작이 가격 이력보다 앞설 수 있음"]
     res["cycle"] = cycle.to_dict()
-    res["l3_ready"] = res["status"] == STATUS_CANDIDATE
+    res["cycle_id"] = cid
+    res["record"] = rec or {}
+    res["bar_date"] = last.date
+    res["monthly_planned"] = monthly_planned
+    res["shortfall"] = shortfall
+    res["planned"] = tranche_amount(budget, cycle.invested, shortfall, monthly_planned) if _finite(budget) else None
+    res["l3_ready"] = res["status"] in {STATUS_CANDIDATE, STATUS_EXECUTABLE}
     return res
+
+
+def tranche_record_payload(read: dict, actual_krw, *, ticker: str, account_mode: str = "total") -> tuple[dict | None, str]:
+    """Validate a user's explicit 'I executed this tranche' record. Returns (payload, error)."""
+    if (read or {}).get("status") != STATUS_EXECUTABLE:
+        return None, "L3 실행가능 상태가 아니라 기록할 수 없습니다."
+    planned = read.get("amount")
+    if not _finite(actual_krw) or float(actual_krw) <= 0:
+        return None, "실제 실행 금액을 입력하세요."
+    if not _finite(planned) or float(actual_krw) > float(planned) + 1e-6:
+        return None, f"실제 금액이 이번 회차 실행가능액({planned:,.0f}원)을 넘습니다."
+    cyc = read.get("cycle") or {}
+    conditions = {"reasons_clear": True, "bar_date": read.get("bar_date"), "l2_date": cyc.get("l2_date"),
+                  "l2_stage": cyc.get("l2_stage"), "panic_latched": cyc.get("panic_latched"),
+                  "unlatch_date": cyc.get("unlatch_date"), "summary": summary_text(read)}
+    return {
+        "account_mode": account_mode, "ticker": str(ticker).upper(), "cycle_id": read.get("cycle_id"),
+        "tranche_no": int(read.get("tranche") or (cyc.get("tranches_used", 0) + 1)),
+        "exec_date": read.get("bar_date"), "planned_krw": float(planned), "actual_krw": float(actual_krw),
+        "shortfall_krw": float(read["shortfall"]) if _finite(read.get("shortfall")) else None,
+        "monthly_plan_krw": float(read["monthly_planned"]) if _finite(read.get("monthly_planned")) else None,
+        "conditions": conditions, "policy_version": POLICY_VERSION,
+    }, ""
 
 
 def summary_text(read: dict) -> str:
@@ -312,7 +380,7 @@ def summary_text(read: dict) -> str:
     status = read.get("status", "")
     if status == STATUS_NO_CYCLE:
         return "L3 사이클 없음 (52주 고점 대비 -10% 미만 또는 사이클 종료)"
-    parts = [f"L3 {('후보' if status == STATUS_CANDIDATE else '대기')}"]
+    parts = [{STATUS_CANDIDATE: "L3 후보", STATUS_EXECUTABLE: "L3 실행가능"}.get(status, "L3 대기")]
     parts.append(f"사이클 {cyc.get('start') or '-'} 시작")
     parts.append(f"L2 자격 {cyc.get('l2_date')}({cyc.get('l2_stage')})" if cyc.get("l2_qualified") else "L2 자격 없음")
     if cyc.get("panic_latched"):
@@ -322,6 +390,8 @@ def summary_text(read: dict) -> str:
     reasons = read.get("reasons") or []
     if reasons:
         parts.append(("실행 안 함: " if status == STATUS_CANDIDATE else "남은 조건: ") + ", ".join(reasons[:4]))
+    if status == STATUS_EXECUTABLE and _finite(read.get("amount")):
+        parts.append(f"{read.get('tranche')}회차 실행가능액 {read['amount']:,.0f}원")
     return " · ".join(parts)
 
 
@@ -335,8 +405,13 @@ def l3_panel_rows(read: dict) -> list[dict]:
         ("L2 자격", f"{cyc.get('l2_date')} ({cyc.get('l2_stage')})" if cyc.get("l2_qualified") else "없음"),
         ("패닉 latch", f"유지 ({cyc.get('latch_date')} 발동)" if cyc.get("panic_latched")
          else (f"해제 ({cyc.get('unlatch_date')})" if cyc.get("unlatch_date") else "없음")),
-        ("회차", f"{cyc.get('tranches_used', 0)}/{MAX_TRANCHES} (회차 기록 미연결)"),
-        ("실행 조건", "시장방어 아님 · 기초 MA50 위 · 레버리지 MA50 위 · 회복 4/6 이상 · 기존 차단 없음"),
+        ("회차", f"{cyc.get('tranches_used', 0)}/{MAX_TRANCHES} 사용"
+                 + (f" · 마지막 {cyc['tranche_dates'][-1]}" if cyc.get("tranche_dates") else "")),
+        ("사전 예산", f"{float((read.get('record') or {}).get('budget_krw')):,.0f}원"
+                    if _finite((read.get('record') or {}).get('budget_krw')) else "미설정"),
+        ("이번 회차 실행가능액", f"{read['planned']:,.0f}원" if _finite(read.get("planned")) else "-"),
+        ("실행 조건", "시장방어 아님 · 기초 MA50 위 · 레버리지 MA50 위 · 회복 4/6 이상 · 기존 차단 없음 · "
+                      "마지막 실행 후 20거래일 이상 · 월적립 배분 확인"),
         ("남은 조건 / 실행 안 하는 이유", ", ".join(read.get("reasons") or []) or "-"),
     ]
     return [{"항목": k, "내용": v} for k, v in rows]

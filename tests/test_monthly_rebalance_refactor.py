@@ -128,6 +128,8 @@ def run(source, frame, *, state=None, inputs=None, action=None, fx=1400., demo=F
         pd.testing.assert_frame_equal(frame, before, check_exact=True)
     if logs_before is not None:
         pd.testing.assert_frame_equal(monthly_logs, logs_before, check_exact=True)
+    # C-3 (2026-11-25) adds one output-only key for the leveraged L3 tranche cap; the baseline never wrote it.
+    ui.session_state.pop("_monthly_plan_alloc", None)
     return ui.log, ui.session_state
 
 

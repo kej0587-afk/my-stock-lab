@@ -13,8 +13,8 @@ Stages (current behaviour, nothing new):
 - LX: excluded by target weight (zero target or target filled)
 - L1: wait/blocked (overheat pass, before recovery, daily drop no-add, panic zone)
 - L2: conditional small tranche (still a gate wait today)
-- L3: executable leveraged DCA. No code reaches it yet. C-3 (2026-11-25) adds the cycle read as ``l3_status``
-  ("L3 후보" at most) until the budget and tranche record exist.
+- L3: executable leveraged DCA (C-3, 2026-11-25): LEVERAGED_L3_RECOVERY_DCA, only with a stored cycle budget,
+  the user's recorded tranches and this month's monthly plan; ``l3_status`` carries the cycle read.
 """
 
 from __future__ import annotations
@@ -30,6 +30,8 @@ LEVERAGE_STAGE_BY_CODE = {
     "LEVERAGED_DAILY_DROP_NO_ADD": ("L1", "급락일·추가 금지"),
     "LEVERAGED_DCA_CONDITIONAL": ("L2", "조건부 소액"),
     "LEVERAGED_RECOVERY_DCA_CONDITIONAL": ("L2", "회복 조건부 소액"),
+    # C-3 (2026-11-25): executable only with a stored budget, recorded tranches and this month's monthly plan.
+    "LEVERAGED_L3_RECOVERY_DCA": ("L3", "회복 확인 · 사전 예산 1/3 회차"),
 }
 MARKET_DEFENSE_STATES = frozenset({"레버리지 시장방어", "시장방어: 신규매수 중단"})
 EXECUTABLE_GATE = "실행가능"

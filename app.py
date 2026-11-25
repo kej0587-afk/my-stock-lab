@@ -18678,11 +18678,130 @@ def build_leveraged_l3_read(ticker, profile_key, profile, c, state, has_pos, my_
         "blocks": tuple(blocks),
     }
     first_date = str(bars[0].date)
-    read = l3.read_current(bars, overrides, budget=None, shortfall=clean_float(c.get("buy_amt"), np.nan),
+    record, store_note = load_leverage_dca_record(ticker)
+    read = l3.read_current(bars, overrides, ticker=ticker, record=record,
+                           shortfall=clean_float(c.get("buy_amt"), np.nan),
+                           monthly_planned=current_month_monthly_plan_krw(ticker),
                            history_complete=not (bars[0].dd52 is not None and bars[0].dd52 <= l3.CYCLE_START_DD))
+    if store_note and read.get("status") in {l3.STATUS_CANDIDATE}:
+        read["reasons"] = list(read.get("reasons") or []) + [store_note]
     read["axis"] = axis
     read["history_start"] = first_date
     return read
+
+
+LEVERAGE_DCA_ACCOUNT_MODE = "total"
+
+
+def current_month_monthly_plan_krw(ticker):
+    """This month's monthly-contribution allocation for the ticker, from the monthly calculator (None = 미확인)."""
+    try:
+        plan = st.session_state.get("_monthly_plan_alloc") or {}
+    except Exception:
+        return None
+    if plan.get("month") != datetime.now().strftime("%Y-%m"):
+        return None
+    alloc = (plan.get("alloc") or {})
+    value = alloc.get(str(ticker).upper())
+    if value is None:
+        return 0.0 if alloc else None  # the calculator ran this month and gave this ticker nothing
+    return clean_float(value, np.nan) if finite_num(value) else None
+
+
+def _leverage_dca_table_missing(exc) -> bool:
+    text = str(exc)
+    return "leverage_dca" in text and ("does not exist" in text or "PGRST205" in text or "schema cache" in text)
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _load_leverage_dca_record_cached(owner_email, ticker):
+    client = get_supabase_client()
+    cyc = (client.table("leverage_dca_cycles").select("*").eq("owner_email", owner_email)
+           .eq("account_mode", LEVERAGE_DCA_ACCOUNT_MODE).eq("ticker", ticker).eq("status", "active")
+           .order("cycle_start", desc=True).limit(1).execute())
+    rows = getattr(cyc, "data", None) or []
+    if not rows:
+        return None
+    row = rows[0]
+    tr = (client.table("leverage_dca_tranches").select("tranche_no,exec_date,actual_krw,planned_krw,created_at")
+          .eq("owner_email", owner_email).eq("account_mode", LEVERAGE_DCA_ACCOUNT_MODE).eq("ticker", ticker)
+          .eq("cycle_id", row.get("cycle_id")).order("tranche_no").execute())
+    row["tranches"] = getattr(tr, "data", None) or []
+    return row
+
+
+def load_leverage_dca_record(ticker):
+    """(record or None, note). Reading never writes. Missing storage keeps L3 a candidate."""
+    if IS_PUBLIC_DEMO:
+        return None, "공개 데모: 레버리지 DCA 예산 저장 안 함"
+    try:
+        return _load_leverage_dca_record_cached(CURRENT_USER_EMAIL, str(ticker).upper()), ""
+    except Exception as exc:
+        if _leverage_dca_table_missing(exc):
+            return None, "레버리지 DCA 저장 테이블 없음"
+        logging.warning("Leverage DCA record unavailable for %s (%s)", ticker, type(exc).__name__)
+        return None, "레버리지 DCA 기록 조회 실패"
+
+
+def save_leverage_dca_budget(ticker, read, budget_krw):
+    """Set the pre-set budget for the current cycle (one active cycle per ticker; an older one is closed)."""
+    from stock_lab_core.leverage_l3_policy import POLICY_VERSION
+    if IS_PUBLIC_DEMO:
+        return False, "공개 데모에서는 저장하지 않습니다."
+    cyc = (read or {}).get("cycle") or {}
+    cid = (read or {}).get("cycle_id")
+    if not cid or not cyc.get("active"):
+        return False, "열린 하락 사이클이 없어 예산을 저장하지 않았습니다."
+    if not finite_num(budget_krw) or float(budget_krw) <= 0:
+        return False, "예산은 0보다 커야 합니다."
+    tkr = str(ticker).upper()
+    try:
+        client = get_supabase_client()
+        (client.table("leverage_dca_cycles").update({"status": "closed", "updated_at": datetime.now(timezone.utc).isoformat()})
+         .eq("owner_email", CURRENT_USER_EMAIL).eq("account_mode", LEVERAGE_DCA_ACCOUNT_MODE).eq("ticker", tkr)
+         .eq("status", "active").neq("cycle_id", cid).execute())
+        client.table("leverage_dca_cycles").upsert({
+            "owner_email": CURRENT_USER_EMAIL, "account_mode": LEVERAGE_DCA_ACCOUNT_MODE, "ticker": tkr,
+            "cycle_id": cid, "cycle_start": cyc.get("start"), "l2_date": cyc.get("l2_date") or None,
+            "budget_krw": float(budget_krw), "panic_latched": bool(cyc.get("panic_latched")),
+            "status": "active", "policy_version": POLICY_VERSION,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="owner_email,account_mode,ticker,cycle_id").execute()
+    except Exception as exc:
+        if _leverage_dca_table_missing(exc):
+            return False, "Supabase에 leverage_dca 테이블이 없습니다. 아래 SQL을 한 번 실행하세요."
+        return False, f"저장 실패: {type(exc).__name__}"
+    _load_leverage_dca_record_cached.clear()
+    return True, ""
+
+
+def record_leverage_dca_tranche(ticker, read, actual_krw):
+    """The user's explicit record that this L3 tranche was executed. Insert-only; a duplicate tranche is refused."""
+    from stock_lab_core.leverage_l3_policy import tranche_record_payload
+    if IS_PUBLIC_DEMO:
+        return False, "공개 데모에서는 저장하지 않습니다."
+    payload, err = tranche_record_payload(read, actual_krw, ticker=ticker, account_mode=LEVERAGE_DCA_ACCOUNT_MODE)
+    if err:
+        return False, err
+    payload["owner_email"] = CURRENT_USER_EMAIL
+    try:
+        client = get_supabase_client()
+        client.table("leverage_dca_tranches").insert(payload).execute()
+        (client.table("leverage_dca_cycles").update({
+            "tranches_used": payload["tranche_no"], "last_tranche_date": payload["exec_date"],
+            "panic_latched": bool(((read or {}).get("cycle") or {}).get("panic_latched")),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("owner_email", CURRENT_USER_EMAIL).eq("account_mode", LEVERAGE_DCA_ACCOUNT_MODE)
+         .eq("ticker", str(ticker).upper()).eq("cycle_id", payload["cycle_id"]).execute())
+    except Exception as exc:
+        text = str(exc)
+        if "duplicate" in text or "23505" in text:
+            return False, f"{payload['tranche_no']}회차는 이미 기록되어 있습니다."
+        if _leverage_dca_table_missing(exc):
+            return False, "Supabase에 leverage_dca 테이블이 없습니다."
+        return False, f"기록 실패: {type(exc).__name__}"
+    _load_leverage_dca_record_cached.clear()
+    return True, ""
 
 
 def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price):
@@ -18795,7 +18914,22 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
     # ("조건부" keeps the gate at 대기); it never becomes executable here.
     # Only the "before recovery" block is relabelled; an existing conditional row keeps its own timing label
     # (and a data-check label is never hidden), the L3 line is already in its reasons.
-    if l3_read.get("status") == "L3 후보" and out.get("decision_code") == "LEVERAGED_RECOVERY_DCA_BLOCK":
+    if (l3_read.get("status") == "L3 실행가능"
+            and out.get("decision_code") in {"LEVERAGED_RECOVERY_DCA_BLOCK", "LEVERAGED_RECOVERY_DCA_CONDITIONAL"}):
+        tranche = int(l3_read.get("tranche") or 1)
+        amount = clean_float(l3_read.get("amount"), np.nan)
+        out.update({
+            "dec": f"⚡레버리지 L3 회복 DCA: {tranche}회차 실행 (사전 예산 1/3)",
+            "col": "#16a34a",
+            "decision_code": "LEVERAGED_L3_RECOVERY_DCA",
+            "decision_group": "buyish",
+            "decision_reasons": reasons,
+            "buy_amt": amount if finite_num(amount) else out.get("buy_amt"),
+            "leveraged_l3_execution_reason": f"L3 회복 DCA {tranche}/3회차 실행: 사전 예산 1/3 · 최대 {amount:,.0f}원",
+            "sizing_hint": (f"레버리지 L3 {tranche}회차: 최대 {amount:,.0f}원(사전 예산 1/3, 목표비중 부족분−이번 달 월적립 이내). "
+                            "실제로 실행한 뒤 정밀관측소에서 회차 실행을 기록해야 다음 회차가 계산됩니다."),
+        })
+    elif l3_read.get("status") == "L3 후보" and out.get("decision_code") == "LEVERAGED_RECOVERY_DCA_BLOCK":
         why = ", ".join(l3_read.get("reasons") or []) or "예산 미설정"
         out.update({
             "dec": f"⚡레버리지 L3 후보: 회복 확인 · {why} (조건부)",
@@ -18919,13 +19053,54 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     if l3_read:
         from stock_lab_core.leverage_l3_policy import l3_panel_rows
         st.markdown("#### L3 회복 DCA 사이클 (C-3)")
-        st.caption("L2 = 이번 하락 사이클에서 평단 대비 -12% 이상 하락해 DCA 후보 자격이 생김 → L3 = 회복 확인 후 사전 예산의 1/3 회차만 실행. "
-                   "레버리지 DCA 예산과 회차 기록이 아직 저장되지 않아 L3는 후보로만 표시하고 실행가능으로 만들지 않습니다.")
+        st.caption("L2 = 이번 하락 사이클에서 평단 대비 -12% 이상 하락해 DCA 후보 자격이 생김 → L3 = 회복 확인 후 사전 예산의 1/3 회차만 실행 "
+                   "(최대 3회, 회차 간 20거래일 이상). 회차는 아래에서 실제 실행을 기록할 때만 사용됩니다. 화면 조회·새로고침으로는 줄지 않습니다.")
         st.dataframe(pd.DataFrame(l3_panel_rows(l3_read)), width='stretch', hide_index=True)
+        render_leverage_dca_controls(ticker, l3_read)
 
     render_watch_basis(st, ticker, state.get("watch_rows_raw", []))
 
     render_leveraged_reentry_simulator(name, ticker, c)
+
+
+def render_leverage_dca_controls(ticker, l3_read):
+    """Budget for the open cycle and the user's explicit tranche record (C-3). Nothing here runs without a click."""
+    from stock_lab_core.leverage_l3_policy import STATUS_EXECUTABLE
+    from stock_lab_core.db_schema import get_leverage_dca_create_sql
+    cyc = l3_read.get("cycle") or {}
+    record = l3_read.get("record") or {}
+    tkr = str(ticker).upper()
+    reasons = " ".join(l3_read.get("reasons") or [])
+    if "저장 테이블 없음" in reasons:
+        with st.expander("레버리지 DCA 저장 테이블 SQL (Supabase SQL Editor에서 한 번 실행)"):
+            st.code(get_leverage_dca_create_sql(), language="sql")
+        return
+    if IS_PUBLIC_DEMO or not cyc.get("active"):
+        return
+    with st.expander("이번 사이클 레버리지 DCA 예산", expanded=not record):
+        default_budget = float(clean_float(record.get("budget_krw"), 0.0))
+        budget = st.number_input("사이클 전용 사전 예산(원, 회차당 1/3)", min_value=0.0, step=100000.0,
+                                 value=default_budget, key=f"lev_dca_budget_{tkr}_{l3_read.get('cycle_id')}")
+        if st.button("예산 저장", key=f"lev_dca_budget_save_{tkr}_{l3_read.get('cycle_id')}"):
+            ok, msg = save_leverage_dca_budget(tkr, l3_read, budget)
+            st.success("예산을 저장했습니다. 회차·20거래일 간격은 실행 기록 기준으로 계산합니다.") if ok else st.warning(msg)
+    tranches = record.get("tranches") or []
+    if tranches:
+        st.dataframe(pd.DataFrame([{"회차": t.get("tranche_no"), "실행 기준일": t.get("exec_date"),
+                                    "계획 금액": t.get("planned_krw"), "기록 금액": t.get("actual_krw"),
+                                    "기록 시각": t.get("created_at")} for t in tranches]),
+                     width='stretch', hide_index=True)
+    if l3_read.get("status") == STATUS_EXECUTABLE:
+        tranche = int(l3_read.get("tranche") or 1)
+        cap = float(clean_float(l3_read.get("amount"), 0.0))
+        st.markdown(f"**L3 {tranche}회차 실행가능액: 최대 {cap:,.0f}원** (사전 예산 1/3, 목표비중 부족분 − 이번 달 월적립 이내)")
+        actual = st.number_input("실제로 실행한 금액(원)", min_value=0.0, max_value=cap, value=cap, step=10000.0,
+                                 key=f"lev_dca_actual_{tkr}_{l3_read.get('cycle_id')}_{tranche}")
+        confirm = st.checkbox(f"{tranche}회차를 실제로 매수했습니다", key=f"lev_dca_confirm_{tkr}_{l3_read.get('cycle_id')}_{tranche}")
+        if st.button(f"L3 {tranche}회차 실행 기록", disabled=not confirm,
+                     key=f"lev_dca_record_{tkr}_{l3_read.get('cycle_id')}_{tranche}"):
+            ok, msg = record_leverage_dca_tranche(tkr, l3_read, actual)
+            st.success(f"{tranche}회차 실행을 기록했습니다. 다음 회차는 20거래일 뒤 조건을 다시 확인합니다.") if ok else st.warning(msg)
 
 
 def render_leveraged_reentry_simulator(name, ticker, c):

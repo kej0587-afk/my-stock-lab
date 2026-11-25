@@ -579,13 +579,16 @@ MTF 추세훼손. C-1c: user chose C (11-25) — 상승장 unheld EXCEPTION_ENTR
 quality recovery R/R (pivot).
 
 **C-3 leverage L3 policy (2026-11-25, user decision after the comparison):** D (both MA50) + recovery 4/6, L2 qualification
-recorded per drawdown cycle (avg-cost −12/−25/−35% once), L3 = 1/3 of a pre-set leveraged DCA budget, max 3, one per new completed
-bar, capped by budget and target shortfall minus this month's monthly plan; −50% panic latch released only by underlying 상승장 +
-both MA50 + 4/6 (never by 52-week-high roll-off). Implemented as `stock_lab_core/leverage_l3_policy.py` + `app.build_leveraged_l3_read`
-(cycle rebuilt from 5y daily bars); shown as "L3 후보" (gate stays 대기). Not executable yet: no storage for the budget and tranche
-record. Next: a Supabase table for budget + tranche log (needs the user's go), then the executable path. Open user decision: tranche
-spacing (new bar vs 20 trading days; replay: 3 tranches in a median 5 days). Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`,
-replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
+recorded per drawdown cycle (avg-cost −12/−25/−35% once), L3 = 1/3 of a pre-set leveraged DCA budget, max 3, capped by budget and
+target shortfall minus this month's monthly plan; −50% panic latch released only by underlying 상승장 + both MA50 + 4/6 (never by
+52-week-high roll-off). `stock_lab_core/leverage_l3_policy.py` + `app.build_leveraged_l3_read` (cycle rebuilt from 5y daily bars),
+PR #46. Step 2 (user chose option A + approved Supabase): ≥ 20 completed trading days after the last *recorded* tranche; budget and
+tranches stored in Supabase `leverage_dca_cycles` / `leverage_dca_tranches` (SQL: `db_schema.get_leverage_dca_create_sql()`;
+tranches are insert-only audit rows, unique cycle_id + tranche_no). A tranche is consumed only by the user's "L3 n회차 실행 기록"
+button in the precision panel, never by reruns or viewing. Executable needs budget, tranche left, cooldown, this month's monthly
+plan (read from the monthly calculator's session value `_monthly_plan_alloc`; unknown → candidate) and amount ≤ shortfall − monthly.
+Executable rows get `LEVERAGED_L3_RECOVERY_DCA` (buyish; gate reason "L3 회복 DCA n/3회차"); market defense, macro and data still
+block at the gate. Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`, replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
 
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use

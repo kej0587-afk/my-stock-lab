@@ -69,9 +69,10 @@ def test_shadow_never_changes_decision_gate_or_sizing():
     assert model["leverage"]["plan_gate_mismatch"] is True
 
 
-def test_leverage_stage_covers_every_leveraged_code_and_reserves_l3():
+def test_leverage_stage_covers_every_leveraged_code_and_l3_is_one_code():
     assert set(LEVERAGE_STAGE_BY_CODE) == set(BEHAVIOR_GROUP_CODES["LEVERAGED"])
-    assert "L3" not in {stage for stage, _ in LEVERAGE_STAGE_BY_CODE.values()}
+    # C-3 (2026-11-25): L3 is reached by one code, only with a stored budget and recorded tranches.
+    assert [c for c, (stage, _) in LEVERAGE_STAGE_BY_CODE.items() if stage == "L3"] == ["LEVERAGED_L3_RECOVERY_DCA"]
     assert resolve_leverage_stage({"decision_code": "ETF_DCA_OK"}) == {}
     held = resolve_leverage_stage({"decision_code": "HARD_BLOCK_OVERWEIGHT", "is_leveraged_or_inverse": True})
     assert held["stage"] == "L?" and held["executable"] is None and held["monthly_multiplier"] is None
