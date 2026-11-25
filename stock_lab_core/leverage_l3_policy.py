@@ -346,6 +346,11 @@ def read_current(bars: list[Bar], last_overrides: dict | None = None, *, ticker:
     res["shortfall"] = shortfall
     res["planned"] = tranche_amount(budget, cycle.invested, shortfall, monthly_planned) if _finite(budget) else None
     res["l3_ready"] = res["status"] in {STATUS_CANDIDATE, STATUS_EXECUTABLE}
+    # C-5 (display only): the inputs the L3 rule just read, for the precision panel. Nothing reads these back.
+    res["last_bar"] = {"underlying_above_ma50": last.underlying_above_ma50, "leveraged_above_ma50": last.leveraged_above_ma50,
+                       "recovery_passed": last.recovery_passed}
+    gap = (len(bars) - 1) - cycle.last_tranche_bar
+    res["bars_since_last_tranche"] = gap if cycle.tranches_used and gap >= 0 else None
     return res
 
 

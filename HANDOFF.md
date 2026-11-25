@@ -629,6 +629,14 @@ comparison: 1,686 stock executables, 0 gate mismatches. Core ETF holdings execut
 no longer blocks CORE_PULLBACK_DCA; monthly multiplier unchanged). Doc `docs/maintenance/20261125_c4_bearish_pattern_policy.md`.
 Next: C-5 tech-review v2 display (no authority), then C-6/C-11.
 
+**C-5 tech-review v2 (2026-11-25, user decision authority A):** display only, policy version `tech_review_v2_2026-11-25`
+(`stock_lab_core/tech_review.py` build_tech_review_v2, `tech_review_view.py`). Deduped clusters, strict overhead supply (zones above
+price only), formation period as reference, type-aware overheat (leader/exception scout: reference only), L3 tickers shown as
+"레버리지 전용 정책 적용" with the C-3 rows. Never feeds codes, gates, sizing, monthly multipliers or sells; the record goes to the
+review ZIP `signal_evidence.tech_review`. BLOCK stays practically unreachable by design (no condition added). Parity C-4 vs C-5:
+41,391 rows × 40 columns identical. Doc `docs/maintenance/20261125_c5_tech_review_v2.md`. C-4/C-5 closed. Next: C-6/C-11
+(monthly DCA and cross-screen decision integration), wait for the user.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
