@@ -637,6 +637,16 @@ review ZIP `signal_evidence.tech_review`. BLOCK stays practically unreachable by
 41,391 rows × 40 columns identical. Doc `docs/maintenance/20261125_c5_tech_review_v2.md`. PR #54, prod checked 11-26 01:26–01:28 KST (GOOGL, TQQQ). C-4/C-5 closed. Next: C-6/C-11
 (monthly DCA and cross-screen decision integration), wait for the user.
 
+**C-6/C-11 comparison (2026-11-26, analysis and design only, no code change):** report
+`/mnt/project-files/reports/20261126_c6_c11_monthly_dca_screen_integration.md`, scripts `reports/c611_study/`. Screens split into
+engine-only (asset, monthly calculator, print, L3 monthly input) and post-processed+gate (Today, report, precision). Monthly plan reads
+the raw engine code and never the gate: 30% (core ETF) to 63% (leverage) of planned states are 방어우선. Shared-structure B == A on
+68,265 typed rows. Plan/executable split: with the full Today gate only 5.6% of core ETF plan is executable today and core
+drawdown/crash DCA (150/200%) is 0% (all MTF trend damage); with timing reasons not blocking (C2) 62%. Implementation gaps: unscoped
+`_ticker_signal_cache`, missing signal -> core 1.0 estimate, carryover/accum/done only in session, L3 needs `_monthly_plan_alloc`,
+engine prefers global holdings over passed weights. Recommended L3 link: shared calc + confirmed monthly snapshot (C). Waiting for
+the user's decisions; implement nothing before that.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
