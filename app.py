@@ -35002,6 +35002,7 @@ if main_page == "precision":
             render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
         # B-4 shadow / C-5 v2: shown beside the existing decision, never written back into c.
+        precision_tech_review_record = None
         try:
             from stock_lab_core.chart_patterns import detect_recent_invalidated_patterns
             from stock_lab_core.tech_review_view import render_tech_review_shadow
@@ -35013,9 +35014,8 @@ if main_page == "precision":
                 monthly_signal_decision=st.session_state.get("_ticker_signal_decision_cache", {}).get(tkr),
                 multiplier_fn=rebalance_signal_multiplier_for_decision,
             )
-            # Keep the versioned v2 record in the review download for later operating checks.
-            _evidence = dict((getattr(precision_review_download, "snapshot", {}) or {}).get("signal_evidence") or {})
-            precision_review_download.update(signal_evidence={**_evidence, "tech_review": _tech_model["record"]})
+            # Keep the versioned v2 record for the final review download (operating checks).
+            precision_tech_review_record = _tech_model["record"]
         except Exception:
             logging.exception("Tech review shadow failed: ticker=%s", tkr)
             st.caption("기술검토 계산 실패: 기존 판정에는 영향 없음")
@@ -35337,6 +35337,7 @@ if main_page == "precision":
                 "pattern_timing": precision_pattern_timing, "pattern_reason": precision_pattern_reason,
                 "pattern_bucket": precision_pattern_bucket, "liquidity_profile": precision_liquidity_profile,
                 "multi_timeframe_display": precision_mtf_display,
+                "tech_review": precision_tech_review_record,
             },
             context={
                 "name": name, "is_etf": is_etf, "asset_class": a_class, "app_mode": app_mode,
