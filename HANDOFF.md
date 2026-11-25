@@ -603,7 +603,14 @@ formula (Yahoo ^TNX/CL=F/USDKRW=X/^VIX/^MOVE + official FOMC/BLS/ECB/BOJ/KOSPI-e
 Current (A) = penalty-only (B): 0 gate differences; the separate <3.5/<4.0 conditions only rename 139 codes. The adj penalty
 blocks 70/201 executable signals in the band; blocked ones were better in 상승장 but much worse in 하락장/risk episodes.
 76% of band states come from calendar event points, not market stress. ≥4.5 guard: 0 executable in all variants.
-Waiting for the user's choice. Report `/mnt/project-files/reports/20261125_c2_macro_band_comparison.md`, scripts `reports/c2_study/`.
+Report `/mnt/project-files/reports/20261125_c2_macro_band_comparison.md`, scripts `reports/c2_study/`.
+**C-2 closed (2026-11-25, user chose A = keep current):** follow-up split market vs event risk (D: market penalty + event
+sizing; D': keep defence when market alone ≥2.5) with the real market guard, held add-on and KR previous-US-session macro.
+D = D' everywhere; guard-applied band executables A 88 / C 131 / D 118, weighted R 0.12 / 0.14 / 0.09, 120-day bottom 10%
+−16% / −22% / −18%; C/D move held codes and raise the core monthly multiplier ≈+0.6. Not adopted; B not applied either.
+Macro score, penalty, separate conditions, event points and the ≥4.5 hard guard all stay. Report
+`/mnt/project-files/reports/20261125_c2b_market_vs_event_risk.md`. Next: C-4/C-5 (chart pattern / tech-review layer),
+comparison only, no decision/gate/sizing authority change.
 
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
