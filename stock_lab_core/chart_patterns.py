@@ -91,6 +91,42 @@ def _chart_pattern_overheat_bits(c: dict | None = None) -> list[str]:
     return bits
 
 
+# C-4 (2026-11-25, user decision A''+): a bearish pattern is technical-review context, not a decision input.
+# Only "close below the neckline/support + major price-structure damage" keeps the old execution hold.
+# The structure test reuses the engine's own fields; no new threshold. The 1.5x volume mark is the
+# tech-review shadow's existing volume mark, used here only to label the stage.
+BEARISH_STAGE_OBSERVED = "형태 관찰"
+BEARISH_STAGE_BREAK = "목선·지지선 종가 이탈"
+BEARISH_STAGE_VOLUME_BREAK = "거래량 동반 이탈"
+BEARISH_STAGE_STRUCTURE = "주요 가격 구조 훼손 동반"
+BEARISH_STAGE_INVALIDATED = "패턴 무효화"
+BREAKDOWN_VOLUME_MARK = 1.5
+
+
+def bearish_structure_damaged(c: dict | None) -> bool:
+    """Engine structure-damage flag, or close below MA50 with a bearish external structure."""
+    c = c or {}
+    if bool(c.get("structure_risk")):
+        return True
+    cur = clean_float(c.get("cur_p"), np.nan)
+    ma50 = clean_float(c.get("ma50"), np.nan)
+    return bool(finite_num(cur) and finite_num(ma50) and cur < ma50 and str(c.get("ext_structure", "") or "") == "Bearish")
+
+
+def classify_bearish_pattern_stage(pattern: dict | None, c: dict | None = None) -> str:
+    """Stage of an active bearish pattern ('' for anything else). Invalidated patterns never reach here."""
+    if not isinstance(pattern, dict) or pattern.get("direction") != "bearish":
+        return ""
+    if pattern.get("lifecycle") != "현재유효":
+        return BEARISH_STAGE_OBSERVED
+    if bearish_structure_damaged(c):
+        return BEARISH_STAGE_STRUCTURE
+    vol = clean_float(pattern.get("breakdown_volume_ratio"), np.nan)
+    if finite_num(vol) and vol >= BREAKDOWN_VOLUME_MARK:
+        return BEARISH_STAGE_VOLUME_BREAK
+    return BEARISH_STAGE_BREAK
+
+
 def chart_pattern_caption(patterns: list) -> str:
     if not patterns:
         return ""
@@ -185,21 +221,33 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
                 f"무효선 {invalid} 이탈 시 패턴을 폐기합니다."
             ),
         }
+    if direction == "bearish" and lifecycle == "현재유효" and not bearish_structure_damaged(c):
+        stage = classify_bearish_pattern_stage(pattern, c)
+        return {
+            "color": "#f59e0b",
+            "title": f"📉 하락 패턴 {stage} (참고)",
+            "body": (
+                f"{name}가 기준선 {trigger} 아래에 있지만 주요 가격 구조 훼손은 동반하지 않았습니다. "
+                "하락 패턴만으로는 판정·실행을 바꾸지 않고 기술검토 근거로만 봅니다. "
+                f"구조훼손·상위시간대 추세훼손 같은 기존 엔진 위험판정은 그대로 적용되며, 무효선 {invalid} 회복 시 패턴을 폐기합니다."
+            ),
+        }
     if direction == "bearish" and lifecycle == "관찰":
         return {
             "color": "#f59e0b",
-            "title": "⚠️ 하락 패턴 관찰",
+            "title": "⚠️ 하락 패턴 관찰 (참고)",
             "body": (
                 f"{name} 후보가 있지만 기준선 {trigger} 이탈 전이라 하락 확정은 아닙니다. "
+                "형태만으로는 판정·실행을 바꾸지 않고 기술검토 근거로만 봅니다. "
                 f"무효선 {invalid} 회복 시 경고를 낮춥니다."
             ),
         }
     if direction == "bearish" and lifecycle == "현재유효":
         return {
             "color": "#dc2626",
-            "title": "🛑 하락 패턴 유효",
+            "title": "🛑 하락 패턴 유효 (구조훼손 동반)",
             "body": (
-                f"{name}가 기준선 {trigger} 아래에서 유효합니다. "
+                f"{name}가 기준선 {trigger} 아래에서 유효하고 주요 가격 구조 훼손을 동반합니다. "
                 f"반등 매수보다 구조 회복 확인이 우선이고, 무효선 {invalid} 회복 전까지 보수적으로 봅니다."
             ),
         }
@@ -246,18 +294,19 @@ def summarize_chart_pattern_for_dashboard(patterns: list, c: dict | None = None)
             f"{name} 유효 · 기준 {trigger} 위 유지 · 무효 {invalid}",
             "interest",
         )
-    if direction == "bearish" and lifecycle == "관찰":
-        return (
-            "⚠️하락패턴 관찰",
-            f"{name} 후보 · 기준 {trigger} 이탈 전 · 무효 {invalid}",
-            "risk",
-        )
-    if direction == "bearish" and lifecycle == "현재유효":
-        return (
-            "🛑하락패턴 유효",
-            f"{name} 유효 · 기준 {trigger} 아래 · 회복 전 보수",
-            "risk",
-        )
+    if direction == "bearish":
+        stage = classify_bearish_pattern_stage(pattern, c)
+        if stage == BEARISH_STAGE_STRUCTURE:
+            # The only bearish stage that still holds execution (unchanged wording and bucket).
+            return (
+                "🛑하락패턴 유효",
+                f"{name} 유효 · 기준 {trigger} 아래 · 주요 가격 구조 훼손 동반 · 회복 전 보수",
+                "risk",
+            )
+        # Observation, close break and volume break are tech-review context only (no bucket, no gate words).
+        head = "📉하락형태 관찰(참고)" if stage == BEARISH_STAGE_OBSERVED else f"📉하락형태 {stage}(참고)"
+        where = f"기준 {trigger} 이탈 전" if stage == BEARISH_STAGE_OBSERVED else f"기준 {trigger} 아래"
+        return (head, f"{name} · {stage} · {where} · 무효 {invalid} · 판정 영향 없음(기술검토 참고)", "")
     return "-", "", ""
 
 
@@ -695,7 +744,50 @@ def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_p
             continue
         unique.append(pattern)
         seen.add(name)
-    return _finalize_chart_pattern_candidates(view, unique, max_patterns=max_patterns, distinct_directions=distinct_directions)
+    selected = _finalize_chart_pattern_candidates(view, unique, max_patterns=max_patterns, distinct_directions=distinct_directions)
+    return [_annotate_breakdown_volume(p, df, view) for p in selected]
+
+
+def _annotate_breakdown_volume(pattern: dict, df: pd.DataFrame, view: pd.DataFrame) -> dict:
+    """Volume of the first close below the trigger vs the 20 bars before it (bars up to the last bar only)."""
+    if pattern.get("direction") != "bearish" or pattern.get("lifecycle") != "현재유효" or "Volume" not in df.columns:
+        return pattern
+    vol = pd.to_numeric(df["Volume"], errors="coerce").reindex(view.index).to_numpy(dtype=float)
+    close = view["Close"].to_numpy(dtype=float)
+    trigger = clean_float(pattern.get("trigger_price"), np.nan)
+    if not finite_num(trigger):
+        return pattern
+    start = int(pattern.get("created_pos", len(view) - 1))
+    brk = next((i for i in range(max(start, 0), len(view)) if close[i] <= trigger * 1.003), None)
+    if brk is None or brk < 20:
+        return pattern
+    base = np.nanmean(vol[brk - 20:brk])
+    if not (finite_num(base) and base > 0 and finite_num(vol[brk])):
+        return pattern
+    return {**pattern, "breakdown_volume_ratio": float(vol[brk] / base), "breakdown_time": view.index[brk]}
+
+
+def detect_recent_invalidated_patterns(df: pd.DataFrame, lookback: int = 140) -> list:
+    """Patterns whose invalid line was recovered within the valid age (display only, C-4 stage 'invalidated')."""
+    view = _chart_pattern_source_df(df, lookback=lookback)
+    if view.empty:
+        return []
+    highs, lows = _chart_pattern_pivots(view)
+    candidates = [
+        _detect_double_pattern(view, highs, lows, "bottom"), _detect_double_pattern(view, highs, lows, "top"),
+        _detect_head_shoulders_pattern(view, highs, lows, inverse=True),
+        _detect_head_shoulders_pattern(view, highs, lows, inverse=False),
+        _detect_triangle_pattern(view, highs, lows), _detect_flag_pattern(view, bullish=True), _detect_flag_pattern(view, bullish=False),
+    ]
+    valid_age = int(_chart_pattern_timeframe_profile(view).get("valid_age", 35))
+    out = []
+    for p in candidates:
+        if not p or p.get("confidence", 0) < 0.035:
+            continue
+        p = _chart_pattern_lifecycle(p, view)
+        if p.get("lifecycle") == "무효" and p.get("age", 999) <= valid_age:
+            out.append(p)
+    return out
 
 
 def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140, *, enforce_price_proximity=True) -> list:
