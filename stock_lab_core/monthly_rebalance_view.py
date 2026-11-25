@@ -373,6 +373,12 @@ def render_monthly_rebalancing_calculator(
             signal_decisions=st.session_state.get("_ticker_signal_decision_cache", {}),
         )
         _refresh_accumulated_state(st, calc_rows)
+        # C-3: the leveraged L3 tranche reads this month's allocation so the monthly contribution and the
+        # crisis budget never fill the same target shortfall twice (KRW, per ticker).
+        st.session_state["_monthly_plan_alloc"] = {
+            "month": _this_month,
+            "alloc": {str(r.get("ticker", "")).upper(): float(r.get("final_alloc") or 0.0) for r in calc_rows},
+        }
 
         active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
         blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]

@@ -6,12 +6,13 @@ from stock_lab_core.decision_engine import DECISION_CODE_BY_LABEL, DECISION_GROU
 from tests.test_decision_group_freeze import _emitted_pairs
 
 
-def test_groups_partition_the_127_emitted_codes():
+def test_groups_partition_the_emitted_codes():
+    # 127 B-1 codes + LEVERAGED_L3_RECOVERY_DCA (C-3, 2026-11-25, user decision)
     codes = [code for group in BEHAVIOR_GROUP_CODES.values() for code in group]
-    assert len(codes) == len(set(codes)) == 127
+    assert len(codes) == len(set(codes)) == 128
     assert {k: len(v) for k, v in BEHAVIOR_GROUP_CODES.items()} == {
         "NEW_ENTRY_BASIC": 5, "NEW_ENTRY_MOMENTUM": 8, "RECOVERY_ENTRY": 3, "HOLDING_ADD": 23, "HOLDING_KEEP": 15,
-        "RISK_CHECK": 27, "ETF_CORE_DCA": 20, "LEVERAGED": 8, "WAIT_OVERHEAT_DATA": 18,
+        "RISK_CHECK": 27, "ETF_CORE_DCA": 20, "LEVERAGED": 9, "WAIT_OVERHEAT_DATA": 18,
     }
     assert set(BEHAVIOR_GROUP_CODES) == set(BEHAVIOR_GROUP_LABELS)
 
