@@ -46,6 +46,8 @@ B-5 `leverage_stage.py` (reads L0/LX/L1/L2 from the final decision, L3 reserved 
 Changed files: app.py, stock_lab_core/{decision_engine,today_queue,monthly_rebalance,monthly_rebalance_view,
 print_report_data}.py, the six new modules above + `rebalance_multiplier_table.py`, scripts/{policy_replay,check_refactor}.py,
 tests (5 new files, 3 updated). Verification and parity results: doc §2.
+Production: rebooted 2026-11-25 09:41 KST; 09:43 KST 정밀관측소 GOOGL shows the shadow panel (CAUTION, 6 reasons)
+beside the unchanged decision (QUALITY_RECOVERY_WATCH, 방어우선).
 
 ### Previous: decision policy validation plan
 
