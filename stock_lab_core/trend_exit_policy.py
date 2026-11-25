@@ -21,6 +21,10 @@ from __future__ import annotations
 import math
 
 TREND_SCOUT_ENTRY_CODES = frozenset({"EXCEPTION_ENTRY"})
+# C-1 step 2 (2026-11-25, user-approved): NEW_ENTRY_LEADER uses the trend exit only in 상승장
+# (benchmark regime, stock_lab_core.market_regime). Its size and entry rules are unchanged, and
+# in 횡보/하락/미확인 everything stays as before (fixed target, a projected target still waits).
+TREND_EXIT_REGIME_CODES = {"NEW_ENTRY_LEADER": frozenset({"상승"})}
 SCOUT_FRACTION = 0.33  # the existing first scout tranche (build_position_sizing_hint: targ_w * 0.33)
 INITIAL_STOP_ATR = 2.0
 TRAIL_ATR = 3.0
@@ -31,6 +35,23 @@ EXECUTION_MEMO = "1/3 정찰 · 추세추적"
 def uses_trend_exit(decision_code: str, *, has_pos: bool = False) -> bool:
     """True when this decision is executed as a 1/3 scout with a trend-following exit."""
     return not has_pos and str(decision_code or "").strip() in TREND_SCOUT_ENTRY_CODES
+
+
+def uses_regime_trend_exit(decision_code: str, regime: str, *, has_pos: bool = False) -> bool:
+    """True when a regime-limited code (step 2) takes the trend exit in this regime."""
+    allowed = TREND_EXIT_REGIME_CODES.get(str(decision_code or "").strip())
+    return not has_pos and allowed is not None and str(regime or "") in allowed
+
+
+def trend_exit_applies(decision: dict | None, ticker: str, *, has_pos: bool = False) -> bool:
+    """Either rule: the 1/3-scout codes always, the regime-limited codes in their regime."""
+    code = str((decision or {}).get("decision_code", "") or "").strip()
+    if uses_trend_exit(code, has_pos=has_pos):
+        return True
+    if has_pos or code not in TREND_EXIT_REGIME_CODES:
+        return False
+    from stock_lab_core.market_regime import regime_for
+    return uses_regime_trend_exit(code, regime_for(ticker, decision), has_pos=has_pos)
 
 
 def trailing_stop(initial_stop: float, highest_close: float, atr: float) -> float:

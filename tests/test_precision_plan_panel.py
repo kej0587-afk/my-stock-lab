@@ -309,3 +309,20 @@ def test_exception_entry_plan_for_held_position_is_unchanged(display_app):
     plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=True)
     assert plan["status"] != "1/3 정찰 · 추세추적"
     assert not any(row["단계"] == "추세추적 정리" for row in plan["rows"])
+
+
+@pytest.mark.parametrize("regime, trend", [("상승", True), ("횡보", False), ("하락", False), ("미확인", False)])
+def test_leader_plan_uses_trend_exit_only_in_uptrend(display_app, regime, trend):
+    """C-1 step 2: NEW_ENTRY_LEADER keeps its tranches; only the exit rows change, and only in 상승장."""
+    app, ui = display_app
+    decision = held_decision(dec="🔥신규진입: 대장주 포착", decision_code="NEW_ENTRY_LEADER", market_regime=regime,
+                             rr_target=120.0, rr_ratio=2.0, buy_amt=140000, current_w=0, target_w=10,
+                             execution_workflow={"게이트상태": GATE_EXECUTABLE},
+                             chart_final_check={"execution_allowed": True, "block_count": 0, "core_missing_ids": []})
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=False)
+    stages = [row["단계"] for row in plan["rows"]]
+    assert stages[1] == "1차 진입 (40%)"
+    assert ("추세추적 정리" in stages) is trend
+    assert ("1차 익절" in stages) is (not trend)
+    if trend:
+        assert plan["rows"][-1]["금액/수량"] == "진입분 전량"

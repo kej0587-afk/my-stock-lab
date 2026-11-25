@@ -70,7 +70,7 @@ def build_precision_exit_rows(*, ticker, has_pos, cur, stop, target, tp1, tp2, t
 
 
 
-def build_trend_exit_rows(*, ticker, stop, atr, format_currency):
+def build_trend_exit_rows(*, ticker, stop, atr, format_currency, size_text="정찰분 전량"):
     """Trend-following exit (C-1 step 1): no fixed target, a trailing stop from the highest close."""
     from stock_lab_core.trend_exit_policy import INITIAL_STOP_ATR, TRAIL_ATR
     trail = f"진입 후 최고 종가 - {TRAIL_ATR:g}ATR" + (f" (현재 ATR {format_currency(TRAIL_ATR * atr, ticker)})" if atr and atr > 0 else "")
@@ -78,14 +78,14 @@ def build_trend_exit_rows(*, ticker, stop, atr, format_currency):
         {
             "단계": "추세추적 정리",
             "가격": trail,
-            "금액/수량": "정찰분 전량",
+            "금액/수량": size_text,
             "예상 R/R": "-",
             "조건": "고정 목표가 없이 추적손절이 매일 올라갑니다(내려가지 않음). 종가가 추적손절 아래로 마감하면 정리",
         },
         {
             "단계": "초기 손절",
             "가격": format_currency(stop, ticker),
-            "금액/수량": "정찰분 전량",
+            "금액/수량": size_text,
             "예상 R/R": "-",
             "조건": f"진입가 - {INITIAL_STOP_ATR:g}ATR. 장중 이탈 시 정리하고 신규진입 시나리오 무효",
         },
