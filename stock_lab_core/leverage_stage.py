@@ -13,7 +13,8 @@ Stages (current behaviour, nothing new):
 - LX: excluded by target weight (zero target or target filled)
 - L1: wait/blocked (overheat pass, before recovery, daily drop no-add, panic zone)
 - L2: conditional small tranche (still a gate wait today)
-- L3: executable leveraged DCA. No current code reaches it; it is reserved for C.
+- L3: executable leveraged DCA. No code reaches it yet. C-3 (2026-11-25) adds the cycle read as ``l3_status``
+  ("L3 후보" at most) until the budget and tranche record exist.
 """
 
 from __future__ import annotations
@@ -74,6 +75,10 @@ def resolve_leverage_stage(decision, *, gate_state=None, market_state=None, mont
         "monthly_multiplier": mult,
         # The known gap the user asked to keep visible: a plan amount while the gate never executes.
         "plan_gate_mismatch": bool(executable is False and mult is not None and mult > 0),
+        # C-3 (2026-11-25): the L3 cycle read (stock_lab_core.leverage_l3_policy). "L3 후보" is shown, but no
+        # budget or tranche record is stored yet, so it never makes the row executable. None = not read.
+        "l3_status": (decision.get("leveraged_l3") or {}).get("status") if isinstance(decision.get("leveraged_l3"), dict) else None,
+        "l3_reasons": list((decision.get("leveraged_l3") or {}).get("reasons") or []) if isinstance(decision.get("leveraged_l3"), dict) else [],
     }
 
 

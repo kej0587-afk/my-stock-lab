@@ -578,12 +578,14 @@ MTF 추세훼손. C-1c: user chose C (11-25) — 상승장 unheld EXCEPTION_ENTR
 "정찰 실행"; leader overheat not relaxed — done, `docs/maintenance/20261125_c1c_exception_mtf_overheat_scout.md`. C-1 group complete (PR #42, prod checked 11-25 14:41 KST). Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
 quality recovery R/R (pivot).
 
-**C-3 leverage L3 comparison (2026-11-25, comparison only, no policy change):** report
-`/mnt/project-files/reports/20261125_c3_leverage_l3_comparison.md` (scripts and data in `reports/c3_study/`). Options B–E differ little;
-no recovery condition avoided bear-market-start tranches (2000-03, 2007-12, 2021-12: −75~−98%); recovery check 4/6 as an auxiliary gave
-the best knife/late balance (pre-bottom buys 34%→28%, 2022 −47%→−28%, entries +8%→+17% above the bottom). Waiting for the user to pick the
-recovery rule, whether L3 also needs the current avg-cost candidate stage (−12%), the tranche amount/total cap, and the 52-week panic
-block reopening in long bears. Do not change leverage policy, multipliers or gates before that choice.
+**C-3 leverage L3 policy (2026-11-25, user decision after the comparison):** D (both MA50) + recovery 4/6, L2 qualification
+recorded per drawdown cycle (avg-cost −12/−25/−35% once), L3 = 1/3 of a pre-set leveraged DCA budget, max 3, one per new completed
+bar, capped by budget and target shortfall minus this month's monthly plan; −50% panic latch released only by underlying 상승장 +
+both MA50 + 4/6 (never by 52-week-high roll-off). Implemented as `stock_lab_core/leverage_l3_policy.py` + `app.build_leveraged_l3_read`
+(cycle rebuilt from 5y daily bars); shown as "L3 후보" (gate stays 대기). Not executable yet: no storage for the budget and tranche
+record. Next: a Supabase table for budget + tranche log (needs the user's go), then the executable path. Open user decision: tranche
+spacing (new bar vs 20 trading days; replay: 3 tranches in a median 5 days). Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`,
+replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
 
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
