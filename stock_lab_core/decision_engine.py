@@ -1155,7 +1155,8 @@ DECISION_GROUP_BY_CODE = {
 
 # B-2 (2026-11-24): groups that build_decision_outcome used to infer from label words, frozen
 # to the exact value the inference gave for every label these codes emit. Values are not a policy
-# review (e.g. PROFIT_TAKE_REVIEW stays buyish until A-4 is decided); see
+# review, except PROFIT_TAKE_REVIEW (A-4, 2026-11-25: caution, user-approved; was buyish from the
+# word "분할"; the code is unreachable now, so no current result changes); see
 # docs/maintenance/20261124_decision_policy_validation_plan.md §9 B-2.
 DECISION_GROUP_BY_CODE.update({
     "ABOVE_COST_HOLD": "neutral",
@@ -1205,7 +1206,7 @@ DECISION_GROUP_BY_CODE.update({
     "OVERSOLD_NEW_ENTRY": "buyish",
     "PANIC_CASH_DEPLOY": "caution",
     "PANIC_FINAL_DEPLOY": "caution",
-    "PROFIT_TAKE_REVIEW": "buyish",
+    "PROFIT_TAKE_REVIEW": "caution",  # A-4: profit-take review is hold management, not a buy
     "QUALITY_PULLBACK_ENTRY": "buyish",
     "REVERSE_TREND_NO_ENTRY": "caution",
     "SEARCH_NEW_ENTRY": "neutral",

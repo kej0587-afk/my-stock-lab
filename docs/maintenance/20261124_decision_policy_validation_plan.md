@@ -504,6 +504,7 @@ A-결과: 사용자가 방향을 이미 정했거나, 의도와 다른 것이 �
 | C-9 | 미국 코어 퍼펙트스톰 100% 적립 | 현행 차단 / 예외 적립 | C-2의 실제 매크로 시계열로 4.5 이상 구간 재비교 | 차단 대비 평균 단가 차이 |
 | C-10 | YELLOW 정찰 규모 제한 | 제한 없음 / 1/3 | 등급별 재생 | 상승장 보수성 증가 여부 |
 | C-11 | 자산현황·월적립 기준 판정 (D1) | 원라벨 / 후처리 결과 | C-6과 함께 | 화면 간 일치 |
+| C-12 | 익절 조건(MFI≥80·%B>0.9·수익 20%↑) 보유 종목의 추매 방향 판정 | 현행 / 익절 경로 열기 / 해당 코드 월적립 0배 | A-4 재생(473개 시점 × 평단 3종) 확장. 현재 52개 시점이 LEADER_MA5_PULLBACK_ENTRY·HOLDING_QUALITY_RECOVERY_*로 1.0배, 1개 실행가능 | 이후 성과, 보유·익절·추매 정책 일관성 |
 
 ### 권장 진행 순서
 
@@ -542,3 +543,4 @@ python -X utf8 scripts/policy_replay.py rr_gate  --px PX --out OUT --stocks-csv 
 - decision 게이트(`scripts/check_refactor.py --scope decision`, 문서·스크립트 작성 후): 1637 passed / 1 failed. 실패는 `test_extracted_policies_preserve_all_original_conditions_and_literals` 하나로 `main`의 기존 실패와 같다.
 - 운영 화면 확인: 하지 않았다. 문서와 읽기 전용 스크립트만 바뀐다.
 - A/B 단계(같은 날 후속): A-1, A-2, B-1~B-7 반영. 재생 41,391행 변경 전후 바이트 동일. [기록](20261124_decision_ab_stage.md).
+- A-4(2026-11-25): PROFIT_TAKE_REVIEW 분류 caution·월적립 0배(도달 불가 코드, 현재 결과 변화 없음). [기록](20261125_a4_profit_take_review.md).

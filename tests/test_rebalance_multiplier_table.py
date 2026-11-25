@@ -1,6 +1,8 @@
 """B-3 (2026-11-24): code-based rebalance multipliers equal the old label parse."""
 from stock_lab_core import decision_engine as de
-from stock_lab_core.rebalance_multiplier import decision_signal_multiplier, legacy_label_multiplier
+from stock_lab_core.rebalance_multiplier import (
+    POLICY_MULTIPLIER_BY_CODE, decision_signal_multiplier, legacy_label_multiplier,
+)
 from stock_lab_core.rebalance_multiplier_table import (
     KNOWN_LABELS_BY_CODE, MULTIPLIER_BY_CODE, MULTIPLIER_BY_CODE_LABEL, MULTIPLIER_BY_CORE_STAGE,
 )
@@ -13,6 +15,8 @@ DIPS = (-1, 0, 1, 2, 3, 4)
 def test_every_known_label_gives_the_old_multiplier():
     checked = 0
     for code, labels in KNOWN_LABELS_BY_CODE.items():
+        if code in POLICY_MULTIPLIER_BY_CODE:  # approved corrections, checked below
+            continue
         for label in labels:
             for bucket in BUCKETS:
                 for dip in DIPS:
@@ -60,3 +64,13 @@ def test_monthly_plan_passes_the_decision_only_when_known():
     build_base_allocations(eligible, 10.0, 100.0, {"QQQ": "x"}, set(), multiplier, signal_decisions={"QQQ": decision})
     build_base_allocations(eligible, 10.0, 100.0, {"QQQ": "x"}, set(), lambda tap, bucket, dip_level=0: seen.append("old") or 1.0)
     assert seen == [decision, "old"]
+
+
+def test_a4_profit_take_review_never_buys_in_monthly_plan():
+    assert set(POLICY_MULTIPLIER_BY_CODE) == {"PROFIT_TAKE_REVIEW"}
+    label = KNOWN_LABELS_BY_CODE["PROFIT_TAKE_REVIEW"][0]
+    assert legacy_label_multiplier(label, "core") == legacy_label_multiplier(label, "swing") == 1.0  # old misreading
+    for dec in (label, "다른 문구"):
+        for bucket in ("core", "swing", "leverage"):
+            for dip in DIPS:
+                assert decision_signal_multiplier({"decision_code": "PROFIT_TAKE_REVIEW", "dec": dec}, bucket, dip) == 0.0
