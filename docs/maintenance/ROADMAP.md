@@ -35,6 +35,7 @@ Updated: 2026-11-24 KST. 현재 실행할 한 건은 루트 `HANDOFF.md`의 **Ne
 ## 최근 마친 세부 작업
 
 A-5/A-6: 매크로 수집 실패·핵심 지표 누락을 결측(UNKNOWN)으로 두고, 판정은 매크로 중립, 실행게이트는 데이터확인(방어우선 유지). MOVE 결측은 가산 없이 "MOVE 미확인". 정상일 재생 동일. [기록](20261125_a5_a6_macro_missing.md).
+C-1 1단계 (2026-11-25, 사용자 결정): EXCEPTION_ENTRY = 실행가능 + 목표비중 1/3 정찰 + 추세추적 exit(초기 2ATR, 최고 종가-3ATR 추적). R/R≥1 하한·상위 안전장치 유지. 넓은 표본 실행가능 0→128, 평균 +0.27R. 다음은 NEW_ENTRY_LEADER 상승장 추세추적, 그다음 C-1c. [기록](20261125_c1_step1_exception_trend_exit.md).
 
 A-4: 익절 검토(PROFIT_TAKE_REVIEW)를 보유관리(caution)·월적립 0배로 정정. 도달 불가 코드라 현재 결과 변화 없음(재생 동일). [기록](20261125_a4_profit_take_review.md).
 

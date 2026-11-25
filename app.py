@@ -17642,6 +17642,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     if leveraged_label_block:
         is_hard_blocked = True
     is_poor_rr = rr < 1.0
+    from stock_lab_core.trend_exit_policy import SCOUT_FRACTION, uses_trend_exit
+    trend_scout = uses_trend_exit(decision_code, has_pos=has_pos) and not leveraged_timing
 
     if leveraged_timing:
         status = leveraged_timing.get("status", "레버리지 조건 확인")
@@ -17697,6 +17699,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
                 "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
             )
+    elif trend_scout and not (is_wait or is_poor_rr):
+        status = "1/3 정찰 · 추세추적"
+        status_color = "#7c3aed"
+        status_note = "예외승인 진입은 목표비중의 1/3만 정찰로 들어가고, 고정 목표가 대신 최고 종가-3ATR 추적손절로 정리합니다."
     elif target_is_projection:
         status = "신고가 추적 / 분할만"
         status_color = "#d97706"
@@ -17766,6 +17772,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         tranche_weights = leveraged_timing.get("tranche_weights", [0.0, 0.0, 0.0])
     elif is_hard_blocked:
         tranche_weights = [0.0, 0.0, 0.0]
+    elif trend_scout:
+        tranche_weights = [SCOUT_FRACTION, 0.0, 0.0]
     elif is_new_core_etf and has_pos and current_w >= (target_w * 0.33 * 0.90):
         tranche_weights = [0.0, 0.45, 0.55]
     elif is_new_core_etf:
@@ -17834,6 +17842,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         entry3_price_text = "120거래일 검증 후"
         rr_entry2_display = f"{rr_now_text}/{rr_entry2_text}"
         rr_entry3_display = "검증 후 재산출"
+    elif trend_scout:
+        entry2_cond = "1차 정찰 뒤 추세 유지와 새 진입 신호를 확인한 뒤 다시 계산"
+        entry3_cond = "1차 정찰 뒤 추세 유지와 새 진입 신호를 확인한 뒤 다시 계산"
+        entry2_price_text = "-"
+        entry3_price_text = "-"
     else:
         entry2_cond = f"{entry2_label} 근처에서 반등 확인"
         entry3_cond = f"{entry3_label} 근처, 손절가 이탈 전까지만"
@@ -17888,12 +17901,15 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             "조건": entry3_cond,
         },
     ]
-    from stock_lab_core.precision_plan_rows import build_precision_exit_rows
-    rows += build_precision_exit_rows(
-        ticker=ticker, has_pos=has_pos, cur=entry1, stop=stop, target=target,
-        tp1=tp1, tp2=tp2, tp3=tp3, target_is_projection=target_is_projection,
-        format_currency=format_currency, take_profit_condition=format_precision_take_profit_condition,
-    )
+    from stock_lab_core.precision_plan_rows import build_precision_exit_rows, build_trend_exit_rows
+    if trend_scout:
+        rows += build_trend_exit_rows(ticker=ticker, stop=stop, atr=atr, format_currency=format_currency)
+    else:
+        rows += build_precision_exit_rows(
+            ticker=ticker, has_pos=has_pos, cur=entry1, stop=stop, target=target,
+            tp1=tp1, tp2=tp2, tp3=tp3, target_is_projection=target_is_projection,
+            format_currency=format_currency, take_profit_condition=format_precision_take_profit_condition,
+        )
     plan_workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, has_pos=has_pos)
     from stock_lab_core.execution_readiness import build_execution_readiness
     plan_workflow = build_execution_readiness(plan_workflow, c.get("chart_final_check"))["display_workflow"]
