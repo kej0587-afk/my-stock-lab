@@ -34,6 +34,14 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[A-4 PROFIT_TAKE_REVIEW](docs/maintenance/20261125_a4_profit_take_review.md) (user-approved 11-25): group buyish → caution,
+monthly multiplier core/swing 1.0 → 0 (`rebalance_multiplier.POLICY_MULTIPLIER_BY_CODE`), leverage stays 0. The code is
+unreachable in the current engine (profitable holdings never reach `select_holding_decision`), so parity replay is
+byte-identical and decision gate is 1661 passed / 1 known failure. The 52 profit-condition states that get 1.0x under
+other codes are recorded as C-12, not changed.
+
+### Previous: decision policy v1 A/B stage
+
 [Decision policy v1 A/B stage](docs/maintenance/20261124_decision_ab_stage.md) (user request 11-24, no result change):
 A-1 perfect-storm manual wording matches the emitted label; A-2 hold panel says "매크로 미확인" when macro is missing
 (score unchanged). B-1 `decision_behavior_groups.py` (127 codes → 9 groups); B-2 code-based group table +
@@ -549,7 +557,7 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Decision policy v1, after A/B (2026-11-24):** A-1/A-2 and B-1..B-7 are done with identical replay output
+**Decision policy v1, after A/B (2026-11-24):** A-4 done 11-25; next A-5/A-6 (compare first, merge only after approval). A-1/A-2 and B-1..B-7 are done with identical replay output
 (`docs/maintenance/20261124_decision_ab_stage.md`). Next, one item at a time, each with a replay table (현행 / 대안 /
 상승장 / 횡보장 / 하락장 / 실행가능 건수 / 차단·대기 감소량 / 평균 R / 손실 꼬리 / 골든·회귀 테스트) and the user's approval:
 A-4 (PROFIT_TAKE_REVIEW buyish), A-5/A-6 (macro failure 1.5 assumption, missing macro = DATA_CHECK), then C-1/C-1b

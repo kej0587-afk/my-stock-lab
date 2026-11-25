@@ -14,6 +14,13 @@ from stock_lab_core.rebalance_multiplier_table import (
 )
 
 CORE_DCA_CODES = frozenset(code for code, _ in MULTIPLIER_BY_CORE_STAGE)
+# Policy corrections approved one at a time (they intentionally differ from the old label parse).
+# A-4 (2026-11-25, user-approved): a profit-take review is not a buy signal. The old parser read
+# "분할 매도" as a buy word and gave core/swing 1.0. Leverage keeps its existing 0.0.
+# The code is unreachable in the current engine, so current results do not change.
+POLICY_MULTIPLIER_BY_CODE = {
+    "PROFIT_TAKE_REVIEW": {"core": [0.0] * 4, "swing": [0.0] * 4, "leverage": [0.0] * 4},
+}
 FALLBACK_COUNTER = {"table": 0, "legacy": 0}
 
 
@@ -124,7 +131,9 @@ def decision_signal_multiplier(decision, bucket: str, dip_level: int = 0) -> flo
     code = str(decision.get("decision_code", "") or "").strip()
     label = str(decision.get("dec", "") or "").strip()
     row = None
-    if code in CORE_DCA_CODES:
+    if code in POLICY_MULTIPLIER_BY_CODE:
+        row = POLICY_MULTIPLIER_BY_CODE[code]
+    elif code in CORE_DCA_CODES:
         row = MULTIPLIER_BY_CORE_STAGE.get((code, str(decision.get("core_dca_label", "") or "").strip()))
         if row is not None and not label.endswith(str(decision.get("core_dca_label", "")).strip()):
             row = None
