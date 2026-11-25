@@ -17642,8 +17642,9 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     if leveraged_label_block:
         is_hard_blocked = True
     is_poor_rr = rr < 1.0
-    from stock_lab_core.trend_exit_policy import SCOUT_FRACTION, uses_trend_exit
+    from stock_lab_core.trend_exit_policy import SCOUT_FRACTION, trend_exit_applies, uses_trend_exit
     trend_scout = uses_trend_exit(decision_code, has_pos=has_pos) and not leveraged_timing
+    trend_exit = trend_scout or (trend_exit_applies(c, ticker, has_pos=has_pos) and not leveraged_timing)
 
     if leveraged_timing:
         status = leveraged_timing.get("status", "레버리지 조건 확인")
@@ -17902,8 +17903,9 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         },
     ]
     from stock_lab_core.precision_plan_rows import build_precision_exit_rows, build_trend_exit_rows
-    if trend_scout:
-        rows += build_trend_exit_rows(ticker=ticker, stop=stop, atr=atr, format_currency=format_currency)
+    if trend_exit:
+        rows += build_trend_exit_rows(ticker=ticker, stop=stop, atr=atr, format_currency=format_currency,
+                                      size_text="정찰분 전량" if trend_scout else "진입분 전량")
     else:
         rows += build_precision_exit_rows(
             ticker=ticker, has_pos=has_pos, cur=entry1, stop=stop, target=target,
@@ -27214,6 +27216,18 @@ def render_speed_check_tab():
 # SECTION 20: 오늘 점검 — 서브 렌더러
 # render_today_action_card, render_today_portfolio_flow_bridge, render_today_market_flow_panel
 # ════════════════════════════════════════════════════════════════════════════
+
+def _benchmark_market_regime(ticker):
+    """C-1 step 2: 상승/횡보/하락/미확인 from SPY (US) or KOSPI (KR) 200-day average and its 20-day slope."""
+    from stock_lab_core.market_regime import classify_regime, regime_benchmark
+    df = load_price_df(regime_benchmark(ticker), "2y")
+    return classify_regime(daily_close(df) if isinstance(df, pd.DataFrame) and not df.empty else None)
+
+
+from stock_lab_core.market_regime import register_regime_provider as _register_regime_provider  # noqa: E402
+
+_register_regime_provider(_benchmark_market_regime)
+
 
 TODAY_MARKET_GUARD_BENCHMARKS = [
     ("^KS11", "KOSPI", "KR"),

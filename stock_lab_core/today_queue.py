@@ -27,6 +27,7 @@ from stock_lab_core.trend_exit_policy import (
     RR_KIND_TREND,
     TREND_SCOUT_ENTRY_CODES,
     scout_condition_text,
+    trend_exit_applies,
     trend_exit_source_text,
     uses_trend_exit,
 )
@@ -986,6 +987,7 @@ def build_today_queue_execution_snapshot(
     target_is_projection = bool(c.get("rr_target_is_projection", False))
     rr_target_source = str(c.get("rr_target_source", "") or "").strip()
     trend_scout = uses_trend_exit(str(c.get("decision_code", "") or ""), has_pos=has_pos)
+    trend_exit = trend_scout or trend_exit_applies(c, tkr, has_pos=has_pos)
     target_text = "-"
     if target > 0:
         target_prefix = "상단 " if target_is_projection else ""
@@ -995,10 +997,11 @@ def build_today_queue_execution_snapshot(
     rr_kind = "투영상단" if target_is_projection else "차트구조"
     if not rr_target_source:
         rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR" if target_is_projection else "차트 구조 목표가"
-    if trend_scout:
+    if trend_exit:
         # No fixed target: a projected upper target does not cap the exit. The R/R floor stays.
         rr_kind = RR_KIND_TREND
-        rr_target_source = f"{trend_exit_source_text()} · R/R 하한 기준 {rr_target_source}"
+        regime_note = "" if trend_scout else " · 상승장 한정"
+        rr_target_source = f"{trend_exit_source_text()}{regime_note} · R/R 하한 기준 {rr_target_source}"
 
     target_w = clean_float(c.get("target_w"), 0.0)
     current_w = clean_float(c.get("current_w"), 0.0)

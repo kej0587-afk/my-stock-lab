@@ -141,3 +141,95 @@ def test_trend_exit_rows_have_no_fixed_target():
     assert "최고 종가 - 3ATR" in rows[0]["가격"] and "$15.00" in rows[0]["가격"]
     assert rows[1]["가격"] == "$90.00"
     assert not any("익절" in r["단계"] for r in rows)
+
+
+# ── C-1 step 2: NEW_ENTRY_LEADER trend exit in 상승장 only ───────────────────────
+
+import pandas as pd
+
+from stock_lab_core import market_regime as mr
+from stock_lab_core.trend_exit_policy import TREND_EXIT_REGIME_CODES, trend_exit_applies, uses_regime_trend_exit
+
+LEADER_LABEL = "🔥신규진입: 대장주 포착"
+
+
+def leader(**overrides):
+    return decision(decision_code="NEW_ENTRY_LEADER", dec=LEADER_LABEL, **overrides)
+
+
+def test_step2_scope_is_leader_in_uptrend_only():
+    assert TREND_EXIT_REGIME_CODES == {"NEW_ENTRY_LEADER": frozenset({"상승"})}
+    assert uses_regime_trend_exit("NEW_ENTRY_LEADER", "상승")
+    for regime in ("횡보", "하락", "미확인", ""):
+        assert not uses_regime_trend_exit("NEW_ENTRY_LEADER", regime)
+    assert not uses_regime_trend_exit("NEW_ENTRY_LEADER", "상승", has_pos=True)
+    for code in ("BREAKOUT_52W_ENTRY", "LEADER_MA5_PULLBACK_ENTRY", "S_PULLBACK_ENTRY", "QUALITY_RECOVERY_SCOUT"):
+        assert not uses_regime_trend_exit(code, "상승")
+
+
+def _series(values):
+    return pd.Series(values, index=pd.bdate_range("2020-01-01", periods=len(values)))
+
+
+def test_classify_regime_matches_compared_definition():
+    up = _series([100 + i * 0.5 for i in range(300)])
+    down = _series([300 - i * 0.5 for i in range(300)])
+    assert mr.classify_regime(up) == "상승"
+    assert mr.classify_regime(down) == "하락"
+    # above MA200 while MA200 still falls → 횡보
+    dip = _series([300 - i * 0.5 for i in range(295)] + [225] * 5)
+    assert mr.classify_regime(dip) == "횡보"
+    assert mr.classify_regime(up.tail(219)) == "미확인"
+    assert mr.classify_regime(None) == "미확인"
+
+
+def test_regime_benchmark_by_market():
+    assert mr.regime_benchmark("AAPL") == "SPY"
+    assert mr.regime_benchmark("005930") == "^KS11"
+    assert mr.regime_benchmark("005930.KS") == "^KS11"
+
+
+def test_regime_for_prefers_attached_value_and_fails_to_unknown(monkeypatch):
+    monkeypatch.setitem(mr._PROVIDER, "fn", lambda t: "상승")
+    assert mr.regime_for("AAPL") == "상승"
+    assert mr.regime_for("AAPL", {"market_regime": "하락"}) == "하락"
+
+    def boom(t):
+        raise RuntimeError("no data")
+    monkeypatch.setitem(mr._PROVIDER, "fn", boom)
+    assert mr.regime_for("AAPL") == "미확인"
+    monkeypatch.setitem(mr._PROVIDER, "fn", None)
+    assert mr.regime_for("AAPL") == "미확인"
+
+
+def test_leader_in_uptrend_uses_trend_exit_and_projection_does_not_block():
+    w = workflow(leader(market_regime="상승", rr_target=120.0, rr_ratio=2.0, rr_target_is_projection=True))
+    assert w["게이트상태"] == GATE_EXECUTABLE, w["게이트근거"]
+    assert w["R/R성격"] == "추세추적" and "상승장 한정" in w["R/R출처"]
+    assert w["실행메모"] != "1/3 정찰 · 추세추적"  # size is unchanged for the leader
+
+
+@pytest.mark.parametrize("regime", ["횡보", "하락", "미확인"])
+def test_leader_outside_uptrend_is_unchanged(regime):
+    w = workflow(leader(market_regime=regime, rr_target=120.0, rr_ratio=2.0, rr_target_is_projection=True))
+    assert w["게이트상태"] == GATE_WAIT and "투영상단" in w["게이트근거"]
+    assert w["R/R성격"] == "투영상단"
+
+
+def test_leader_uptrend_keeps_rr_floor_and_guards():
+    w = workflow(leader(market_regime="상승", rr_target=105.0, rr_ratio=0.5))
+    assert w["게이트상태"] == GATE_WAIT and "R/R 0.50 < 1" in w["게이트근거"]
+    w = workflow(leader(market_regime="상승", mtf_bias_label="상위 시간대 경고"))
+    assert w["게이트상태"] == GATE_DEFENSE
+
+
+def test_leader_held_or_other_code_in_uptrend_is_unchanged():
+    assert not trend_exit_applies(leader(market_regime="상승"), "TEST", has_pos=True)
+    assert not trend_exit_applies(decision(decision_code="BREAKOUT_52W_ENTRY", market_regime="상승"), "TEST")
+    assert trend_exit_applies(leader(market_regime="상승"), "TEST")
+
+
+def test_trend_exit_rows_size_text():
+    rows = build_trend_exit_rows(ticker="T", stop=90.0, atr=5.0, format_currency=lambda v, t: f"${v:,.2f}",
+                                 size_text="진입분 전량")
+    assert {r["금액/수량"] for r in rows} == {"진입분 전량"}
