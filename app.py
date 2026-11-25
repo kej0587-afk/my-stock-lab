@@ -35001,18 +35001,24 @@ if main_page == "precision":
         with precision_execution_slot.container():
             render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
-        # B-4 shadow: shown beside the existing decision, never written back into c.
+        # B-4 shadow / C-5 v2: shown beside the existing decision, never written back into c.
         try:
+            from stock_lab_core.chart_patterns import detect_recent_invalidated_patterns
             from stock_lab_core.tech_review_view import render_tech_review_shadow
-            render_tech_review_shadow(
+            _tech_model = render_tech_review_shadow(
                 st, c, c.get("execution_workflow"),
                 pattern_candidates=precision_pattern_candidates, liquidity_profile=precision_liquidity_profile,
+                invalidated_patterns=detect_recent_invalidated_patterns(chart_df),
+                has_pos=bool(precision_has_pos), is_etf=bool(is_etf),
                 monthly_signal_decision=st.session_state.get("_ticker_signal_decision_cache", {}).get(tkr),
                 multiplier_fn=rebalance_signal_multiplier_for_decision,
             )
+            # Keep the versioned v2 record in the review download for later operating checks.
+            _evidence = dict((getattr(precision_review_download, "snapshot", {}) or {}).get("signal_evidence") or {})
+            precision_review_download.update(signal_evidence={**_evidence, "tech_review": _tech_model["record"]})
         except Exception:
             logging.exception("Tech review shadow failed: ticker=%s", tkr)
-            st.caption("기술검토(그림자) 계산 실패: 기존 판정에는 영향 없음")
+            st.caption("기술검토 계산 실패: 기존 판정에는 영향 없음")
         from stock_lab_core.data_freshness import input_freshness_rows
         c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
         st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
