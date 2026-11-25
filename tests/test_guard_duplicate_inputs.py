@@ -91,13 +91,15 @@ def test_untrusted_or_inconsistent_macro_decomposition_is_not_subtracted(bad):
 def test_macro_analysis_keeps_legacy_penalty_and_attaches_same_snapshot_base(guard_app, monkeypatch):
     from stock_lab_core.market_basis import guard_macro_input
     close = pd.Series([5.0] * 25, index=pd.bdate_range("2026-10-01", periods=25))
-    data = pd.concat({"^TNX": pd.DataFrame({"Close": close})}, axis=1)
+    # A-5 (2026-11-25): all four core series are needed; MOVE missing adds 0 (was an assumed 0.5).
+    data = pd.concat({"^TNX": pd.DataFrame({"Close": close}), "CL=F": pd.DataFrame({"Close": close * 14}),
+                      "USDKRW=X": pd.DataFrame({"Close": close * 260}), "^VIX": pd.DataFrame({"Close": close * 3})}, axis=1)
     monkeypatch.setattr(guard_app.yf, "download", lambda *args, **kwargs: data)
     monkeypatch.setattr(guard_app, "build_macro_event_risk_table", lambda: (pd.DataFrame(), 2.0, 1))
     guard_app.get_macro_analysis.clear()
     results, risk, penalty, move = guard_app.get_macro_analysis()
-    assert risk == 3.5 and penalty == 1.5
-    assert guard_macro_input(results, risk)["risk"] == 1.5
+    assert risk == 3.0 and penalty == 1.5
+    assert guard_macro_input(results, risk)["risk"] == 1.0
     assert results["10Y 금리"]["as_of"] == str(close.index[-1].date())
     guard_app.get_macro_analysis.clear()
 

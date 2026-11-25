@@ -347,6 +347,7 @@ from stock_lab_core.decision_engine import (
     classify_decision_signal,
     classify_safety_state,
     classify_macro_state,
+    mark_macro_unknown_reasons,
     compute_sizing_hint as _compute_sizing_hint,
     ensure_min_price_rows_for_decision,
     get_source_close_values,
@@ -1808,7 +1809,7 @@ You are a top-tier macro strategist and technical analyst for public markets.
 
 입력 데이터:
 [거시환경]
-매크로 리스크 점수: {final_macro_risk}
+매크로 리스크 점수: {final_macro_risk if finite_num(final_macro_risk) else "미확인(핵심 매크로 데이터 누락)"}
 {macro_text}
 
 [기술/전술 데이터]
@@ -3847,6 +3848,12 @@ def rebalance_signal_multiplier_for_decision(decision: dict, bucket: str, dip_le
 def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summary, monthly_logs_df=None):
     from stock_lab_core.monthly_rebalance_view import render_monthly_rebalancing_calculator as render_calculator
 
+    _macro_status = globals().get("_APP_MACRO_STATUS") or {}
+    if _macro_status.get("macro_data_status") not in (None, "complete"):
+        # A-5/A-6 display only: the plan reads decision codes, not the execution gate (C-6 gap).
+        from stock_lab_core.macro_status import macro_unknown_reason
+        st.caption(f"⚠️ {macro_unknown_reason(_macro_status.get('macro_missing_components'))}: "
+                   "아래 계획 금액은 판정코드 기준 참고값이며, 오늘 실행게이트는 데이터확인입니다.")
     render_calculator(
         st, holdings_table, usdkrw, portfolio_summary, monthly_logs_df,
         signal_multiplier=_rebcalc_signal_multiplier,
@@ -15441,8 +15448,25 @@ def build_macro_event_risk_table(today=None):
     return pd.DataFrame(rows), round(min(total_risk, 3.0), 2), active_count
 
 
-@st.cache_data(ttl=300)
+class _MacroIncomplete(Exception):
+    """Carries an incomplete macro snapshot past st.cache_data, which never caches exceptions."""
+
+    def __init__(self, payload):
+        super().__init__("macro core data incomplete")
+        self.payload = payload
+
+
 def get_macro_analysis():
+    """A-5/A-6: a complete snapshot is cached for 5 minutes; a missing one is never cached, so the
+    next run fetches again and returns to the normal macro calculation as soon as data is back."""
+    try:
+        return _get_macro_analysis_cached()
+    except _MacroIncomplete as exc:
+        return exc.payload
+
+
+@st.cache_data(ttl=300)
+def _get_macro_analysis_cached():
     tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
     results = {}; macro_trend = 0; storm_count = 0
 
@@ -15462,9 +15486,8 @@ def get_macro_analysis():
         data = pd.DataFrame()
 
     if data.empty:
-        _, event_risk, _ = build_macro_event_risk_table()
-        final_macro_risk = max(1.5, event_risk)
-        return results, final_macro_risk, 0.5, np.nan
+        # A-5: a failed collection is missing data, not an assumed 1.5 risk / 0.5 penalty.
+        raise _MacroIncomplete((results, np.nan, np.nan, np.nan))
 
     for name, tkr in tickers.items():
         try:
@@ -15502,7 +15525,12 @@ def get_macro_analysis():
         results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg,
                          "symbol": tkr, "source": "Yahoo Finance daily", "as_of": str(close.index[-1].date())}
     move_val = results.get("MOVE", {}).get("val", np.nan)
-    move_score = 1.5 if move_val >= 120 else (0.5 if not finite_num(move_val) or move_val >= 100 else 0)
+    # A-5: MOVE is auxiliary. When missing it adds nothing and is shown as "MOVE 미확인" (no assumed 0.5).
+    move_score = (1.5 if move_val >= 120 else (0.5 if move_val >= 100 else 0)) if finite_num(move_val) else 0
+    from stock_lab_core.macro_status import COMPLETE, macro_data_status
+    if macro_data_status(results)["macro_data_status"] != COMPLETE:
+        # A-5: any missing core input (10Y, VIX, USD/KRW, oil) makes the macro risk unknown.
+        raise _MacroIncomplete((results, np.nan, np.nan, move_val))
     _, event_risk, _ = build_macro_event_risk_table()
     final_macro_risk = storm_count + macro_trend + move_score + event_risk
     for info in results.values():
@@ -15510,6 +15538,9 @@ def get_macro_analysis():
         info["guard_event_risk"] = event_risk
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))
     return results, final_macro_risk, macro_penalty, move_val
+
+
+get_macro_analysis.clear = _get_macro_analysis_cached.clear
 
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 if "watchlist" not in st.session_state:
@@ -16184,6 +16215,51 @@ def get_reserve_available_for_crash_buy(mode):
     reserve_rows = table[table["bucket"].apply(lambda v: normalize_bucket(v) == "reserve")]
     return float(reserve_rows["원화환산"].apply(clean_float).sum()) if not reserve_rows.empty else 0.0
 
+def render_macro_entry_header(macro_res, final_macro_risk, macro_penalty, macro_event_risk, app_mode_label):
+    """A-5/A-6 header: missing macro shows 미확인 with the missing items, never a number."""
+    # Diagnostics only: never fed back into a decision as a fallback value.
+    from stock_lab_core.macro_status import COMPLETE, macro_caption_text, macro_data_status
+    _macro_status = macro_data_status(macro_res)
+    if _macro_status["macro_data_status"] == COMPLETE and finite_num(final_macro_risk):
+        st.session_state["_app_last_complete_macro_at"] = get_kst_now().strftime("%Y-%m-%d %H:%M:%S KST")
+    _macro_status["last_complete_macro_at"] = st.session_state.get("_app_last_complete_macro_at", "미확인")
+    st.session_state["_app_macro_status"] = _macro_status
+    globals()["_APP_MACRO_STATUS"] = _macro_status
+    _penalty_text = f"-{macro_penalty}" if finite_num(macro_penalty) else "미확인"
+    st.caption(f"모드: {app_mode_label} | 매크로 지수: {macro_caption_text(final_macro_risk, _macro_status)} | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: {_penalty_text}")
+    if _macro_status["macro_data_status"] != COMPLETE:
+        st.warning(f"{macro_caption_text(final_macro_risk, _macro_status)} · 판정은 매크로 영향을 빼고 계산하고, 실행은 데이터확인으로 둡니다. "
+                   f"마지막 정상 수집: {_macro_status['last_complete_macro_at']}")
+
+
+def render_macro_entry_panel(macro_res):
+    if macro_res:
+        # A-5/A-6: missing series are shown as 미확인, never as a number.
+        _panel_names = ["10Y 금리", "유가", "환율", "VIX", "MOVE"]
+        _panel_names += [n for n in macro_res if n not in _panel_names]
+        m_cols = st.columns(len(_panel_names))
+        for i, n in enumerate(_panel_names):
+            info = macro_res.get(n)
+            if not isinstance(info, dict):
+                m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>미확인</b></div>", unsafe_allow_html=True)
+                continue
+            s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] and n != "환율" else ""
+            m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
+    else:
+        st.info("매크로 데이터를 불러오지 못했습니다.")
+
+
+def current_macro_missing_components():
+    """Core macro inputs missing in the app's current snapshot (diagnostics only)."""
+    status = globals().get("_APP_MACRO_STATUS") or {}
+    if not status:
+        try:
+            status = st.session_state.get("_app_macro_status") or {}
+        except Exception:
+            status = {}
+    return tuple(status.get("macro_missing_components") or ())
+
+
 def resolve_decision_runtime_inputs(macro_penalty_value=None, final_macro_risk_value=None, total_eval_value=None):
     """Resolve decision inputs without raising if app globals are not ready yet."""
     mp = globals().get("macro_penalty", 0.0) if macro_penalty_value is None else macro_penalty_value
@@ -16435,6 +16511,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                              live_price: float = 0.0, _live_indicator_context=None):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
+    # A-6 (2026-11-25): missing macro is neither risk nor normal. The stock decision runs without
+    # macro effect (no penalty, macro conditions neutral) and the execution gate shows DATA_CHECK.
+    macro_risk_observed = _fmr
+    macro_missing_components = ()
+    if not finite_num(_fmr):
+        macro_missing_components = current_macro_missing_components()
+        _fmr, _mp = 0.0, 0.0
     ticker = sanitize_ticker_value(ticker)
     name = sanitize_asset_name(name, ticker)
     if is_known_individual_stock_ticker(ticker):
@@ -16533,7 +16616,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # macro_state : 매크로/재난경보(final_macro_risk) 상태. STORM/CAUTION/NORMAL.
     # 다음 단계에서 dec 분기를 이 상태값 기준으로 재배선할 예정.
     safety_state = classify_safety_state(tech_total)
-    macro_state = classify_macro_state(_fmr)
+    macro_state = classify_macro_state(macro_risk_observed)
 
     levels = get_recent_levels(df)
 
@@ -16889,6 +16972,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         enforce_non_core_panic_scope=enforce_non_core_panic_scope,
         build_decision_outcome=build_decision_outcome, _compute_sizing_hint=_compute_sizing_hint,
     )
+    if macro_state == "UNKNOWN":
+        decision_outcome = mark_macro_unknown_reasons(decision_outcome)
+        dec, col = decision_outcome.label, decision_outcome.color
 
     return build_decision_result(locals())
 
@@ -20977,6 +21063,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "Adj점수": round(c["adj"], 1),
         "안전상태": c.get("safety_state", ""),
         "매크로상태": c.get("macro_state", ""),
+        "매크로누락": ", ".join(str(x) for x in (c.get("macro_missing_components") or ())),
         "데이터상태": c.get("data_state", "OK"),
         "bucket": c.get("bucket", ""),
         "버킷": c.get("bucket", ""),
@@ -33329,17 +33416,11 @@ with PerformanceTrace(scope="app_entry_initialization") as _entry_trace:
     # globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
     st.session_state["_app_final_macro_risk"] = final_macro_risk
     st.session_state["_app_macro_event_risk"] = macro_event_risk
-    st.caption(f"모드: {app_mode_label} | 매크로 지수: {final_macro_risk:.1f}pt | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: -{macro_penalty}")
+    render_macro_entry_header(macro_res, final_macro_risk, macro_penalty, macro_event_risk, app_mode_label)
     if IS_PUBLIC_DEMO:
         st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
 
-    if macro_res:
-        m_cols = st.columns(len(macro_res))
-        for i, (n, info) in enumerate(macro_res.items()):
-            s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] and n != "환율" else ""
-            m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
-    else:
-        st.info("매크로 데이터를 불러오지 못했습니다.")
+    render_macro_entry_panel(macro_res)
 
     with measure("phase", "entry_settings"):
         settings = load_settings_db()

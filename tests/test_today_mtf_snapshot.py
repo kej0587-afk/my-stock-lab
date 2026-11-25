@@ -46,7 +46,8 @@ def test_only_two_app_functions_change_and_only_reviewed_expressions(original_so
         node.body.remove(matches[0])
         return node
     def functions(source, current=False):
-        return {n.name: ast.dump(before_price_basis_identity(before_selection(n)) if current and n.name == '_compute_summary_item' else n)
+        from tests.macro_missing_ast_contract import without_macro_missing_key
+        return {n.name: ast.dump(before_price_basis_identity(before_selection(without_macro_missing_key(n))) if current and n.name == '_compute_summary_item' else n)
                 for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
     old, extracted, now = functions(original_source), functions(approved), functions(current, current=True)

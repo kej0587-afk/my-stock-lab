@@ -34,6 +34,17 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[A-5/A-6 missing macro](docs/maintenance/20261125_a5_a6_macro_missing.md) (user-approved option A, 11-25): a failed
+collection or any missing core input (10Y, VIX, USD/KRW, oil) gives macro risk NaN / UNKNOWN (no 1.5 / 0.5 assumption,
+missing input no longer counted as 0); MOVE missing adds 0 and shows "MOVE 미확인". Incomplete results are never cached
+(`_MacroIncomplete`). The engine runs the rules macro-neutral (risk 0 / penalty 0 internally, `macro_state` UNKNOWN,
+reason "FMR 미확인"); `build_execution_gate` sends UNKNOWN to 데이터확인 "매크로 미확인 · … 데이터 누락" after all
+defense checks, so 방어우선 stays. Diagnostics: `stock_lab_core/macro_status.py`, `macro_data_status`,
+`macro_missing_components`, `last_complete_macro_at` (never reused in decisions). 30,278-state replay: only the expected
+V2 changes (580 codes); normal-macro parity byte-identical. Core ETF DCA also stops on missing days (C-13).
+
+### Previous: A-4
+
 [A-4 PROFIT_TAKE_REVIEW](docs/maintenance/20261125_a4_profit_take_review.md) (user-approved 11-25): group buyish → caution,
 monthly multiplier core/swing 1.0 → 0 (`rebalance_multiplier.POLICY_MULTIPLIER_BY_CODE`), leverage stays 0. The code is
 unreachable in the current engine (profitable holdings never reach `select_holding_decision`), so parity replay is
@@ -557,7 +568,7 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Decision policy v1, after A/B (2026-11-24):** A-4 done 11-25; next A-5/A-6 (compare first, merge only after approval). A-1/A-2 and B-1..B-7 are done with identical replay output
+**Decision policy v1, after A/B (2026-11-24):** A-4 and A-5/A-6 done 11-25; next report to the user, then C (one item at a time). A-1/A-2 and B-1..B-7 are done with identical replay output
 (`docs/maintenance/20261124_decision_ab_stage.md`). Next, one item at a time, each with a replay table (현행 / 대안 /
 상승장 / 횡보장 / 하락장 / 실행가능 건수 / 차단·대기 감소량 / 평균 R / 손실 꼬리 / 골든·회귀 테스트) and the user's approval:
 A-4 (PROFIT_TAKE_REVIEW buyish), A-5/A-6 (macro failure 1.5 assumption, missing macro = DATA_CHECK), then C-1/C-1b
