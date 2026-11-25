@@ -7225,7 +7225,7 @@ def get_precision_mtf_bias(mtf_pack: dict, c: dict) -> dict:
     }
 
 
-def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict, has_pos: bool = False) -> dict:
+def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict, has_pos: bool = False, ticker: str = "") -> dict:
     """Downgrade aggressive new-entry labels when weekly/monthly are too hot."""
     if not isinstance(c, dict):
         return c
@@ -7274,6 +7274,12 @@ def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict, has_pos: bool = 
         return guarded
 
     old_reasons = tuple(guarded.get("decision_reasons") or ())
+    # C-1c (2026-11-25, user-approved option C): in 상승장 an unheld EXCEPTION_ENTRY under weekly/monthly
+    # overheat (not trend damage) stays a 1/3 scout entry instead of MTF_OVERHEAT_SCOUT_ONLY.
+    from stock_lab_core.trend_exit_policy import mtf_overheat_scout_allowed
+    if bias_label == "정찰만 적합" and mtf_overheat_scout_allowed(guarded, ticker, has_pos=has_pos):
+        guarded["mtf_overheat_scout"] = True
+        return guarded
     if bias_label == "상위 시간대 경고":
         guarded.update({
             "dec": "⚠️상위시간대 경고: 신규/추매 보류",
@@ -17642,7 +17648,9 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     if leveraged_label_block:
         is_hard_blocked = True
     is_poor_rr = rr < 1.0
-    from stock_lab_core.trend_exit_policy import SCOUT_FRACTION, trend_exit_applies, uses_trend_exit
+    from stock_lab_core.trend_exit_policy import (
+        SCOUT_FRACTION, is_mtf_overheat_scout, mtf_overheat_scout_roles, trend_exit_applies, uses_trend_exit,
+    )
     trend_scout = uses_trend_exit(decision_code, has_pos=has_pos) and not leveraged_timing
     trend_exit = trend_scout or (trend_exit_applies(c, ticker, has_pos=has_pos) and not leveraged_timing)
 
@@ -17700,6 +17708,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
                 "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
             )
+    elif trend_scout and not (is_wait or is_poor_rr) and is_mtf_overheat_scout(c, has_pos=has_pos):
+        status = "정찰 실행(1/3) · 상위과열 예외"
+        status_color = "#7c3aed"
+        status_note = " / ".join(f"{role}: {text}" for role, text in mtf_overheat_scout_roles()) + (
+            ". 일반 실행가능과 달리 목표비중의 1/3 정찰만 허용하고, 최고 종가-3ATR 추적손절로 정리합니다.")
     elif trend_scout and not (is_wait or is_poor_rr):
         status = "1/3 정찰 · 추세추적"
         status_color = "#7c3aed"
@@ -18602,7 +18615,7 @@ def apply_precision_post_decision(c, mtf_pack, *, name, ticker, has_pos, my_pric
     Today runs the same first two steps inline (with per-stage error isolation and the
     leveraged dashboard override before the precision override); it is kept there on purpose.
     """
-    c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos)
+    c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos, ticker=ticker)
     c = apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price)
     if non_core_panic_scope:
         c = enforce_non_core_panic_scope_on_result(
@@ -21007,7 +21020,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             # Today consumes only the weekly/monthly guard. Precision screens
             # retain the default daily narrative, including its original rebuild.
             mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df, _long_price_df=_long_price_df, _include_daily_snapshot=False)
-            c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
+            c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p, ticker=tkr)
         except Exception:
             c["mtf_bias_label"] = "자료부족"
             c["data_state"] = "상위시간대 조회 실패"

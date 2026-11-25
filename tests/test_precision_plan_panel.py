@@ -326,3 +326,19 @@ def test_leader_plan_uses_trend_exit_only_in_uptrend(display_app, regime, trend)
     assert ("1차 익절" in stages) is (not trend)
     if trend:
         assert plan["rows"][-1]["금액/수량"] == "진입분 전량"
+
+
+def test_c1c_overheat_scout_plan_shows_roles_and_one_third(display_app):
+    app, ui = display_app
+    decision = held_decision(dec="🟣예외승인: 정찰대 진입(MA5/FVG)", decision_code="EXCEPTION_ENTRY",
+                             mtf_overheat_scout=True, mtf_bias_label="정찰만 적합",
+                             rr_target=115.0, rr_ratio=1.5, buy_amt=140000, current_w=0, target_w=10,
+                             execution_workflow={"게이트상태": GATE_EXECUTABLE},
+                             chart_final_check={"execution_allowed": True, "block_count": 0, "core_missing_ids": []})
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=False)
+    assert plan["status"] == "정찰 실행(1/3) · 상위과열 예외"
+    for text in ("현장소장: 예외승인 정찰 진입", "상위시간대: 상승 과열", "실행판단: 1/3 정찰 허용",
+                 "사유: 상승장 + EXCEPTION_ENTRY, MTF 추세훼손 아님"):
+        assert text in plan["status_note"]
+    assert plan["rows"][1]["단계"] == "1차 진입 (33%)"
+    assert plan["rows"][-2]["단계"] == "추세추적 정리"

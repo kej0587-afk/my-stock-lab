@@ -247,7 +247,9 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if group == "buyish" or _RE_PRECISION_CONFIRM.search(final_read):
         if not math.isfinite(rr) or rr <= 0:
             return _gate(GATE_DATA_CHECK, "현재가 R/R 확인 필요", "rr")
-        return _gate(GATE_EXECUTABLE, "R/R·패턴·방어 게이트 통과")
+        # C-1: a scout-sized execution says so, so it is not read as an ordinary full entry.
+        scout_reason = _text(_row_get(row, "정찰실행사유", ""))
+        return _gate(GATE_EXECUTABLE, scout_reason or "R/R·패턴·방어 게이트 통과")
 
     return _gate(GATE_WATCH_ONLY, "실행 신호 아님", "entry")
 

@@ -24,8 +24,10 @@ from stock_lab_core.formatters import (
 from stock_lab_core.formatters import finite_num as _finite_num
 from stock_lab_core.trend_exit_policy import (
     EXECUTION_MEMO as TREND_EXECUTION_MEMO,
+    MTF_OVERHEAT_SCOUT_MEMO,
     RR_KIND_TREND,
     TREND_SCOUT_ENTRY_CODES,
+    is_mtf_overheat_scout,
     scout_condition_text,
     trend_exit_applies,
     trend_exit_source_text,
@@ -622,7 +624,9 @@ def format_dashboard_timing_label(decision: dict) -> str:
     notes = []
     if is_dashboard_low_rr_caution(decision):
         notes.append("R/R<1 정찰")
-    if is_dashboard_actionable_signal(decision) and str((decision or {}).get("mtf_bias_label", "")) == "정찰만 적합":
+    if is_mtf_overheat_scout(decision):
+        notes.append("정찰 실행(1/3)")  # C-1c: no wait word; the overheat itself is shown in the reason
+    elif is_dashboard_actionable_signal(decision) and str((decision or {}).get("mtf_bias_label", "")) == "정찰만 적합":
         if "상위과열" not in label and "정찰만" not in label:
             notes.append("상위과열 정찰")
     for note in notes:
@@ -747,7 +751,10 @@ def format_dashboard_reason(decision: dict) -> str:
     code = str((decision or {}).get("decision_code", "") or "")
     if (code.startswith("STRUCTURE_DAMAGE") or code.startswith("SINGLE_DAY_BREAKDOWN")) and len(reasons) > 1:
         base = " / ".join(str(x) for x in reasons[:3] if str(x).strip())
-    if is_dashboard_actionable_signal(decision) and str((decision or {}).get("mtf_bias_label", "")) == "정찰만 적합":
+    if is_mtf_overheat_scout(decision):
+        mtf_note = "상위 시간대 상승 과열: 상승장 예외승인만 1/3 정찰 허용(추세훼손 아님)"
+        base = f"{base} / {mtf_note}" if base else mtf_note
+    elif is_dashboard_actionable_signal(decision) and str((decision or {}).get("mtf_bias_label", "")) == "정찰만 적합":
         mtf_note = "상위 시간대 과열: 풀비중보다 정찰/대기"
         base = f"{base} / {mtf_note}" if base else mtf_note
     if is_dashboard_low_rr_caution(decision):
@@ -1048,7 +1055,7 @@ def build_today_queue_execution_snapshot(
         target_is_projection=target_is_projection,
     )
     if trend_scout and not (is_weight_block or is_hard_blocked or is_poor_rr or is_wait):
-        action = TREND_EXECUTION_MEMO
+        action = MTF_OVERHEAT_SCOUT_MEMO if is_mtf_overheat_scout(c, has_pos=has_pos) else TREND_EXECUTION_MEMO
 
     if is_weight_block or is_hard_blocked:
         if is_weight_block:
