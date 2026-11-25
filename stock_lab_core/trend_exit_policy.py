@@ -54,6 +54,50 @@ def trend_exit_applies(decision: dict | None, ticker: str, *, has_pos: bool = Fa
     return uses_regime_trend_exit(code, regime_for(ticker, decision), has_pos=has_pos)
 
 
+# C-1c (2026-11-25, user-approved option C): weekly/monthly overheat ("정찰만 적합") normally turns an
+# entry into MTF_OVERHEAT_SCOUT_ONLY (wait). For an unheld EXCEPTION_ENTRY in 상승장 only, it stays a
+# 1/3 scout entry with the trend exit. Trend damage ("상위 시간대 경고") is never relaxed, and every
+# other gate (R/R >= 1, market defense, macro, weight, data) still applies.
+MTF_OVERHEAT_SCOUT_CODES = frozenset({"EXCEPTION_ENTRY"})
+MTF_OVERHEAT_SCOUT_REGIMES = frozenset({"상승"})
+MTF_OVERHEAT_SCOUT_MEMO = "정찰 실행(1/3) · 추세추적"
+MTF_OVERHEAT_SCOUT_REASON = "정찰 실행: 1/3만 허용 (상승장 + EXCEPTION_ENTRY, 상위 시간대 추세훼손 아님)"
+
+
+def mtf_overheat_scout_allowed(decision: dict | None, ticker: str, *, has_pos: bool = False) -> bool:
+    code = str((decision or {}).get("decision_code", "") or "").strip()
+    if has_pos or code not in MTF_OVERHEAT_SCOUT_CODES:
+        return False
+    if not str(ticker or "").strip() and not (decision or {}).get("market_regime"):
+        return False  # no ticker → benchmark unknown → never 상승장
+    from stock_lab_core.market_regime import regime_for
+    return regime_for(ticker, decision) in MTF_OVERHEAT_SCOUT_REGIMES
+
+
+def is_mtf_overheat_scout(decision: dict | None, *, has_pos: bool = False) -> bool:
+    d = decision or {}
+    return (not has_pos and bool(d.get("mtf_overheat_scout"))
+            and str(d.get("decision_code", "") or "") in MTF_OVERHEAT_SCOUT_CODES)
+
+
+SCOUT_EXECUTION_REASON = "정찰 실행: 1/3만 (EXCEPTION_ENTRY 추세추적)"
+
+
+def scout_execution_reason(decision: dict | None, *, has_pos: bool = False) -> str:
+    """Gate reason that marks an executable row as a scout execution, '' for ordinary rows."""
+    if is_mtf_overheat_scout(decision, has_pos=has_pos):
+        return MTF_OVERHEAT_SCOUT_REASON
+    if uses_trend_exit(str((decision or {}).get("decision_code", "") or ""), has_pos=has_pos):
+        return SCOUT_EXECUTION_REASON
+    return ""
+
+
+def mtf_overheat_scout_roles() -> list[tuple[str, str]]:
+    """Who decided what, shown on screen for an overheat scout entry."""
+    return [("현장소장", "예외승인 정찰 진입"), ("상위시간대", "상승 과열"), ("실행판단", "1/3 정찰 허용"),
+            ("사유", "상승장 + EXCEPTION_ENTRY, MTF 추세훼손 아님")]
+
+
 def trailing_stop(initial_stop: float, highest_close: float, atr: float) -> float:
     """Stop for the next day: never below the initial stop, else highest close - 3ATR."""
     if not all(math.isfinite(v) for v in (initial_stop, highest_close, atr)) or atr <= 0:

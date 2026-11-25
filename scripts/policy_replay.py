@@ -348,7 +348,7 @@ def _parity_row(app, c, name, ticker, is_etf, has_pos, my_price, chart_df, guard
     # Today chain: MTF guard (weekly/monthly) → dashboard override → precision override → pattern → gate
     try:
         mtf = app.build_precision_multi_timeframe_pack(ticker, chart_df, _include_daily_snapshot=False)
-        t = app.apply_precision_mtf_decision_guard(c, mtf, has_pos=has_pos)
+        t = app.apply_precision_mtf_decision_guard(c, mtf, has_pos=has_pos, ticker=ticker)
     except Exception as e:
         t = dict(c, mtf_bias_label="자료부족", data_state="상위시간대 조회 실패")
     t = app.apply_leveraged_dca_dashboard_override(t)
@@ -379,7 +379,7 @@ def _parity_row(app, c, name, ticker, is_etf, has_pos, my_price, chart_df, guard
                    non_core_panic_scope=True, is_etf=is_etf)
     else:
         try:
-            p = app.apply_precision_mtf_decision_guard(c, mtf_p, has_pos=has_pos) if mtf_p is not None else dict(c)
+            p = app.apply_precision_mtf_decision_guard(c, mtf_p, has_pos=has_pos, ticker=ticker) if mtf_p is not None else dict(c)
         except Exception:
             p = dict(c)
         p = app.apply_leveraged_precision_decision_override(p, name, ticker, has_pos, my_price)

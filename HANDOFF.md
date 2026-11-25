@@ -574,8 +574,8 @@ partial-bar audit. Keep these private files out of Git.
 and regression tests: (1) EXCEPTION_ENTRY = executable 1/3 scout + trend exit — done (PR #40, prod checked 11-25 13:25 KST), `docs/maintenance/20261125_c1_step1_exception_trend_exit.md`;
 (2) NEW_ENTRY_LEADER trend exit in 상승장 only (SPY/KOSPI 200DMA + 20-day slope; measured move rejected; 하락장 keeps current limits) — done (PR #41, prod checked 11-25 13:53 KST), `docs/maintenance/20261125_c1_step2_leader_uptrend_trend_exit.md`;
 (3) C-1c: MTF 상승 과열 → 1/3 scout in 상승장 only, compare A current / B leader only / C exception only / D both; never relax
-MTF 추세훼손. C-1c comparison delivered 11-25 (`/mnt/project-files/reports/20261125_c1c_mtf_overheat_scout.md`, recommended C = exception only,
-A also reasonable); waiting for the user's choice before implementing. Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
+MTF 추세훼손. C-1c: user chose C (11-25) — 상승장 unheld EXCEPTION_ENTRY under MTF 정찰만 적합 stays a 1/3 scout (trend exit), shown as
+"정찰 실행"; leader overheat not relaxed — done, `docs/maintenance/20261125_c1c_exception_mtf_overheat_scout.md`. C-1 group complete. Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
 quality recovery R/R (pivot).
 
 **Decision policy v1, after A/B (2026-11-24):** A-4 and A-5/A-6 done 11-25; next report to the user, then C (one item at a time). A-1/A-2 and B-1..B-7 are done with identical replay output

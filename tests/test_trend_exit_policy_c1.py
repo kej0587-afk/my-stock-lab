@@ -233,3 +233,102 @@ def test_trend_exit_rows_size_text():
     rows = build_trend_exit_rows(ticker="T", stop=90.0, atr=5.0, format_currency=lambda v, t: f"${v:,.2f}",
                                  size_text="진입분 전량")
     assert {r["금액/수량"] for r in rows} == {"진입분 전량"}
+
+
+# ── C-1c option C: 상승장 EXCEPTION_ENTRY under MTF overheat → 1/3 scout ───────────
+
+from stock_lab_core.trend_exit_policy import (
+    MTF_OVERHEAT_SCOUT_REASON, is_mtf_overheat_scout, mtf_overheat_scout_allowed, mtf_overheat_scout_roles,
+)
+
+
+def pack(weekly="상승 과열권", monthly="상승 유지"):
+    return {"주봉": {"snapshot": {"state": weekly}}, "월봉": {"snapshot": {"state": monthly}}}
+
+
+def guarded(app_module, d, p=None, has_pos=False, ticker="TEST"):
+    return app_module.apply_precision_mtf_decision_guard(d, p or pack(), has_pos=has_pos, ticker=ticker)
+
+
+def test_c1c_allowed_scope():
+    assert mtf_overheat_scout_allowed(decision(market_regime="상승"), "TEST")
+    for regime in ("횡보", "하락", "미확인"):
+        assert not mtf_overheat_scout_allowed(decision(market_regime=regime), "TEST")
+    assert not mtf_overheat_scout_allowed(decision(market_regime="상승"), "TEST", has_pos=True)
+    assert not mtf_overheat_scout_allowed(leader(market_regime="상승"), "TEST")
+    assert not mtf_overheat_scout_allowed(decision(), "")  # no ticker, no regime → never 상승장
+
+
+def test_c1c_uptrend_exception_stays_scout_entry_and_executes(app_module):
+    g = guarded(app_module, decision(market_regime="상승"))
+    assert g["decision_code"] == "EXCEPTION_ENTRY" and g["mtf_overheat_scout"] is True
+    assert g["mtf_bias_label"] == "정찰만 적합"
+    assert is_mtf_overheat_scout(g)
+    w = workflow(g)
+    assert w["게이트상태"] == GATE_EXECUTABLE, w["게이트근거"]
+    assert w["게이트근거"] == MTF_OVERHEAT_SCOUT_REASON
+    assert w["실행메모"] == "정찰 실행(1/3) · 추세추적"
+    assert "정찰 실행(1/3)" in w["🔥기술적 타점"] and "과열" not in w["🔥기술적 타점"]
+    assert "상위 시간대 상승 과열" in w["핵심근거"] and "추세훼손 아님" in w["핵심근거"]
+    assert w["R/R성격"] == "추세추적"
+
+
+def test_c1c_roles_text():
+    assert mtf_overheat_scout_roles() == [("현장소장", "예외승인 정찰 진입"), ("상위시간대", "상승 과열"),
+                                          ("실행판단", "1/3 정찰 허용"), ("사유", "상승장 + EXCEPTION_ENTRY, MTF 추세훼손 아님")]
+
+
+@pytest.mark.parametrize("regime", ["횡보", "하락", "미확인"])
+def test_c1c_outside_uptrend_still_converts_and_waits(app_module, regime):
+    g = guarded(app_module, decision(market_regime=regime))
+    assert g["decision_code"] == "MTF_OVERHEAT_SCOUT_ONLY" and not g.get("mtf_overheat_scout")
+    assert workflow(g)["게이트상태"] == GATE_WAIT
+
+
+def test_c1c_call_without_ticker_still_converts(app_module):
+    g = app_module.apply_precision_mtf_decision_guard(decision(), pack(), has_pos=False)
+    assert g["decision_code"] == "MTF_OVERHEAT_SCOUT_ONLY"
+
+
+@pytest.mark.parametrize("weekly, monthly", [("추세훼손", "상승 과열권"), ("상승 과열권", "추세훼손"), ("추세훼손", "상승 유지")])
+def test_c1c_trend_damage_is_never_relaxed(app_module, weekly, monthly):
+    g = guarded(app_module, decision(market_regime="상승"), pack(weekly, monthly))
+    assert g["decision_code"] == "MTF_DAMAGE_NO_ADD" and not g.get("mtf_overheat_scout")
+    assert workflow(g)["게이트상태"] == GATE_DEFENSE
+
+
+def test_c1c_leader_overheat_is_unchanged(app_module):
+    g = guarded(app_module, leader(market_regime="상승"))
+    assert g["decision_code"] == "MTF_OVERHEAT_SCOUT_ONLY"
+
+
+def test_c1c_held_position_is_unchanged(app_module):
+    g = guarded(app_module, decision(market_regime="상승"), has_pos=True)
+    assert not g.get("mtf_overheat_scout")
+    assert not is_mtf_overheat_scout(dict(g, mtf_overheat_scout=True), has_pos=True)
+
+
+def test_c1c_rr_floor_still_waits(app_module):
+    g = guarded(app_module, decision(market_regime="상승", rr_target=105.0, rr_ratio=0.5))
+    w = workflow(g)
+    assert w["게이트상태"] == GATE_WAIT and "R/R 0.50 < 1" in w["게이트근거"]
+
+
+@pytest.mark.parametrize("field, value, expected", [
+    ("시장실행상태", "시장방어: 신규매수 중단", GATE_DEFENSE),
+    ("매크로상태", "UNKNOWN", "데이터확인"),
+    ("데이터상태", "가격 조회 실패", "데이터확인"),
+    ("판정코드", "HARD_BLOCK_OVERWEIGHT", GATE_DEFENSE),
+])
+def test_c1c_upper_guards_still_win(app_module, field, value, expected):
+    from stock_lab_core.execution_gate import build_execution_gate
+    row = dict(workflow(guarded(app_module, decision(market_regime="상승"))))
+    row[field] = value
+    assert build_execution_gate(row)["게이트상태"] == expected
+
+
+def test_c1c_macro_hard_guard_code_still_blocks():
+    from stock_lab_core.execution_gate import build_execution_gate
+    row = dict(workflow(decision(market_regime="상승", mtf_overheat_scout=True, mtf_bias_label="정찰만 적합")))
+    row["판정코드"] = "HARD_BLOCK_MACRO_STORM"
+    assert build_execution_gate(row)["게이트상태"] == GATE_DEFENSE
