@@ -612,6 +612,16 @@ Macro score, penalty, separate conditions, event points and the ≥4.5 hard guar
 `/mnt/project-files/reports/20261125_c2b_market_vs_event_risk.md`. Next: C-4/C-5 (chart pattern / tech-review layer),
 comparison only, no decision/gate/sizing authority change.
 
+**C-4/C-5 tech-review comparison (2026-11-25, comparison only, no code change):** point-in-time replay, 154 tickers
+2007–2026 (282k states, pattern known_at check passed). Pattern: bullish "패턴유효: 정밀확인" adds 348 executables
+(0.26R, mostly held add-on); bullish wait text blocks 340 (0.00R); bearish patterns block every stage incl. shape-only
+(201, 0.25R). A 1,506/0.11R, B 1,498/0.05R, C 1,699/0.08R; A'' (bullish as now, bearish only in tech review) 1,707/0.13R,
+best in every regime. Shadow: CAUTION does not separate outcomes (0.17R vs NEUTRAL 0.07R); BLOCK can never fire
+(invalidated patterns are dropped before the shadow); liquidity "상단 매물 근접" is on ~90% because the first 'above' bin
+straddles the close; a strict above-close read is the only element consistent in both halves. Recommended: C-4 A'',
+C-5 authority A (display only), v2 display (dedupe clusters, strict liquidity, type-aware, L3 excluded). Waiting for
+the user's choice. Report `/mnt/project-files/reports/20261125_c4_c5_tech_review_comparison.md`, scripts `reports/c45_study/`.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
