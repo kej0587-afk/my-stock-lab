@@ -578,6 +578,13 @@ MTF 추세훼손. C-1c: user chose C (11-25) — 상승장 unheld EXCEPTION_ENTR
 "정찰 실행"; leader overheat not relaxed — done, `docs/maintenance/20261125_c1c_exception_mtf_overheat_scout.md`. C-1 group complete (PR #42, prod checked 11-25 14:41 KST). Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
 quality recovery R/R (pivot).
 
+**t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
+Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
+it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
+C-1c changed `t_mult` on 177 parity rows (MTF_OVERHEAT core 0.25 → EXCEPTION 1.0) while the real rebalance multiplier did not
+change. When C-6/C-11 link monthly DCA to the execution decision, do not read parity `t_mult` as the real multiplier;
+recompute from the engine decision, or make an explicit, user-approved policy change first.
+
 **Decision policy v1, after A/B (2026-11-24):** A-4 and A-5/A-6 done 11-25; next report to the user, then C (one item at a time). A-1/A-2 and B-1..B-7 are done with identical replay output
 (`docs/maintenance/20261124_decision_ab_stage.md`). Next, one item at a time, each with a replay table (현행 / 대안 /
 상승장 / 횡보장 / 하락장 / 실행가능 건수 / 차단·대기 감소량 / 평균 R / 손실 꼬리 / 골든·회귀 테스트) and the user's approval:
