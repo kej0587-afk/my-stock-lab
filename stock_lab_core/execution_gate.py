@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float, format_rr_ratio
+from stock_lab_core.macro_status import macro_unknown_reason
 from stock_lab_core.today_queue import (
     TODAY_QUEUE_EXECUTION_WAIT_CODES,
     TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES,
@@ -180,6 +181,11 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     # Only explicit overheat codes use the wait policy; prose cannot relax a block.
     if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
         return _gate(GATE_DEFENSE, "하드차단 우선", "quality" if code in {"HARD_BLOCK_FINANCIAL", "HARD_BLOCK_FINANCIAL_F"} else "gate.hard_block")
+
+    # A-5/A-6: missing core macro data is neither risk nor normal. Stronger defense above wins.
+    if _text(_row_get(row, "매크로상태", "")).upper() == "UNKNOWN":
+        missing_macro = [part.strip() for part in _text(_row_get(row, "매크로누락", "")).split(",") if part.strip()]
+        return _gate(GATE_DATA_CHECK, macro_unknown_reason(missing_macro), "macro")
 
     if market_execution.startswith("시장정보 확인 필요"):
         return _gate(GATE_DATA_CHECK, market_execution, "market")

@@ -68,7 +68,8 @@ def test_macro_event_table_marks_pre_result_events(app_module, monkeypatch):
     assert "결과가 나오기 전" in event_df.loc[0, "주식시장 해석"]
 
 
-def test_macro_analysis_empty_price_data_is_cautious_not_safe(app_module, monkeypatch):
+def test_macro_analysis_empty_price_data_is_unknown_not_assumed(app_module, monkeypatch):
+    """A-5 (2026-11-25): a failed collection stays missing (NaN), never an assumed 1.5 / 0.5."""
     if hasattr(app_module.get_macro_analysis, "clear"):
         app_module.get_macro_analysis.clear()
     monkeypatch.setattr(app_module.yf, "download", lambda *args, **kwargs: pd.DataFrame())
@@ -77,6 +78,7 @@ def test_macro_analysis_empty_price_data_is_cautious_not_safe(app_module, monkey
     results, final_macro_risk, macro_penalty, move_val = app_module.get_macro_analysis()
 
     assert results == {}
-    assert final_macro_risk >= 1.5
-    assert macro_penalty >= 0.5
+    assert pd.isna(final_macro_risk)
+    assert pd.isna(macro_penalty)
     assert pd.isna(move_val)
+    assert app_module.classify_macro_state(final_macro_risk) == "UNKNOWN"

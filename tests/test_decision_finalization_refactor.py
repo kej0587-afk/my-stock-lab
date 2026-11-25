@@ -77,6 +77,8 @@ def test_only_final_block_changes_and_all_expressions_are_identical():
     assert ast.dump(ast.Module(body=helper.body[1:-1], type_ignores=[])) == ast.dump(
         ast.Module(body=baseline().body[start:end], type_ignores=[]))
     assert [n.id for n in helper.body[-1].value.elts] == list(OUTPUTS)
+    from tests.macro_missing_ast_contract import before_macro_missing
+    current = before_macro_missing(current)  # A-5/A-6: the reviewed UNKNOWN reason block sits after finalization
     start, end = final_block(current)
     assert end == start + 1
     call = current.body[start].value

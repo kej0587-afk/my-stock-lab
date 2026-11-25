@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -94,6 +94,8 @@ def build_decision_result(ctx: dict) -> dict:
         "sector_flow_state": ctx["sector_flow_state"],
         "smc_insight": ctx["smc_insight"],
         "safety_state": "DATA" if decision_outcome.code in {"DATA_ERROR", "NEW_ETF_MIN_DATA_WATCH", "DATA_UNAVAILABLE"} else ctx["safety_state"], "macro_state": ctx["macro_state"],
+        "macro_data_status": "missing" if ctx["macro_state"] == "UNKNOWN" else "complete",
+        "macro_missing_components": tuple(ctx.get("macro_missing_components") or ()),
         "data_state": ctx.get("indicator_data_issue") or "OK",
     }
 
@@ -843,6 +845,14 @@ def classify_safety_state(tech_total: float) -> str:
     if tech_total < 3:
         return "YELLOW"
     return "GREEN"
+
+
+def mark_macro_unknown_reasons(decision_outcome):
+    """A-6: rules ran without macro (risk 0 internally); never show that 0 as an observed value."""
+    reasons = tuple(str(r).replace("FMR 0.0", "FMR 미확인") for r in (decision_outcome.reasons or ()))
+    if reasons == tuple(decision_outcome.reasons or ()):
+        return decision_outcome
+    return replace(decision_outcome, reasons=reasons)
 
 
 def classify_macro_state(final_macro_risk: float) -> str:

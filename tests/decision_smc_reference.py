@@ -33,7 +33,8 @@ def smc_block(fn):
 
 
 def restore_smc_for_ast(fn):
-    fn = deepcopy(fn)
+    from tests.macro_missing_ast_contract import before_macro_missing
+    fn = before_macro_missing(fn)
     start, end = smc_block(fn)
     old_start, old_end = smc_block(baseline())
     fn.body[start:end] = deepcopy(baseline().body[old_start:old_end])

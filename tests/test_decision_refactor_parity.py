@@ -87,6 +87,10 @@ def test_full_output_snapshots(app_module, monkeypatch):
     for result in actual.values():
         if result.get("rr_ratio") is not None:
             result["rr_ratio"] = round(result["rr_ratio"], 2)
+    # A-5/A-6 (2026-11-25): two additive diagnostics keys; every scenario here has complete macro.
+    for result in actual.values():
+        assert result.pop("macro_data_status") == "complete"
+        assert result.pop("macro_missing_components") == []
     assert actual == expected
 
 

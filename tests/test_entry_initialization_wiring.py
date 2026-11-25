@@ -36,9 +36,22 @@ def _instrumented_nodes():
     return nodes[start:start + 2]
 
 
+def _macro_header_nodes():
+    """A-5/A-6 (2026-11-25): the entry's macro caption and panel moved into two reviewed helpers."""
+    baseline = _baseline_nodes()
+    caption = next(n for n in baseline if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                   and ast.unparse(n.value.func) == "st.caption")
+    panel = next(n for n in baseline if isinstance(n, ast.If) and ast.unparse(n.test) == "macro_res")
+    return {"render_macro_entry_header": caption, "render_macro_entry_panel": panel}
+
+
 def _without_timing(nodes):
     result = []
     for node in nodes:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) \
+                and getattr(node.value.func, "id", None) in {"render_macro_entry_header", "render_macro_entry_panel"}:
+            result.append(_macro_header_nodes()[node.value.func.id])
+            continue
         if isinstance(node, ast.With):
             assert len(node.items) in {1, 2}
             assert node.items[0].context_expr.func.id in {"PerformanceTrace", "measure"}
@@ -84,6 +97,7 @@ def _run(nodes, *, demo=False, fail_at=None):
         "PerformanceTrace": trace_factory, "measure": performance.measure,
         "_entry_price_loader": SimpleNamespace(), "nullcontext": nullcontext,
         "IS_PUBLIC_DEMO": demo, "app_mode_label": "test", "pd": pd,
+        "render_macro_entry_header": lambda *a: None, "render_macro_entry_panel": lambda *a: None,
         "st": SimpleNamespace(session_state=state, caption=lambda *a: None,
                               warning=lambda *a: None, info=lambda *a: None),
         "get_macro_analysis": callback("macro", ({}, 3.0, 0.5, 100.0), 0.8),
