@@ -598,6 +598,13 @@ calculator ran in this session this month. Keep that as a safety guard for now, 
 condition: in C-6/C-11 move the monthly allocation into a stored monthly snapshot (Supabase) or a shared calculation the
 L3 read can call without the calculator screen.
 
+**C-2 macro 2.5–4.5 comparison (2026-11-25, comparison only, no code change):** historical final_macro_risk rebuilt with the app
+formula (Yahoo ^TNX/CL=F/USDKRW=X/^VIX/^MOVE + official FOMC/BLS/ECB/BOJ/KOSPI-expiry calendars), 144 tickers 2007–2026.
+Current (A) = penalty-only (B): 0 gate differences; the separate <3.5/<4.0 conditions only rename 139 codes. The adj penalty
+blocks 70/201 executable signals in the band; blocked ones were better in 상승장 but much worse in 하락장/risk episodes.
+76% of band states come from calendar event points, not market stress. ≥4.5 guard: 0 executable in all variants.
+Waiting for the user's choice. Report `/mnt/project-files/reports/20261125_c2_macro_band_comparison.md`, scripts `reports/c2_study/`.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
