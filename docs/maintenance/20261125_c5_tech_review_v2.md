@@ -34,4 +34,8 @@ BLOCK(상승 패턴 무효선 이탈)은 구조상 거의 발동하지 않는다
 - `check_refactor --scope decision`: 기존 실패 1건(`test_extracted_policies_preserve_all_original_conditions_and_literals`) 외 통과.
 
 ## 운영 확인
-PROD_CHECK
+- PR #54 병합 후 Streamlit Cloud 재부팅(2026-11-26 01:26 KST).
+- 01:26 KST GOOGL 정밀관측소: "🔬 기술검토(v2, 표시 전용) · CAUTION 주의", 정책 버전 tech_review_v2_2026-11-25, 판정 유형, 묶음 표와 개별 근거 표 확인.
+  기존 판정(CRISIS_PANIC_SELL_OFF · 방어우선)은 그대로 표시.
+- 01:28 KST TQQQ(미보유): "LEVERAGE_POLICY 레버리지 전용 정책 적용", 레버리지 전용 표(시장방어: 신규매수 중단, 최종 실행가능 여부: 방어우선) 확인.
+  미보유라 L3 기록이 없어 MA50·회복체크·latch·회차·cooldown·예산은 "미확인"으로 표시(값을 만들지 않음). 일반 참고 근거 표도 계속 표시.
