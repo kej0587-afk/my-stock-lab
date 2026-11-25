@@ -622,6 +622,13 @@ straddles the close; a strict above-close read is the only element consistent in
 C-5 authority A (display only), v2 display (dedupe clusters, strict liquidity, type-aware, L3 excluded). Waiting for
 the user's choice. Report `/mnt/project-files/reports/20261125_c4_c5_tech_review_comparison.md`, scripts `reports/c45_study/`.
 
+**C-4 implemented (2026-11-25, user decision A''+):** bullish pattern path unchanged; bearish patterns (shape,
+close break, volume break) are tech-review context only; a close break with major structure damage (engine
+structure_risk, or close < MA50 with bearish external structure) keeps the old 하락패턴 hold. Branch replay matches the
+comparison: 1,686 stock executables, 0 gate mismatches. Core ETF holdings executable 278 → 1,008 (bearish shape/break
+no longer blocks CORE_PULLBACK_DCA; monthly multiplier unchanged). Doc `docs/maintenance/20261125_c4_bearish_pattern_policy.md`.
+Next: C-5 tech-review v2 display (no authority), then C-6/C-11.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
