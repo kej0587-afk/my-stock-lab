@@ -590,6 +590,14 @@ plan (read from the monthly calculator's session value `_monthly_plan_alloc`; un
 Executable rows get `LEVERAGED_L3_RECOVERY_DCA` (buyish; gate reason "L3 회복 DCA n/3회차"); market defense, macro and data still
 block at the gate. PR #47; Supabase tables created and prod checked 11-25 17:01 KST (SOXL panel: L3 대기, latch held, budget 미설정). Doc `docs/maintenance/20261125_c3_leverage_l3_policy.md`, replay `/mnt/project-files/reports/20261125_c3_l3_policy_replay.md`.
 
+**C-3 closed (2026-11-25, user approved after the prod check):** 20-day spacing, manual tranche record, separate cycle/tranche
+tables, 1/3 × max 3, budget/shortfall/monthly caps are the current policy. No extra condition for the early-bear latch release
+(2000/2008/2022); managed by the caps and market defense, to be reviewed from real operating records.
+**C-6/C-11 candidate (from C-3):** L3 executable currently needs `_monthly_plan_alloc`, which only exists after the monthly
+calculator ran in this session this month. Keep that as a safety guard for now, but a screen visit should not be an investment
+condition: in C-6/C-11 move the monthly allocation into a stored monthly snapshot (Supabase) or a shared calculation the
+L3 read can call without the calculator screen.
+
 **t_mult caution for C-6/C-11 (2026-11-25):** `scripts/policy_replay.py parity` writes a `t_mult` column computed from the
 Today-chain decision (after the MTF guard and Today overlays). It is hypothetical. The app's monthly rebalance does not use
 it: it reads the raw engine decision from `_ticker_signal_decision_cache` (calc_scores_and_decision, before the MTF guard).
