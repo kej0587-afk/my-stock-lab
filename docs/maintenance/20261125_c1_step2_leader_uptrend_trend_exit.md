@@ -65,3 +65,9 @@
 
 - 전체 33 실패 / 10,006 통과, 실패 목록은 main과 같음 (새 실패 없음)
 - 새 테스트: `tests/test_trend_exit_policy_c1.py` 2단계 11건, `tests/test_precision_plan_panel.py` 장세 4건
+
+## 배포 확인
+
+- PR #41 병합 후 Streamlit Cloud 재부팅 2026-11-25 13:48 KST.
+- 13:53 KST 앱 정상 로드. 정밀관측소 GOOGL: "실행 보류 · 상위 시간대 추세훼손"(기존과 같음), Traceback·nan 없음.
+  오늘 화면에서 미보유 대장주 신호를 찾지 못해, 상승장 추세추적 행은 재생·테스트 결과로만 확인됨.

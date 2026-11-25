@@ -572,7 +572,7 @@ partial-bar audit. Keep these private files out of Git.
 
 **C-1 policy (2026-11-25, user decision after the C-1/C-1b comparison):** apply one at a time, each with a replay diff
 and regression tests: (1) EXCEPTION_ENTRY = executable 1/3 scout + trend exit — done (PR #40, prod checked 11-25 13:25 KST), `docs/maintenance/20261125_c1_step1_exception_trend_exit.md`;
-(2) NEW_ENTRY_LEADER trend exit in 상승장 only (SPY/KOSPI 200DMA + 20-day slope; measured move rejected; 하락장 keeps current limits) — done, `docs/maintenance/20261125_c1_step2_leader_uptrend_trend_exit.md`;
+(2) NEW_ENTRY_LEADER trend exit in 상승장 only (SPY/KOSPI 200DMA + 20-day slope; measured move rejected; 하락장 keeps current limits) — done (PR #41, prod checked 11-25 13:53 KST), `docs/maintenance/20261125_c1_step2_leader_uptrend_trend_exit.md`;
 (3) C-1c: MTF 상승 과열 → 1/3 scout in 상승장 only, compare A current / B leader only / C exception only / D both; never relax
 MTF 추세훼손. Kept as is: BREAKOUT_52W priority, LEADER_MA5 wait list (strategy cleanup candidate), normal pullback and
 quality recovery R/R (pivot).
