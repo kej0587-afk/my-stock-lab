@@ -64,3 +64,9 @@ A-5/A-6 병합 상태(main)와 비교해 판정코드·라벨·금액·사이징
 
 - 결정 게이트(`check_refactor.py --scope decision`): 1,661 통과 / 기존 실패 1건(main과 같음)
 - 새 테스트: `tests/test_trend_exit_policy_c1.py` 19건, `tests/test_precision_plan_panel.py` EXCEPTION 2건
+
+## 배포 확인
+
+- PR #40 병합 후 Streamlit Cloud 재부팅 2026-11-25 13:23 KST.
+- 13:25 KST 앱 정상 로드(매크로 지수 0.5pt, 5개 지표 표시). 정밀관측소 GOOGL: 기존과 같은 "실행 보류 · 상위 시간대 추세훼손",
+  Traceback·nan 없음. 오늘 실제 EXCEPTION_ENTRY 종목은 화면에서 확인하지 못해, 새 동작은 재생·테스트 결과로만 확인됨.
