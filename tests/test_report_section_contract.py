@@ -124,9 +124,12 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     # else. Active/missing and repaired-close paths have separate regressions.
     inactive = "미국 정규장 마감 · 별도 현재시세 표시 안 함 · 기준일 종가 참조"
     assert sum(line.count(inactive) for line in output[0]) == int(held and clock == "2026-11-07T12:00:00+09:00")
+    # Nov26 adds one earnings status line (미계산/0개/일부 실패/공식값 없음; test_report_incomplete_inputs).
+    status_lines = [line for line in output[0] if line.startswith("실적 점검 상태: ")]
+    assert len(status_lines) <= 1
     legacy_lines = []
     for line in output[0]:
-        if line in additions:
+        if line in additions or line in status_lines:
             continue
         for source in calendar_sources:
             if line.endswith(" | " + source):

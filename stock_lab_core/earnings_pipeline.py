@@ -146,7 +146,18 @@ def _select_highlights(packets, now):
     return picked
 
 
-def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
+_FAILED_MARKERS = ("실패", "시간초과", "HTTP", "시간 한도", "수집 한도", "API 오류")
+
+
+def coverage_state(coverage):
+    """미계산 / 확인 결과 0개 / 일부 조회 실패 / 공식값 없음 counts for the earnings coverage line."""
+    missing = coverage.get("missing") or []
+    failed = [row for row in missing if any(m in text(row.get("reason")) for m in _FAILED_MARKERS)]
+    return dict(not_computed=coverage.get("summary_available") is False,
+                official=coverage.get("official", 0), failed=len(failed), no_official=len(missing) - len(failed))
+
+
+def build_earnings_pipeline(context, summary_rows=None, news=(), now=None):
     now = stamp(now)
     if now is None:
         raise ValueError("now is required")
@@ -221,6 +232,7 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
                     reason=_source_reason(ticker, context)) for ticker in sorted((requested | registered) - covered)
                if not any(p["ticker"] == ticker and p["release_status"] == "예정" for p in packets)]
     return dict(events=events, packets=packets, highlights=_select_highlights(packets, now), discovery=discovery,
-                coverage=dict(registered=len(registered), official=len(announcements), filings=len(filings),
+                coverage=dict(summary_available=None if summary_rows is None else bool(records(summary_rows)),
+                    registered=len(registered), official=len(announcements), filings=len(filings),
                     discovered=len({item["ticker"] for item in discovery["items"]}), missing=missing),
                 generated_at=now.isoformat(), scoring_used=False)

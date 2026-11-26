@@ -197,6 +197,7 @@ def _quick_summary_lines(judgment_lines, current_state, indices, states, interpr
 
 def _closing_lines(portfolio_lines, calendar_lines, *, limit=5):
     """마무리: holdings impact and next checks, copied from the tables above (no new numbers)."""
+    from stock_lab_core.report_input_status import MISSING_ACCOUNT
     lines = ["## 마무리 · 보유 종목 영향과 다음 확인 사항", ""]
     impact = []
     for header, rows in tables("\n".join(portfolio_lines)):
@@ -207,6 +208,8 @@ def _closing_lines(portfolio_lines, calendar_lines, *, limit=5):
     lines += ["**보유 종목에 미치는 영향**", ""]
     if impact:
         lines += _table(["종목", "일간(위 보유 표 그대로)", "상태/사유"], impact)
+    elif MISSING_ACCOUNT in "\n".join(portfolio_lines):
+        lines += ["오늘 점검 미계산 · 보유 종목 영향 확인 불가(영향 없음이 아님). 오늘 점검 계산 후 다시 생성해 주세요.", ""]
     else:
         lines += ["보유 종목 표 미연결 · 영향 미확인.", ""]
     checks = []
