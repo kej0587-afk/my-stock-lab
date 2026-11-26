@@ -124,3 +124,15 @@ def test_future_ir_calendar_and_elapsed_call_are_not_published_results():
     output = bridge.collect_event_study_context(context, "2026-10-30T12:00:00Z")
     assert not output["events"]
     assert "unconfirmed_publication" in {row.get("reason") for row in output["diagnostics"]}
+
+
+def test_concurrent_first_calendar_builds_do_not_fail():
+    """Today's worker threads hit the KR calendar at once after a reboot (2026-11-26 race)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from stock_lab_core.data_freshness import session_reference
+
+    bridge._exchange_schedule.cache_clear()
+    tickers = ["379810.KS", "122630.KS", "MSFT", "006400.KS", "PANW", "035900.KQ"] * 2
+    with ThreadPoolExecutor(8) as pool:
+        sources = list(pool.map(lambda t: session_reference(t, now="2026-11-26T12:00:00+00:00")["source"], tickers))
+    assert all(s.startswith("exchange_calendars") for s in sources), sources
