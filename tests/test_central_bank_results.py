@@ -317,6 +317,30 @@ def test_bok_link_must_match_meeting_day_and_official_view():
         results._bok_statement_link(b"<html><body><a href='/x'>news</a></body></html>", BOK_DAY)
 
 
+def test_bok_main_page_navigation_parameters_map_to_one_view():
+    # Real main page (2026-11-26 21:21 KST): two links to the same nttId with extra navigation parameters.
+    main = """<html><head><meta charset="utf-8"></head><body>
+<a href="/portal/bbs/P0000559/view.do?nttId=11000001&amp;searchCnd=1&amp;searchKwd=&amp;depth2=200038&amp;depth3=201263&amp;depth=201263&amp;pageUnit=10&amp;pageIndex=1&amp;programType=newsData&amp;menuNo=200690&amp;oldMenuNo=201263">통화정책방향 (2026.10.22)
+금융통화위원회는 다음 통화정책방향 결정시까지</a>
+<a href="/portal/bbs/P0000559/view.do?nttId=11000001&amp;menuNo=200690&amp;programType=newsData&amp;relate=Y&amp;depth=200690">통화정책방향(2026.10.22)</a>
+</body></html>""".encode("utf-8")
+    assert results._bok_statement_link(main, BOK_DAY) == BOK_VIEW_URL
+    other_menu = main.replace(b"menuNo=200690", b"menuNo=999999")
+    with pytest.raises(ValueError, match="official_statement_link_unavailable"):
+        results._bok_statement_link(other_menu, BOK_DAY)
+    two_posts = main.replace(b"nttId=11000001&amp;menuNo", b"nttId=11000002&amp;menuNo")
+    with pytest.raises(ValueError, match="official_statement_link_unavailable"):
+        results._bok_statement_link(two_posts, BOK_DAY)
+
+
+def test_bok_body_heading_before_first_paragraph_is_skipped():
+    # Real view page: div.dbdata starts with the heading "통화정책방향" and &nbsp; before the first □.
+    data = BOK_VIEW.replace('<div class="dbdata"><p>□'.encode("utf-8"),
+                            '<div class="dbdata"><p>통화정책방향 &nbsp; &nbsp;</p><p>□&nbsp;'.encode("utf-8"))
+    row = results._bok_result(data, BOK_DAY)
+    assert (row["previous_rate"], row["policy_rate"], row["action"]) == (2.75, 3.0, "hike")
+
+
 def test_bok_url_allowlist_and_schedule():
     assert results._official_url(BOK_VIEW_URL) and results._official_url(results.BOK_MAIN_URL)
     assert not results._official_url(BOK_VIEW_URL + "&x=1")
