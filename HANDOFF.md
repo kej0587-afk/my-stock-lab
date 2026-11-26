@@ -597,6 +597,7 @@ first-after-reboot reports legacy (`sec_rate_mode = "legacy"` secret) vs A, medi
 wait −30% with no more time-budget failures, or failures −30% with no more wait, and official count not lower; then set
 `ADOPTED = True`. Otherwise legacy and stop. Afterwards: show the last completed report (with its time) first while a new one
 builds; find the +12 s assembly growth from the `report_assembly` spans; Supabase filing store (B) only if reboot re-downloads dominate.
+**A1 (A only, reboot 02:18 KST):** report 123.3 s, first summary 166.1 s, SEC wait 17.8 s / 146 requests, no access limit, official 23, time-limit failures 10 (all KR). Rerun 67.5 s, SEC 0 s / 32. Legacy runs wait for the user's Secrets approval; no verdict before 3 pairs.
 
 **Last completed report first (user 02:06 KST; doc `docs/maintenance/20261127_last_report_first.md`, branch, not merged while the
 home PC measures):** `stock_lab_core/report_latest.py` stores each newly completed auto report per owner (Supabase `report_latest`,
