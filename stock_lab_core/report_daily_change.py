@@ -290,6 +290,56 @@ def daily_changes(moves, flow_changes, order):
     return changes + flow_changes
 
 
+def sector_leader_change(context, market):
+    """'업종 1위 교체' from the same close series (previous_return), no stored ranking or estimate.
+
+    Only sector ETFs with today's and the prior session's return on the same two dates are compared, and at
+    least three must qualify; otherwise nothing is said.
+    """
+    from stock_lab_core.report_prices import SECTORS
+    names = {**SECTORS, "XLF": "금융", "XLI": "산업재", "XLP": "필수소비", "XLV": "헬스케어", "XLY": "경기소비"}
+    day = context.get("sessions", {}).get(market)
+    if not day:
+        return None
+    rows = []
+    for ticker, name in names.items():
+        if ticker.endswith((".KS", ".KQ")) != (market == "KR"):
+            continue
+        obs = (context.get("prices") or {}).get(ticker) or {}
+        today, prior = number(obs.get("return")), number(obs.get("previous_return"))
+        if obs.get("stale") or obs.get("date") != day or today is None or prior is None or not obs.get("previous_date"):
+            continue
+        rows.append((ticker, name, today, prior, obs["previous_date"]))
+    if len(rows) < 3 or len({r[4] for r in rows}) != 1:
+        return None
+    now_top = max(rows, key=lambda r: r[2])
+    was_top = max(rows, key=lambda r: r[3])
+    if now_top[0] == was_top[0]:
+        return None
+    label = "미국" if market == "US" else "한국"
+    return (f"{label} 관측 업종 {len(rows)}개 중 1위 교체: 전 거래일({was_top[4]}) {was_top[1]}({was_top[0]}) {_pct(was_top[3])}"
+            f" → {now_top[1]}({now_top[0]}) {_pct(now_top[2])}({day} 확정 종가)")
+
+
+def completed_event_changes(context, pipeline):
+    """'오늘 달라진 점' for results that became official on the report's session dates (no forecast, no reading)."""
+    from stock_lab_core.report_presentation import kst_time
+    days = {d for d in (context.get("sessions") or {}).values() if d}
+    changes = []
+    for row in records(context.get("central_bank_results")):
+        if row.get("status") != "official" or text(row.get("date")) not in days:
+            continue
+        action = {"hold": "동결", "hike": "인상", "cut": "인하"}.get(row.get("action"), "결정")
+        at = kst_time(row["release_at"]) if row.get("release_at") else text(row.get("date")) + " · 시각 미제공"
+        changes.append(f"{text(row.get('bank'))} 정책 결정 발표 완료: {action}({at}, 공식 성명)")
+    for row in (pipeline or {}).get("events", []):
+        if row.get("event_status") != "released" or text(row.get("date")) not in days:
+            continue
+        name = text(row.get("event") or row.get("ticker"))
+        changes.append(f"{name} 실적 발표 완료({text(row.get('date'))}, 공식 결과 확인 · 세부 수치는 시장 구역 결과 대조)")
+    return list(dict.fromkeys(changes))
+
+
 def daily_reading(context, states, now, *, claims, body_markets, corroboration, burden_rows, medium,
                   kr_sector_text="", us_sectors=None, korea_first=True):
     """Return the four-step interpretation and the '오늘 달라진 점' list."""
@@ -303,7 +353,8 @@ def daily_reading(context, states, now, *, claims, body_markets, corroboration, 
               flow_text,
               _risk_sentence(lead, moves, burden_rows, medium, turns, order)]
     return {"interpretation": " ".join(piece for piece in pieces if piece),
-            "changes": daily_changes(moves, flow_changes, order), "lead": lead}
+            "changes": daily_changes(moves, flow_changes, order)
+                       + [c for c in (sector_leader_change(context, m) for m in order) if c], "lead": lead}
 
 
 def corroborating_outlets(topic, rows):

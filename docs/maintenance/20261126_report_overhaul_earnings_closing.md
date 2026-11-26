@@ -33,3 +33,11 @@
 - 전체 테스트: 33 failed / 10,142 passed, 실패 목록은 `main`과 같음. `check_refactor.py --scope report`: 208 passed, 0 failed.
 - 배포: PR #76 병합, 운영 재부팅 17:29 KST. 운영 화면 확인은 아직 못 했습니다(재부팅 직후 앱 브라우저 연결이 끊김).
   다음 점검 때 확인할 것: 시황 생성 결과의 실적 이익 4행·오늘 달라진 점·마무리 절, 월적립 표의 오늘 추가 가능액·현재 대기액·실제 집행률 열.
+
+## 5. 오늘 달라진 점 보강 (일간 해석 후속, 2026-11-26)
+- 업종 1위 교체: 저장된 순위 없이, 같은 일봉 이력의 전 거래일 수익률(`previous_return`)로 비교합니다. 그 시장 세션 날짜의 확정 종가가 있고
+  전 거래일 날짜가 모두 같은 관측 업종 ETF가 3개 이상일 때만, 1위가 바뀌었으면 "미국/한국 관측 업종 N개 중 1위 교체: 전 거래일(날짜) A → B"를 씁니다
+  (`report_daily_change.sector_leader_change`).
+- 실적·정책 발표 완료: 보고서 세션 날짜(한국·미국)에 공식 결과가 확인된 중앙은행 결정(FOMC·BOJ, 공식 성명)과 실적 발표(공식 결과 확인 상태)만
+  "발표 완료"로 적습니다. 예정·보도만 있는 항목은 넣지 않습니다(`completed_event_changes`).
+- 테스트 `tests/test_sector_leader_change.py` 4개. 전체 33 failed / 10,146 passed(실패 목록 `main`과 같음), `check_refactor.py --scope report` 208 passed.
