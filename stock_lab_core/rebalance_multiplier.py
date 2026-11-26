@@ -23,6 +23,38 @@ POLICY_MULTIPLIER_BY_CODE = {
 }
 FALLBACK_COUNTER = {"table": 0, "legacy": 0}
 
+# C-12 (2026-11-26, user-approved): a held stock that meets the profit-take review condition
+# (MFI >= 80, %B > 0.9, gain over average cost > 20%: the engine's profit_take_signal) gets no monthly
+# add-on when its code is one of these buy-direction codes. Decision, gate and holdings are unchanged.
+PROFIT_TAKE_EXCLUDE_CODES = frozenset({
+    "LEADER_MA5_PULLBACK_ENTRY", "HOLDING_QUALITY_RECOVERY_CANDIDATE", "HOLDING_QUALITY_RECOVERY_SCOUT",
+})
+PROFIT_TAKE_EXCLUSION_TEXT = "익절 검토 조건 충족으로 이번 적립 제외"
+_STOCK_ASSET_CLASSES = frozenset({"kr_stock", "us_stock"})
+
+
+def core_storm_share_note(decision):
+    """C-9 (2026-11-26): what the perfect-storm DCA percentage is a percentage of. "" for other codes."""
+    if not isinstance(decision, dict) or str(decision.get("decision_code", "") or "").strip() != "CORE_STORM_DCA":
+        return ""
+    try:
+        rate = float(decision.get("core_dca_rate"))
+    except (TypeError, ValueError):
+        return ""
+    if rate != rate or rate <= 0:
+        return ""
+    return (f"퍼펙트스톰 {int(round(rate * 100))}% = 이 종목 평소 월적립 몫의 {rate:g}배 "
+            "(위기자금·예수금 전체의 비율이 아님)")
+
+
+def profit_take_exclusion(decision) -> bool:
+    """True when C-12 sets the monthly multiplier to 0 for this engine decision."""
+    if not isinstance(decision, dict) or not decision.get("profit_take_signal"):
+        return False
+    if str(decision.get("asset_class", "") or "").strip().lower() not in _STOCK_ASSET_CLASSES:
+        return False
+    return str(decision.get("decision_code", "") or "").strip() in PROFIT_TAKE_EXCLUDE_CODES
+
 
 def legacy_label_multiplier(tap: str, bucket: str, dip_level: int = 0) -> float:
     """기술적타점 문자열 → 배분 배율
@@ -128,6 +160,9 @@ def decision_signal_multiplier(decision, bucket: str, dip_level: int = 0) -> flo
     if not isinstance(decision, dict):
         FALLBACK_COUNTER["legacy"] += 1
         return legacy_label_multiplier(str(decision if decision is not None else "-"), bucket, dip_level=dip_level)
+    if profit_take_exclusion(decision):
+        FALLBACK_COUNTER["table"] += 1
+        return 0.0
     code = str(decision.get("decision_code", "") or "").strip()
     label = str(decision.get("dec", "") or "").strip()
     row = None

@@ -8,6 +8,7 @@ import math
 
 from stock_lab_core.asset_classifier import is_known_etf_ticker, resolve_effective_investment_bucket
 from stock_lab_core.formatters import clean_bool, clean_float, is_kr_listed, normalize_bucket
+from stock_lab_core.rebalance_multiplier import PROFIT_TAKE_EXCLUSION_TEXT, core_storm_share_note, profit_take_exclusion
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -49,10 +50,18 @@ def apply_monthly_signal_safety(calc_rows, always_invest_set, signal_multiplier,
             r["tap_disp"] = UNKNOWN_SIGNAL_LABEL + (" → 항상투자 보류" if r["ticker"] in always_invest_set else "")
             continue
         decision = decisions.get(r["ticker"])
+        if profit_take_exclusion(decision):  # C-12: also overrides always-invest
+            r["multiplier"], r["eff_alloc"] = 0.0, 0.0
+            r["profit_take_excluded"] = True
+            r["tap_disp"] = f"{r['tap_raw']} → {PROFIT_TAKE_EXCLUSION_TEXT}"
+            continue
         if r["ticker"] in always_invest_set and r["bucket"] != "leverage" and always_invest_blocked(decision):
             r["multiplier"] = signal_multiplier(r["tap_raw"], r["bucket"], dip_level=r["dip_level"], decision=decision)
             r["eff_alloc"] = r["base_alloc"] * r["multiplier"]
             r["tap_disp"] = f"{r['tap_raw']} → 항상투자 보류(안전 차단)"
+        storm_note = core_storm_share_note(decision)  # C-9: what 100% means
+        if storm_note and r["multiplier"] > 0:
+            r["tap_disp"] = f"{r['tap_disp']} · {storm_note}"
     return calc_rows
 
 
