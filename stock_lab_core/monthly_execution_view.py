@@ -12,6 +12,7 @@ from stock_lab_core.monthly_execution import (TYPE_LABELS, KST, active_confirmed
                                               executed_by_ticker, four_amounts, holding_type, kst_month_key,
                                               monthly_gate)
 from stock_lab_core import monthly_store
+from stock_lab_core.rebalance_multiplier import PROFIT_TAKE_EXCLUSION_TEXT, core_storm_share_note
 
 
 def _fmt(value):
@@ -50,12 +51,18 @@ def build_execution_rows(calc_rows, holdings_table, *, total_asset, cash_krw, ga
         if r.get("signal_unknown") and conf is not None:
             allowed, gate_text = False, "신호 미확인 · 데이터확인 (확정 계획은 보존, 신호 복구 후 재평가)"
         exec_amt = executed.get(ticker, 0.0) if executed_status == "ok" else None
+        shortfall = _shortfall_krw(by_ticker.get(ticker, {}), total_asset)
         amounts = four_amounts(plan_krw=plan_krw, executed_krw=exec_amt,
-                               shortfall_krw=_shortfall_krw(by_ticker.get(ticker, {}), total_asset),
+                               shortfall_krw=shortfall,
                                gate_allowed=allowed, sizing=gate.get("sizing"), cash_krw=cash_left)
         if amounts["executable"] is not None and cash_left is not None:
             cash_left = max(0.0, cash_left - amounts["executable"])
+        if r.get("profit_take_excluded"):
+            plan_note = PROFIT_TAKE_EXCLUSION_TEXT
+        else:
+            plan_note = core_storm_share_note(decisions.get(ticker)) if float(r.get("multiplier") or 0.0) > 0 else ""
         out.append({"ticker": ticker, "name": r.get("name", ticker), "type": htype, "plan_src": plan_src,
+                    "plan_note": plan_note, "shortfall": shortfall,
                     "plan_version": version, "gate_text": gate_text, "signal_key": gate.get("signal_key"),
                     "decision_code": (decisions.get(ticker) or {}).get("decision_code"), **amounts})
     return out
@@ -100,6 +107,7 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
         "자산명": r["name"], "유형": TYPE_LABELS.get(r["type"], r["type"]), "① 계획": _fmt(r["plan"]),
         "계획 출처": r["plan_src"], "② 집행": _fmt(r["executed"]), "③ 오늘 실행가능": _fmt(r["executable"]),
         "④ 남은 대기": _fmt(r["remaining"]), "제한": r["limit"] or "-", "월적립 게이트": r["gate_text"],
+        "계획 메모": r.get("plan_note") or "-",
     } for r in rows]), width='stretch', hide_index=True)
 
     if client is None or not owner or plan_status != "ok" or exec_status != "ok":

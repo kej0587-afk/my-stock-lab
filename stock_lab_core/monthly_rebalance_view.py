@@ -414,12 +414,19 @@ def render_monthly_rebalancing_calculator(
         if execution_context:
             # C-6/C-11 step 3: ① plan ② executed ③ today executable ④ remaining (writes only on explicit clicks).
             from stock_lab_core.monthly_execution_view import render_monthly_execution_panel
-            render_monthly_execution_panel(
+            exec_rows = render_monthly_execution_panel(
                 st, plan, holdings_table, total_asset=(portfolio_summary or {}).get("current_asset"),
                 cash_krw=execution_context.get("cash_krw"), gate_reader=execution_context.get("gate_reader"),
                 decisions=st.session_state.get("_ticker_signal_decision_cache", {}) if signal_scope_valid else {},
                 store=execution_context.get("store"),
             )
+            # C-13 macro missing log and C-8 crisis fund (writes only on explicit clicks).
+            from stock_lab_core.crisis_fund_view import render_crisis_fund_panel, render_macro_missing_caption
+            render_macro_missing_caption(st, exec_rows, store_ctx=execution_context.get("store"))
+            render_crisis_fund_panel(st, exec_rows, store_ctx=execution_context.get("store"),
+                                     gate_reader=execution_context.get("gate_reader"),
+                                     price_loader=execution_context.get("price_loader"),
+                                     cash_krw=execution_context.get("cash_krw"))
         render_monthly_log_panel(
             st, monthly_logs_df, _this_month, _done_key, monthly, carryover, total_invest, remainder_krw,
             CURRENT_USER_EMAIL=CURRENT_USER_EMAIL, IS_PUBLIC_DEMO=IS_PUBLIC_DEMO,

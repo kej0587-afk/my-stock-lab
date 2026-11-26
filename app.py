@@ -3874,7 +3874,7 @@ def monthly_today_gate(ticker):
                 return {}
         return {"state": today["gate"].get("state"), "reason": today["gate"].get("reason"),
                 "sizing": today.get("sizing"), "signal_key": today.get("cache_key"),
-                "core_exception": today.get("core_dca_gate")}
+                "core_exception": today.get("core_dca_gate"), "market": today["gate"].get("market")}
     except Exception:
         logging.exception("Monthly Today gate read skipped: ticker=%s", ticker)
         return {}
@@ -3893,6 +3893,8 @@ def monthly_execution_context():
         "cash_krw": get_cash_available_for_dca(None),
         "store": {"client": client, "owner_email": CURRENT_USER_EMAIL,
                   "accounts": list(st.session_state.get("acc_filter", []))},
+        # C-8: 2y daily history for the crisis-fund trigger (52-week high needs a year before the episode).
+        "price_loader": lambda ticker: load_price_df(ticker, "2y"),
     }
 
 
@@ -16277,6 +16279,32 @@ def get_reserve_available_for_crash_buy(mode):
     reserve_rows = table[table["bucket"].apply(lambda v: normalize_bucket(v) == "reserve")]
     return float(reserve_rows["원화환산"].apply(clean_float).sum()) if not reserve_rows.empty else 0.0
 
+def log_macro_status_transition(macro_status):
+    """C-13 tracking: store a row only when the core macro status changes (missing <-> complete) for this owner.
+    Never changes a decision; failures are ignored (diagnostics only)."""
+    if IS_PUBLIC_DEMO or not CURRENT_USER_EMAIL:
+        return
+    try:
+        from stock_lab_core import macro_status_log as mlog
+        current = mlog.observed_status(macro_status)
+        if current is None or st.session_state.get("_macro_status_log_disabled"):
+            return
+        last = st.session_state.get("_macro_status_logged", "unread")
+        if last == "unread":
+            last, status = mlog.load_latest(get_supabase_client(), owner_email=CURRENT_USER_EMAIL)
+            if status != "ok":
+                st.session_state["_macro_status_log_disabled"] = status == "table_missing"
+                return
+        if mlog.needs_record(last, current):
+            if mlog.record(get_supabase_client(), owner_email=CURRENT_USER_EMAIL, status=current,
+                           missing_components=macro_status.get("macro_missing_components")) != "ok":
+                return
+            last = current
+        st.session_state["_macro_status_logged"] = last if last is not None else current
+    except Exception:
+        logging.warning("Macro status log skipped", exc_info=True)
+
+
 def render_macro_entry_header(macro_res, final_macro_risk, macro_penalty, macro_event_risk, app_mode_label):
     """A-5/A-6 header: missing macro shows 미확인 with the missing items, never a number."""
     # Diagnostics only: never fed back into a decision as a fallback value.
@@ -16287,6 +16315,7 @@ def render_macro_entry_header(macro_res, final_macro_risk, macro_penalty, macro_
     _macro_status["last_complete_macro_at"] = st.session_state.get("_app_last_complete_macro_at", "미확인")
     st.session_state["_app_macro_status"] = _macro_status
     globals()["_APP_MACRO_STATUS"] = _macro_status
+    log_macro_status_transition(_macro_status)
     _penalty_text = f"-{macro_penalty}" if finite_num(macro_penalty) else "미확인"
     st.caption(f"모드: {app_mode_label} | 매크로 지수: {macro_caption_text(final_macro_risk, _macro_status)} | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: {_penalty_text}")
     if _macro_status["macro_data_status"] != COMPLETE:
@@ -22313,7 +22342,7 @@ def render_manual_tab():
 현재비중이 목표비중에 도달했을 때 뜹니다. 목표를 채웠으니 더 사기보다 관망하라는 뜻입니다.
 
 **시장위험: 추매중단/보유점검 (퍼펙트스톰)**
-매크로 리스크가 4.5 이상일 때 뜹니다. 신규 후보와 보유 종목 모두 이 문구(`시장위험: 추매중단/보유점검`)로 표시되며, 이때는 개별 종목보다 시장 전체 위험이 우선이라 신규 진입과 추가매수를 막습니다. 보유 종목에는 전량 매도 신호가 아니라 비중·손절선 점검 신호입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다. 판정 사전에 남아 있는 `하드차단: 퍼펙트스톰(대피)` 문구는 현재 어떤 경로에서도 나오지 않습니다.
+매크로 리스크가 4.5 이상일 때 뜹니다. 신규 후보와 보유 종목 모두 이 문구(`시장위험: 추매중단/보유점검`)로 표시되며, 이때는 개별 종목보다 시장 전체 위험이 우선이라 신규 진입과 추가매수를 막습니다. 보유 종목에는 전량 매도 신호가 아니라 비중·손절선 점검 신호입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다. 여기서 100%는 그 종목의 평소 월적립 몫(이번 달 투자액 × 목표비중 비율)의 1배라는 뜻이며, 위기자금이나 예수금 전체의 100%가 아닙니다. 이 적립도 월적립 게이트(상위 시간대 추세훼손·시장방어 등)를 그대로 따릅니다. 판정 사전에 남아 있는 `하드차단: 퍼펙트스톰(대피)` 문구는 현재 어떤 경로에서도 나오지 않습니다.
 
 **하드차단: MFI 극단 과열**  
 MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심해서 추격매수를 막습니다.
