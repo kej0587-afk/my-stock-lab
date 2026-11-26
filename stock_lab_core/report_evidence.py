@@ -7,6 +7,7 @@ import math
 import re
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+from stock_lab_core.performance import timed_call
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -589,6 +590,7 @@ def _observation_axis_lines(sector_facts, kr_summary, story_releases):
             "최근 발표 지표 | " + _cell(" / ".join(economic_summary) or "최근 3거래일 이내 발표일이 확인된 주요 발표치 없음/미연결"), ""]
 
 
+@timed_call("report_assembly", "report_sections")
 def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     """Return report front matter and explicit missing-data reasons."""
     context = context or {}

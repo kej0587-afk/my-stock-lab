@@ -1,6 +1,7 @@
 """Post-close company evidence kept separate from the preceding market close."""
 
 from stock_lab_core.catalyst_news import after_close_catalysts
+from stock_lab_core.performance import timed_call
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, citation, curate_news, records
 from stock_lab_core.report_presentation import kst_time
@@ -8,6 +9,7 @@ from stock_lab_core.report_presentation import kst_time
 register_loaded_source(__name__, __file__)
 
 
+@timed_call("report_assembly", "post_close_brief")
 def post_close_brief(context, news, summary_rows, now):
     windows = records(context.get("windows"))
     end = next((row.get("end") for row in windows if row.get("market") == "US"
