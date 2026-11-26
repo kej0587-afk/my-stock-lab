@@ -8,9 +8,10 @@ from datetime import datetime
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float
-from stock_lab_core.monthly_execution import (TYPE_LABELS, KST, active_confirmed_plan, execution_key,
-                                              executed_by_ticker, four_amounts, holding_type, kst_month_key,
-                                              monthly_gate)
+from stock_lab_core.monthly_execution import (STD_APP_RATE, STD_EXCESS, STD_EXECUTED, STD_OPEN, STD_PLAN,
+                                              STD_TODAY, STD_WAIT, TYPE_LABELS, KST, active_confirmed_plan,
+                                              execution_key, executed_by_ticker, four_amounts, holding_type,
+                                              kst_month_key, monthly_gate, standard_amounts)
 from stock_lab_core import monthly_store
 from stock_lab_core.rebalance_multiplier import PROFIT_TAKE_EXCLUSION_TEXT, core_storm_share_note
 
@@ -88,12 +89,15 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
                                 gate_reader=gate_reader, decisions=decisions, confirmed=confirmed,
                                 executed=executed, executed_status=exec_status)
 
-    st.markdown("#### 🧾 이번 달 계획 · 집행 · 오늘 실행가능")
+    st.markdown("#### 🧾 이번 달 월계획액 · 누적 집행기록액 · 오늘 추가 가능액")
     flash = st.session_state.pop("_monthly_execution_flash", None)
     if flash:
         (st.success if flash[0] == "ok" else st.warning)(flash[1])
-    st.caption(f"{month_key} (KST) · 계좌 범위 {scope} · ① 계획 ② 이번 달 집행 ③ 오늘 실행가능 ④ 오늘 이후 남은 대기. "
-               "③은 계획 잔액·목표비중 부족분·월적립 게이트·정찰 1/3·가용 현금 중 가장 작은 값이며, 표시만으로 ②가 늘지 않습니다. "
+    st.caption(f"{month_key} (KST) · 계좌 범위 {scope} · 같은 계좌 범위·종목·계획월, 같은 기준 시각. "
+               "남은 계획액 = max(0, 월계획액 − 누적 집행기록액) = 오늘 추가 가능액 + 현재 대기액. "
+               "누적 집행기록액은 실제로 매수한 뒤 저장한 기록의 합계이며, 화면 조회나 오늘 추가 가능액 계산으로는 늘지 않습니다. "
+               "오늘 추가 가능액은 남은 계획액·목표비중 부족분·월적립 게이트·정찰 1/3 잔여·가용 현금 중 가장 작은 값입니다. "
+               "게이트를 확인했고 막혔으면 0원 · 차단, 필요한 자료가 없으면 미확인입니다. 확정 전 계획은 임시 계획입니다. "
                "코어 ETF 정기적립은 상위 시간대 추세훼손만으로는 막지 않습니다(CORE 일반·과열·낙폭·폭락 코드, 위기·패닉 제외). "
                "다른 안전 차단이 함께 있으면 그대로 막고, 추세훼손 사실은 월적립 게이트 열에 표시합니다.")
     if plan_status == "table_missing" or exec_status == "table_missing":
@@ -103,12 +107,15 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
             st.code(get_monthly_dca_create_sql(), language="sql")
     elif plan_status == "error" or exec_status == "error":
         st.warning("저장된 계획·집행 기록을 읽지 못했습니다. 집행은 미확인으로 표시합니다.")
-    st.dataframe(pd.DataFrame([{
-        "자산명": r["name"], "유형": TYPE_LABELS.get(r["type"], r["type"]), "① 계획": _fmt(r["plan"]),
-        "계획 출처": r["plan_src"], "② 집행": _fmt(r["executed"]), "③ 오늘 실행가능": _fmt(r["executable"]),
-        "④ 남은 대기": _fmt(r["remaining"]), "제한": r["limit"] or "-", "월적립 게이트": r["gate_text"],
-        "계획 메모": r.get("plan_note") or "-",
-    } for r in rows]), width='stretch', hide_index=True)
+    table = []
+    for r in rows:
+        std = standard_amounts(r, executed_status=exec_status)
+        table.append({"자산명": r["name"], "유형": TYPE_LABELS.get(r["type"], r["type"]),
+                      STD_PLAN: std[STD_PLAN], STD_EXECUTED: std[STD_EXECUTED], STD_OPEN: std[STD_OPEN],
+                      STD_TODAY: std[STD_TODAY], STD_WAIT: std[STD_WAIT], STD_EXCESS: std[STD_EXCESS],
+                      STD_APP_RATE: std[STD_APP_RATE], "월적립 게이트": r["gate_text"],
+                      "계획 메모": r.get("plan_note") or "-"})
+    st.dataframe(pd.DataFrame(table), width='stretch', hide_index=True)
 
     if client is None or not owner or plan_status != "ok" or exec_status != "ok":
         return rows
@@ -124,10 +131,10 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
         st.session_state["_monthly_execution_flash"] = (status, msg.get(status, f"계획을 확정하지 못했습니다: {status}"))
         st.session_state["_monthly_store_rev"] = st.session_state.get("_monthly_store_rev", 0) + 1
         st.rerun()
-    with c2.expander("집행 기록 (실제로 매수한 금액만)"):
+    with c2.expander("집행 기록 저장 (실제로 매수한 금액만 · 누적 집행기록액에 더해짐)"):
         options = [r for r in rows if r["plan"] is not None and r["executed"] is not None and r["plan"] - r["executed"] > 0]
         if not options:
-            st.caption("기록할 수 있는 계획 잔액이 없습니다.")
+            st.caption("기록할 수 있는 남은 계획액이 없습니다.")
             return rows
         names = {r["ticker"]: r for r in options}
         pick = st.selectbox("종목", list(names), format_func=lambda t: f"{names[t]['name']} ({t})",
@@ -138,7 +145,7 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
                                  value=float(min(open_amt, chosen["executable"] or 0.0)),
                                  key=f"monthly_exec_amt_{month_key}_{pick}")
         if chosen["executable"] is not None and amount > chosen["executable"]:
-            st.caption("오늘 실행가능 금액보다 큽니다. 실제로 매수한 금액만 기록하세요.")
+            st.caption("오늘 추가 가능액보다 큽니다. 실제로 매수한 금액만 기록하세요.")
         if st.button("집행 기록", key=f"monthly_exec_save_{month_key}_{pick}"):
             today = datetime.now(KST).date().isoformat()
             key = execution_key(account_scope=scope, month_key=month_key, ticker=pick, exec_date=today,
