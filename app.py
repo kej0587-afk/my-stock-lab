@@ -3845,6 +3845,18 @@ def rebalance_signal_multiplier_for_decision(decision: dict, bucket: str, dip_le
     return _rebcalc_signal_multiplier(str((decision or {}).get("dec", "-")), bucket, dip_level=dip_level, decision=decision)
 
 
+def monthly_signal_cache_scope_valid():
+    """C-6/C-11 step 2: the calculator's signal cache counts only for the account scope it was computed for.
+    A cache without a stamp or with another scope is invalid (signals 미확인), never reused."""
+    stamp = st.session_state.get("_ticker_signal_cache_context")
+    if not stamp:
+        return False
+    try:
+        return stamp == portfolio_signal_input_context()
+    except Exception:
+        return False
+
+
 def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summary, monthly_logs_df=None):
     from stock_lab_core.monthly_rebalance_view import render_monthly_rebalancing_calculator as render_calculator
 
@@ -3856,7 +3868,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                    "아래 계획 금액은 판정코드 기준 참고값이며, 오늘 실행게이트는 데이터확인입니다.")
     render_calculator(
         st, holdings_table, usdkrw, portfolio_summary, monthly_logs_df,
-        signal_multiplier=_rebcalc_signal_multiplier,
+        signal_multiplier=_rebcalc_signal_multiplier, signal_scope_valid=globals().get("monthly_signal_cache_scope_valid", lambda: True)(),
         CURRENT_USER_EMAIL=CURRENT_USER_EMAIL, IS_PUBLIC_DEMO=IS_PUBLIC_DEMO,
         save_monthly_logs_db=save_monthly_logs_db,
     )
@@ -16190,7 +16202,11 @@ def get_effective_total_asset(sheet_eval, fallback_asset=0.0):
         return sheet_eval
     return clean_float(fallback_asset, 0.0)
 
-def get_effective_weights(name, ticker, fallback_current_w=0.0, fallback_target_w=0.0):
+def get_effective_weights(name, ticker, fallback_current_w=None, fallback_target_w=None):
+    # C-6/C-11 step 2: weights passed explicitly by the caller win over the global account table.
+    # App screens pass none, so they still read the selected account's row (unchanged).
+    if fallback_current_w is not None or fallback_target_w is not None:
+        return clean_float(fallback_current_w, 0.0), clean_float(fallback_target_w, 0.0)
     row = get_holding_row_by_ticker(holdings_table, ticker)
     if row is None:
         return clean_float(fallback_current_w, 0.0), clean_float(fallback_target_w, 0.0)
@@ -16198,7 +16214,7 @@ def get_effective_weights(name, ticker, fallback_current_w=0.0, fallback_target_
     tw = clean_float(row.get("목표비중", 0.0), 0.0)
     return cw, tw
 
-def get_effective_buy_amount(name, ticker, eff_total, fallback_current_w=0.0, fallback_target_w=0.0):
+def get_effective_buy_amount(name, ticker, eff_total, fallback_current_w=None, fallback_target_w=None):
     cw, tw = get_effective_weights(name, ticker, fallback_current_w, fallback_target_w)
     return round(eff_total * (max(tw - cw, 0) / 100), 0)
 
@@ -16511,7 +16527,7 @@ def enforce_non_core_panic_scope_on_result(c, *, is_core_dca_allowed=False, is_e
 
 @timed_call("decision")
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
-                             is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
+                             is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=None, user_targ_w=None,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
                              _cash_available=None, _reserve_available=None,
                              live_price: float = 0.0, _live_indicator_context=None):
@@ -35981,6 +35997,8 @@ if main_page == "asset":
                 if isinstance(row.get("_signal_decision"), dict)
             }
             signal_df = signal_df.drop(columns=["_signal_decision"], errors="ignore")
+            # C-6/C-11 step 2: stamp the account scope; the calculator ignores signals from another scope.
+            st.session_state["_ticker_signal_cache_context"] = portfolio_signal_input_context()
             st.session_state["_ticker_signal_detail_df"] = stamp_portfolio_signal_context(signal_df)
             dash_df = dash_df.merge(signal_df, on="티커", how="left")
 

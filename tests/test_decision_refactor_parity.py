@@ -17,6 +17,10 @@ from tests.test_decision_golden_snapshot import SCENARIOS, _bench_info, _to_json
 ROOT = Path(__file__).parents[1]
 SNAPSHOT_PATH = ROOT / "tests/golden/decision_refactor_full_snapshots.json"
 STRUCTURE_PATH = ROOT / "tests/golden/decision_policy_structure.json"
+# C-6/C-11 step 2 (2026-11-26): weights passed explicitly now win over the test env's global account table.
+# QQQM is in that table, so only these two cases change (they had read the table's 22.4%/22.0% row).
+STEP2_PATH = ROOT / "tests/golden/c6_step2_explicit_weight_snapshots.json"
+STEP2_CASES = ("core_us_etf_perfect_storm_dca", "free_short_core")
 EXTRA_CASES = [
     ("live_new_stock", {"live_gap": 0.02}),
     ("live_held_profit", {"has_pos": True, "my_price": 75.0, "is_free": False, "live_gap": 0.02}),
@@ -91,6 +95,15 @@ def test_full_output_snapshots(app_module, monkeypatch):
     for result in actual.values():
         assert result.pop("macro_data_status") == "complete"
         assert result.pop("macro_missing_components") == []
+    if os.getenv("CREATE_C6_STEP2_BASELINE") == "1" and not STEP2_PATH.exists():
+        STEP2_PATH.write_text(json.dumps({sid: actual[sid] for sid in STEP2_CASES}, ensure_ascii=False, indent=2,
+                                         sort_keys=True) + "\n", encoding="utf-8")
+    step2 = json.loads(STEP2_PATH.read_text(encoding="utf-8"))
+    kwargs = {sid: kw for sid, _, _, _, kw, _ in scenarios()}
+    for sid in STEP2_CASES:
+        assert expected[sid]["current_w"] != kwargs[sid]["user_curr_w"]  # the old run read the global row
+        assert (step2[sid]["current_w"], step2[sid]["target_w"]) == (kwargs[sid]["user_curr_w"], kwargs[sid]["user_targ_w"])
+        expected[sid] = step2[sid]
     assert actual == expected
 
 
