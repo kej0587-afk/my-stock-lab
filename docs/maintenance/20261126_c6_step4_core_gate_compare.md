@@ -58,3 +58,38 @@ stress 가정에서는 모든 달이 CORE_STORM_DCA(위기)이며 C 75.2%, D 100
 
 ## 재현
 - 스크립트·결과: 프로젝트 파일 `reports/c611_study/core_gate_*` (Git 밖). 가격 CSV는 리플레이용 로컬 사본.
+
+## 사용자 결정 (2026-11-26 12:59 KST)
+A안: D 적용, STORM·PANIC 제외. 예외 허용 코드는 CORE_PULLBACK_DCA, CORE_NEUTRAL_DCA, CORE_OVERHEAT_DCA,
+CORE_DRAWDOWN_DCA, CORE_CRASH_DCA. 승인된 비레버리지 코어 ETF의 월 정기적립에만 적용하고 Today·정밀관측소 게이트는 바꾸지 않습니다.
+
+## 최종 D안 재생 검증 (F = D, 허용 코드만 예외)
+같은 판정 행으로 다시 집계했습니다(확인 시점마다 그 날의 엔진 코드로 예외 여부 결정).
+
+| 가정 | 변형 | 집행률 | 평가액/계획 | 최대낙폭 |
+|---|---|---|---|---|
+| base | C | 61.3% | 3.46 | -30.5% |
+| base | 최종 D | 98.0% | 5.89 | -36.8% |
+| stress | C | 69.4% | 3.89 | -32.5% |
+| stress | 최종 D | 69.4% | 3.89 | -32.5% |
+
+코드별(월초 코드 기준 계획 대비 집행, base): CORE_PULLBACK 69.8%→99.5%, CORE_NEUTRAL 95.4%→100%,
+CORE_OVERHEAT 95.9%→100%, CORE_DRAWDOWN(150%) 16.5%→97.8%, CORE_CRASH(200%) 5.9%→92.2%.
+CORE_STORM_DCA(stress)는 C와 같은 75.2%로 예외가 적용되지 않습니다.
+PANIC_CASH_DEPLOY 월은 C 4.5%, 최종 D 50.0%인데, 같은 달 뒤쪽 확인일의 코드가 CORE_CRASH 등으로 바뀐 날에 집행된 것이고 PANIC 코드 날짜 자체는 C와 같습니다.
+
+- 허용 코드가 아닌 확인 시점(CORE_STORM 5,056 · MACRO_STORM 167 · PANIC 126건)은 최종 D와 C가 모두 같습니다.
+- 시장방어 788건은 최종 D에서도 0건 집행.
+- 데이터확인·비중·하드차단·매크로 미확인은 이 표본(명시 비중 5/15, 정상 데이터)에 나오지 않아
+  단위 테스트로 확인했습니다(`tests/test_monthly_execution.py`: 시장방어, 데이터, 매크로 미확인, 비중 초과, 목표 0,
+  방어 문구, 지표 결측이 함께 있으면 예외가 있어도 막힘).
+- 월적립 배율은 코드별로 하나씩(1.0/0.5/0.25/1.5/2.0)이며 배율표는 바꾸지 않았습니다.
+- 개별주·스윙·레버리지는 예외를 받지 않습니다(테스트로 확인).
+
+## 적용 (코드)
+- `stock_lab_core/monthly_execution.py`: `core_dca_gate_without_mtf_damage(row)`는 Today 최종 행(시장 가드 포함)에서
+  '상위 시간대 경고' 표시만 지우고 `build_execution_gate`를 다시 돌립니다. `monthly_gate(..., core_exception)`은 코어 ETF에만 이 결과를 씁니다.
+  정책 버전 `monthly_execution_v2_core_mtf_exception_2026-11-26`.
+- `app.py attach_today_gate_to_records`: Today 기록에 `core_dca_gate`를 함께 저장(Today 게이트 자체는 그대로).
+- 화면: 월적립 게이트 열에 "상위 시간대 추세훼손 · 코어 정기적립 정책에 따른 예외 허용" 또는
+  "상위 시간대 추세훼손(코어 예외 대상) · 다른 차단 유지: …"로 추세훼손을 항상 표시.

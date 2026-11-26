@@ -10,7 +10,12 @@ Showing ③ never changes ②; only an explicit execution record does. Missing i
 Monthly gate per holding type (decision 1):
   core ETF        : C2 - the Today gate is 실행가능, or 대기/관찰 for timing reasons only (R/R, overheat, pattern,
                     condition wait, flow). Safety blocks (방어우선, 데이터확인) and leveraged conditional waits block.
-                    The MTF-damage exception for core DCA (D) is NOT active here; it waits for the step-4 comparison.
+                    D (user decision 11-26 12:59 KST, after the step-4 comparison): weekly/monthly trend damage alone
+                    does not block core regular DCA for CORE_PULLBACK/NEUTRAL/OVERHEAT/DRAWDOWN/CRASH_DCA. The gate is
+                    re-evaluated from the same row with only the damage label removed, so every other block (market
+                    defense, macro hard block, macro unknown, data check, weight over/filled, target 0, hard blocks,
+                    defense prose) still applies. CORE_STORM_DCA and PANIC_* keep the damage block (C-8/C-9).
+                    The Today and precision gates themselves are unchanged; this only feeds the monthly ③.
   long-term stock : C1 - only 실행가능.
   swing           : C1.
   leverage        : C1 (the leveraged safety conditions are already in the Today gate).
@@ -19,7 +24,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 
-POLICY_VERSION = "monthly_execution_v1_2026-11-26"
+POLICY_VERSION = "monthly_execution_v2_core_mtf_exception_2026-11-26"
 KST = timezone(timedelta(hours=9))
 
 TYPE_CORE_ETF = "core_etf"
@@ -32,6 +37,10 @@ GATE_EXECUTABLE = "실행가능"
 GATE_WAIT = "대기/관찰"
 _TIMING_PART = re.compile(r"^(R/R [^·]*|과열/추격금지|조건 확인 대기|하락/저항 패턴 확인 필요|주의 판정은 실행 전 조건 확인|돈흐름 [^·]*)$")
 _SCOUT = re.compile(r"1/3|정찰")
+MTF_DAMAGE_LABEL = "상위 시간대 경고"
+CORE_MTF_EXCEPTION_CODES = frozenset({"CORE_PULLBACK_DCA", "CORE_NEUTRAL_DCA", "CORE_OVERHEAT_DCA",
+                                      "CORE_DRAWDOWN_DCA", "CORE_CRASH_DCA"})
+CORE_MTF_EXCEPTION_TEXT = "상위 시간대 추세훼손 · 코어 정기적립 정책에 따른 예외 허용"
 
 
 def kst_month_key(now=None):
@@ -64,8 +73,34 @@ def timing_only(reason):
     return bool(parts) and all(_TIMING_PART.match(p) for p in parts)
 
 
-def monthly_gate(htype, gate_state, gate_reason):
-    """(allowed, reason). allowed is None when the gate is unknown (no valid Today record)."""
+def core_dca_gate_without_mtf_damage(row):
+    """D: the Today gate re-evaluated with only the trend-damage label removed (None when D does not apply).
+
+    row is the final Today workflow row (after the market guard). Applies only when the row shows weekly/monthly
+    trend damage and its decision code is one of CORE_MTF_EXCEPTION_CODES. Every other gate input is kept, so
+    any other safety block present at the same time still decides the result.
+    """
+    if not isinstance(row, dict) or str(row.get("상위시간대상태") or "") != MTF_DAMAGE_LABEL:
+        return None
+    if str(row.get("판정코드") or "").upper() not in CORE_MTF_EXCEPTION_CODES:
+        return None
+    from stock_lab_core.execution_gate import build_execution_gate
+    probe = dict(row)
+    probe["상위시간대상태"] = ""
+    gate = build_execution_gate(probe)
+    return {"state": gate.get("게이트상태"), "reason": gate.get("게이트근거"), "mtf_exception": True}
+
+
+def monthly_gate(htype, gate_state, gate_reason, core_exception=None):
+    """(allowed, reason). allowed is None when the gate is unknown (no valid Today record).
+
+    core_exception: the D gate from core_dca_gate_without_mtf_damage, used for core ETFs only.
+    """
+    if htype == TYPE_CORE_ETF and isinstance(core_exception, dict) and core_exception.get("state"):
+        allowed, text = monthly_gate(htype, core_exception.get("state"), core_exception.get("reason"))
+        if allowed:
+            return True, f"{CORE_MTF_EXCEPTION_TEXT} · {text}"
+        return False, f"상위 시간대 추세훼손(코어 예외 대상) · 다른 차단 유지: {text}"
     if not gate_state:
         return None, "게이트 미확인(오늘 점검 기록 없음·계좌/기준일 불일치)"
     if gate_state == GATE_EXECUTABLE:
@@ -149,6 +184,26 @@ def active_confirmed_plan(rows, *, account_scope, month_key):
         if key not in best or int(row.get("plan_version") or 0) > int(best[key].get("plan_version") or 0):
             best[key] = row
     return best
+
+
+def confirmed_plan_remaining(plans, plan_status, executions, exec_status, *, account_scope, month_key, ticker):
+    """Step 5 (L3 link): plan − executed of the latest confirmed plan for the ticker in this scope and month.
+
+    None when storage was not read ("ok" needed for both) or no plan was confirmed this month (L3 stays a
+    candidate). 0.0 when the month is confirmed but the ticker got no plan. Never negative.
+    """
+    if plan_status != "ok" or exec_status != "ok":
+        return None
+    confirmed = active_confirmed_plan(plans, account_scope=account_scope, month_key=month_key)
+    if not confirmed:
+        return None
+    row = confirmed.get(str(ticker).upper())
+    if row is None:
+        return 0.0
+    if not _finite(row.get("plan_krw")):
+        return None
+    done = executed_by_ticker(executions, account_scope=account_scope, month_key=month_key).get(str(ticker).upper(), 0.0)
+    return max(0.0, float(row["plan_krw"]) - float(done))
 
 
 def execution_key(*, account_scope, month_key, ticker, exec_date, signal_key):

@@ -329,7 +329,7 @@ def read_current(bars: list[Bar], last_overrides: dict | None = None, *, ticker:
     if _finite(budget) and monthly_planned is None:
         res = step(cycle, last, len(bars) - 1, budget=None, shortfall=shortfall)
         if res["status"] == STATUS_CANDIDATE:
-            res["reasons"] = ["이번 달 월적립 배분 미확인 (월 적립 계산기에서 확인)"]
+            res["reasons"] = ["이번 달 확정 월적립 계획 없음·미확인 (월 적립 계산기에서 계획 확정)"]
     else:
         res = step(cycle, last, len(bars) - 1, budget=budget, shortfall=shortfall,
                    monthly_planned=monthly_planned or 0.0)
