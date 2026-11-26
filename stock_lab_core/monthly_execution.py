@@ -161,6 +161,84 @@ def four_amounts(*, plan_krw, executed_krw, shortfall_krw, gate_allowed, sizing=
     return out
 
 
+# Standard names (user decision 2026-11-26 16:37 KST), shared by the monthly screen and the execution-rate study.
+# Unit: one account scope · ticker · plan month at one reference time.
+#   월계획액        plan valid at the reference time (임시 계획 before confirmation)
+#   누적 집행기록액  sum of execution records the user saved after buying (never raised by viewing or by ③)
+#   남은 계획액      max(0, 월계획액 − 누적 집행기록액); an excess over the plan is shown separately
+#   오늘 추가 가능액 the executable amount (four_amounts ③)
+#   현재 대기액      남은 계획액 − 오늘 추가 가능액
+STD_PLAN = "월계획액"
+STD_EXECUTED = "누적 집행기록액"
+STD_OPEN = "남은 계획액"
+STD_EXCESS = "계획 초과 집행액"
+STD_TODAY = "오늘 추가 가능액"
+STD_WAIT = "현재 대기액"
+STD_APP_RATE = "앱 기록 기준 실제 집행률"
+STD_REPLAY_RATE = "재생상 집행 가능률"
+NO_TARGET = "대상 없음"
+
+
+def _won(value):
+    return f"{float(value):,.0f}원"
+
+
+def plan_source_label(plan_src):
+    src = str(plan_src or "")
+    if src.startswith("확정"):
+        return src.replace("확정", "확정 계획", 1)
+    if src == "신호 미확인":
+        return "미확인 (신호 미확인)"
+    return "임시 계획"
+
+
+def execution_rate(numerator, plan):
+    """Share of 월계획액 as text. 대상 없음 when the plan is 0, 미확인 when an input is missing."""
+    if not _finite(plan) or not _finite(numerator):
+        return "미확인"
+    if float(plan) <= 0:
+        return NO_TARGET
+    return f"{float(numerator) / float(plan) * 100:.1f}%"
+
+
+def standard_amounts(row, *, executed_status):
+    """Display strings in the standard names for one row of build_execution_rows (pure, tested).
+
+    Gate checked and blocked -> "0원 · 차단: …"; a missing input -> "미확인 · …". Records read with none for the
+    ticker -> "0원 · 기록 없음"; storage unreadable -> "미확인". Plan 0 -> both rates 대상 없음.
+    """
+    plan, executed, today = row.get("plan"), row.get("executed"), row.get("executable")
+    limit = row.get("limit") or ""
+    plan_txt = "미확인" if plan is None else f"{_won(plan)} · {plan_source_label(row.get('plan_src'))}"
+    if executed_status != "ok" or executed is None:
+        exec_txt = "미확인 (집행 저장소를 읽지 못함)" if executed_status in ("error", "table_missing") else "미확인"
+    elif float(executed) == 0:
+        exec_txt = "0원 · 기록 없음"
+    else:
+        exec_txt = _won(executed)
+    open_amt = excess = None
+    if plan is not None and executed is not None:
+        open_amt = max(0.0, float(plan) - float(executed))
+        excess = max(0.0, float(executed) - float(plan))
+    if plan is not None and float(plan) <= 0:
+        today_txt = "0원 · 이번 달 계획 0원(적립 대상 아님)"
+    elif today is None:
+        today_txt = f"미확인 · {limit}" if limit else "미확인"
+    elif float(today) > 0:
+        today_txt = f"{_won(today)} (상한: {limit})"
+    elif limit == "게이트":
+        today_txt = f"0원 · 차단: {row.get('gate_text') or '-'}"
+    else:
+        today_txt = f"0원 · {limit}" if limit else "0원"
+    wait = None if (open_amt is None or today is None) else max(0.0, open_amt - float(today))
+    return {STD_PLAN: plan_txt, STD_EXECUTED: exec_txt,
+            STD_OPEN: "미확인" if open_amt is None else _won(open_amt),
+            STD_EXCESS: _won(excess) if excess else "-",
+            STD_TODAY: today_txt, STD_WAIT: "미확인" if wait is None else _won(wait),
+            STD_APP_RATE: execution_rate(executed if executed_status == "ok" else None, plan),
+            "_open": open_amt, "_wait": wait}
+
+
 def executed_by_ticker(executions, *, account_scope, month_key):
     """Sum execution records of the same scope and month. Rows of another scope or month are ignored."""
     totals = {}

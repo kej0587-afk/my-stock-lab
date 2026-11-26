@@ -242,3 +242,51 @@ def test_l3_tranche_rule_is_unchanged_and_uses_the_remaining_plan():
     assert l3.tranche_amount(900000, 0, 1000000, 150000) == 300000
     assert l3.tranche_amount(900000, 0, 400000, 150000) == 250000
     assert l3.tranche_amount(900000, 0, 400000, None) == 300000
+
+
+# ── Standard names (user decision 2026-11-26 16:37 KST) ─────────────────────────────────────────────────────
+from stock_lab_core.monthly_execution import (STD_APP_RATE, STD_EXCESS, STD_EXECUTED, STD_OPEN,  # noqa: E402
+                                              STD_PLAN, STD_TODAY, STD_WAIT, execution_rate, standard_amounts)
+
+
+def _std(plan, executed, *, shortfall=1_000_000.0, allowed=True, sizing="1차 정찰대: 목표비중의 1/3",
+         cash=1_000_000.0, status="ok", src="임시(미확정)", gate_text="실행가능"):
+    a = four_amounts(plan_krw=plan, executed_krw=executed, shortfall_krw=shortfall, gate_allowed=allowed,
+                     sizing=sizing, cash_krw=cash)
+    return standard_amounts(dict(a, plan_src=src, gate_text=gate_text), executed_status=status)
+
+
+def test_standard_example_before_and_after_a_recorded_buy():
+    before = _std(300000.0, 0.0)
+    assert (before["_open"], before[STD_TODAY], before["_wait"]) == (300000.0, "100,000원 (상한: 1차 정찰 1/3)", 200000.0)
+    assert before[STD_PLAN] == "300,000원 · 임시 계획" and before[STD_EXECUTED] == "0원 · 기록 없음"
+    after = _std(300000.0, 60000.0, src="확정 v2")
+    assert after[STD_PLAN] == "300,000원 · 확정 계획 v2" and after[STD_EXECUTED] == "60,000원"
+    assert (after["_open"], after[STD_TODAY], after["_wait"]) == (240000.0, "40,000원 (상한: 1차 정찰 1/3)", 200000.0)
+    assert after[STD_APP_RATE] == "20.0%" and after[STD_EXCESS] == "-"
+
+
+def test_open_equals_today_plus_wait_and_excess_is_separate():
+    r = _std(300000.0, 350000.0, sizing=None)
+    assert r[STD_OPEN] == "0원" and r[STD_EXCESS] == "50,000원" and r["_wait"] == 0.0
+    for plan, done in ((300000.0, 0.0), (300000.0, 60000.0), (300000.0, 299000.0)):
+        r = _std(plan, done, cash=50000.0)
+        today = float(r[STD_TODAY].split("원")[0].replace(",", ""))
+        assert r["_open"] == today + r["_wait"]
+
+
+def test_zero_versus_unknown():
+    blocked = _std(300000.0, 0.0, allowed=False, gate_text="방어우선: 상위 시간대 추세훼손")
+    assert blocked[STD_TODAY] == "0원 · 차단: 방어우선: 상위 시간대 추세훼손" and blocked[STD_WAIT] == "300,000원"
+    gate_unknown = _std(300000.0, 0.0, allowed=None)
+    assert gate_unknown[STD_TODAY] == "미확인 · 게이트 미확인" and gate_unknown[STD_WAIT] == "미확인"
+    no_cash = _std(300000.0, 0.0, cash=None)
+    assert no_cash[STD_TODAY] == "미확인 · 가용 현금 미확인"
+    unread = _std(300000.0, None, status="error")
+    assert unread[STD_EXECUTED].startswith("미확인") and unread[STD_APP_RATE] == "미확인" and unread[STD_OPEN] == "미확인"
+
+
+def test_plan_zero_rates_are_no_target():
+    r = _std(0.0, 0.0)
+    assert r[STD_APP_RATE] == "대상 없음" and r[STD_TODAY].startswith("0원 · 이번 달 계획 0원")
+    assert execution_rate(10.0, 0.0) == "대상 없음" and execution_rate(None, 100.0) == "미확인"
