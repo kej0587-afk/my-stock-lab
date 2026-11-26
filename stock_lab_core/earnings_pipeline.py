@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from stock_lab_core.earnings_discovery import canonical_ticker, discover_earnings_news, issuer_catalog, TOPICS
 from stock_lab_core.earnings_reconciliation import METRIC_LABELS, reconcile_earnings
+from stock_lab_core.performance import timed_call
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import records, safe_link, stamp, text
 
@@ -157,6 +158,7 @@ def coverage_state(coverage):
                 official=coverage.get("official", 0), failed=len(failed), no_official=len(missing) - len(failed))
 
 
+@timed_call("report_assembly", "earnings_pipeline")
 def build_earnings_pipeline(context, summary_rows=None, news=(), now=None):
     now = stamp(now)
     if now is None:

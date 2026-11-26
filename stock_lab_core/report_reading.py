@@ -2,6 +2,7 @@
 
 import re
 
+from stock_lab_core.performance import timed_call
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, records
 from stock_lab_core.report_document import additional_evidence, decision_summary_lines
@@ -276,6 +277,7 @@ def _kr_flow_table_lines(flow):
     return lines
 
 
+@timed_call("report_assembly", "compose_reading_report")
 def compose_reading_report(report, *, context, news, summary_rows, now):
     """Quick summary -> market body -> appendix; one reading path, evidence once.
 

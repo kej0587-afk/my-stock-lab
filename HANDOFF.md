@@ -586,7 +586,7 @@ central-bank table, 오늘 달라진 점, calendar row), PR #84 미계산 labels
 0 '거래소 달력' rows) and 33 → 22 known failures (`docs/maintenance/20261126_known_test_failures.md`). Prod timings (condition A,
 `20261126_prod_check_bok_today_gate_perf.md`): Today 87.8 / 75.3 s, report 125.0 / 63.7 s, refresh 26.4 s. Speed round 1
 (`docs/maintenance/20261126_speed_round1.md`): KR history requests sliced from a wider window inside one calculation; EDGAR
-accession documents kept for a day. **Next:** re-measure condition A through the home-PC thread (ask the coordinator; do not merge
+accession documents kept for a day (PR #87). Re-measured 23:35 KST (PR #88 doc): KR history 384→328 requests, rerun SEC 94→61 requests / wait 43.9→26.6 s, decisions and amounts identical; first-run Today 108 s because Yahoo metadata lock wait 42.7 s appeared (serialized on purpose against 429; not changed). Assembly timing spans added (report_sections, compose_reading_report, post_close_brief, earnings_pipeline) to find the +12 s assembly growth. **Next:** re-measure condition A through the home-PC thread (ask the coordinator; do not merge
 to main while it measures, Streamlit auto-redeploys), then the first-boot SEC wait (needs the user's policy choice: request spacing
 or stored filings) and showing the quick summary before the full report.
 
