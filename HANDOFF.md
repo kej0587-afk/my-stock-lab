@@ -590,6 +590,14 @@ accession documents kept for a day (PR #87). Re-measured 23:35 KST (PR #88 doc):
 to main while it measures, Streamlit auto-redeploys), then the first-boot SEC wait (needs the user's policy choice: request spacing
 or stored filings) and showing the quick summary before the full report.
 
+**SEC 8/s trial A (user 2026-11-27 02:06 KST; doc `docs/maintenance/20261127_sec_rate_trial_a.md`):** app-wide limiter
+`stock_lab_core/sec_rate.py` (≤8 SEC requests in any 1 s; 429 → pause all for Retry-After/600 s; second limit or >8 → legacy 5/s).
+**Trial start 2026-11-27 02:30 KST, ends 2026-12-04 02:30 KST (code reverts automatically; no extension).** Compare 3 pairs of
+first-after-reboot reports legacy (`sec_rate_mode = "legacy"` secret) vs A, median; reruns recorded separately. Adopt only if SEC
+wait −30% with no more time-budget failures, or failures −30% with no more wait, and official count not lower; then set
+`ADOPTED = True`. Otherwise legacy and stop. Afterwards: show the last completed report (with its time) first while a new one
+builds; find the +12 s assembly growth from the `report_assembly` spans; Supabase filing store (B) only if reboot re-downloads dominate.
+
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
 update of the last bar's price/volume during the session; measure first-chart and bar-switch time on SOXL; show realtime support,

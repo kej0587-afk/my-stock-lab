@@ -24,6 +24,7 @@ import logging
 import math
 import zipfile
 import requests
+import stock_lab_core.sec_rate  # noqa: F401  app-wide SEC limiter (installs on requests.Session)
 import json
 import base64
 import os

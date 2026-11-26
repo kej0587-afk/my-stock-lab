@@ -46,6 +46,7 @@ def _source_reason(ticker, context):
         meanings = {"sec_user_agent_missing": "SEC 연락처 설정 미연결",
                     "dart_api_key_missing": "DART API 설정 미연결",
                     "collection_time_budget": "공식 공시 수집 시간 한도·이번 조회 보류",
+                    "sec_rate_limited": "SEC 접근 제한으로 요청 일시 중지·조회 실패",
                     "recent_earnings_filing_unavailable": "최근 SEC 실적 공시 미확인",
                     "explicit_fiscal_quarter_unavailable": "공식 발표문 기준분기 대조 미완료",
                     "release_dateline_unavailable": "공식 발표문 발표일 대조 미완료",
