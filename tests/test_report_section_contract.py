@@ -74,6 +74,9 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     # The requested leadership reading is independently covered by
     # test_report_leadership. Exclude only this new section; keep legacy hashes.
     monkeypatch.setattr(report_leadership, "leadership_lines", lambda *a: [])
+    # Nov26 adds the BOK row to the central-bank table (tested in test_report_policy_panel); keep legacy hashes.
+    from stock_lab_core import report_policy_panel
+    monkeypatch.setattr(report_policy_panel, "BANKS", ("FOMC", "BOJ"))
     monkeypatch.setattr(report_editorial, "editorial_lines", lambda *a: [])
     monkeypatch.setattr(report_editorial, "reading_order", lambda lines: lines)
     original_status = report_dashboard.current_state_lines

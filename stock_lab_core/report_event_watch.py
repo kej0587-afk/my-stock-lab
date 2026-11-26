@@ -72,6 +72,16 @@ def _profile(row):
             "결과 확인 전 방향을 단정하지 않고 발표 후 기존 기대와 비교", "시장·업종")
 
 
+def _central_bank_result(row, context):
+    """The official central-bank row for this calendar meeting (same indicator and decision day), if any."""
+    for result in records(context.get("central_bank_results")):
+        if (result.get("status") == "official" and row.get("indicator")
+                and result.get("indicator") == row.get("indicator")
+                and text(result.get("decision_date")) == text(row.get("date"))[:10]):
+            return result
+    return None
+
+
 def _event_state(row, context, now):
     """An elapsed calendar date is not proof of a release or its contents."""
     status = text(row.get("event_status") or row.get("status"))
@@ -87,6 +97,8 @@ def _event_state(row, context, now):
                 or (at and row.get("release_precision") == "datetime" and at > now)):
             return "결과 시점 불일치·재확인 필요"
         return "공식 결과 확인" if status == "released" else "결과 보도·공식 대조 대기"
+    if _central_bank_result(row, context):
+        return "공식 결과 확인"
     for release in records(context.get("economic_releases")):
         if (_same_release(row, release) and not _unavailable(release)
                 and release.get("status") != "pending" and number(release.get("actual")) is not None
@@ -136,6 +148,12 @@ def _timing(row):
 
 def _result_summary(row, context, now):
     pieces = []
+    if (official := _central_bank_result(row, context)):
+        from stock_lab_core.report_policy_panel import central_bank_result_text
+        piece = "결과 " + central_bank_result_text(official)
+        if source := safe_link(official.get("source_url")):
+            piece += f" ([공식 결정 근거]({source}))"
+        pieces.append(piece)
     for release in records(context.get("economic_releases")):
         at = stamp(release.get("release_at"))
         if (release.get("indicator") != row.get("indicator") or not row.get("indicator")

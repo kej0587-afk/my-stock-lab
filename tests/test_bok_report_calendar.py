@@ -132,3 +132,17 @@ def test_unverified_year_never_reuses_2026_meetings(year):
     context = {"calendar_events": events, "calendar_sources": [source], "market_watch_sources": []}
     assert event_watch_rows(context, [], now) == []
     assert "일정이 없다는 뜻은 아닙니다" in "\n".join(event_watch_lines(context, [], [], now))
+
+
+def test_official_bok_result_turns_the_meeting_row_into_a_result(collected):
+    context = report_context(collected)
+    # Synthetic rates; the collector only sets official after matching the posted 통화정책방향 to the meeting day.
+    context["central_bank_results"] = [{
+        "bank": "BOK", "status": "official", "indicator": INDICATOR, "action": "hike", "previous_rate": 3.0,
+        "policy_rate": 3.25, "date": "2026-11-26", "decision_date": "2026-11-26", "release_at": None,
+        "source_url": "https://www.bok.or.kr/portal/bbs/P0000559/view.do?nttId=11000001&menuNo=200690"}]
+    row = event_watch_rows(context, [], datetime.fromisoformat("2026-11-26T20:40:00+09:00"))[0]
+    assert row["state"] == "공식 결과 확인"
+    assert row["observed"].startswith("결과 인상 · 기준금리 3.00% → 3.25% ([공식 결정 근거](https://www.bok.or.kr/")
+    context["central_bank_results"][0]["status"] = "missing"
+    assert event_watch_rows(context, [], datetime.fromisoformat("2026-11-26T20:40:00+09:00"))[0]["state"] == "예정"

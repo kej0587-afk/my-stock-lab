@@ -14,25 +14,45 @@ def _source(row):
     return f"[{name}]({url})" if url else "공식 출처 미연결"
 
 
+BANKS = ("BOK", "FOMC", "BOJ")  # report order; BOK added 2026-11-26
+BANK_NAMES = {"BOK": "한국은행 금통위", "FOMC": "FOMC", "BOJ": "BOJ"}
+_ACTIONS = {"hold": "동결", "hike": "인상", "cut": "인하"}
+
+
+def central_bank_result_text(row):
+    """Official decision and rate as printed in the official document; '' when no official row."""
+    if (row or {}).get("status") != "official":
+        return ""
+    action = _ACTIONS.get(row.get("action"))
+    lower, upper = number(row.get("rate_lower")), number(row.get("rate_upper"))
+    rate, previous = number(row.get("policy_rate")), number(row.get("previous_rate"))
+    if row.get("bank") == "FOMC" and lower is not None and upper is not None:
+        return f"{action or '목표'} · 연방기금 목표 {lower:g}~{upper:g}%"
+    if row.get("bank") == "BOK" and action and rate is not None:
+        if action == "hold" or previous is None:
+            return f"{action} · 기준금리 {rate:.2f}%"
+        return f"{action} · 기준금리 {previous:.2f}% → {rate:.2f}%"
+    if rate is not None:
+        return f"익일물 콜금리 목표 약 {rate:g}%"
+    return "공식 수치 미연결"
+
+
 def policy_evidence_lines(context, news, now):
     lines = ["", "## 중앙은행 공식 결과", "기관 | 공식 결정·금리 | 발표 시각(KST) | 대조 상태·출처",
              "--- | --- | --- | ---"]
     results = {r.get("bank"): r for r in records(context.get("central_bank_results"))}
-    for bank in ("FOMC", "BOJ"):
+    for bank in BANKS:
         row = results.get(bank, {})
         if row.get("status") != "official":
             result = "결과 미연결 · 추정하지 않음"
             basis = row.get("reason") or "공식 결과 수집 전: 시황 다시 생성 필요"
             at = "미확인"
         else:
-            lower, upper = number(row.get("rate_lower")), number(row.get("rate_upper"))
-            rate = number(row.get("policy_rate"))
-            action = {"hold": "동결", "hike": "인상", "cut": "인하"}.get(row.get("action"), "목표")
-            result = (f"{action} · 연방기금 목표 {lower:g}~{upper:g}%" if bank == "FOMC" and lower is not None and upper is not None
-                      else f"익일물 콜금리 목표 약 {rate:g}%" if rate is not None else "공식 수치 미연결")
+            result = central_bank_result_text(row)
             at = kst_time(row.get("release_at")) if row.get("release_at") else f"{row.get('date', '-')} · 시각 미제공"
-            basis = "공식 성명 확인" + (" · 전회 대비 변동은 별도 미대조" if bank == "BOJ" else "")
-        lines.append(" | ".join(_cell(v) for v in (bank, result, at, basis + " · " + _source(row))))
+            basis = {"BOK": "한국은행 통화정책방향 결정문 확인",
+                     "BOJ": "공식 성명 확인 · 전회 대비 변동은 별도 미대조"}.get(bank, "공식 성명 확인")
+        lines.append(" | ".join(_cell(v) for v in (BANK_NAMES[bank], result, at, basis + " · " + _source(row))))
     lines += ["", "공식 성명의 결정값입니다. 기자회견 해석·주가 변동 원인이나 매수 허용을 뜻하지 않습니다.",
               "", "## 시장 안전장치 발동 근거",
               "발동일 | 시장·조치 | 확인 수준 | 보도·공시 출처", "--- | --- | --- | ---"]
