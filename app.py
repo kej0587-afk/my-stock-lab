@@ -3857,6 +3857,44 @@ def monthly_signal_cache_scope_valid():
         return False
 
 
+def monthly_today_gate(ticker):
+    """C-6/C-11 step 3: the Today gate for the monthly executable amount. Valid only for the current account
+    scope and when its price as-of matches the raw engine record; otherwise {} (게이트 미확인)."""
+    try:
+        from stock_lab_core.decision_record import SOURCE_ENGINE, SOURCE_TODAY, read_record
+        scope = portfolio_signal_input_context()
+        today = read_record(st.session_state, ticker, SOURCE_TODAY, account_scope=scope)
+        if not today or not (today.get("gate") or {}).get("state"):
+            return {}
+        engine = read_record(st.session_state, ticker, SOURCE_ENGINE, account_scope=scope)
+        if engine is not None:
+            t_asof = str((today.get("as_of") or {}).get("price_asof") or "")[:10]
+            e_asof = str((engine.get("as_of") or {}).get("price_asof") or "")[:10]
+            if t_asof != e_asof:
+                return {}
+        return {"state": today["gate"].get("state"), "reason": today["gate"].get("reason"),
+                "sizing": today.get("sizing"), "signal_key": today.get("cache_key")}
+    except Exception:
+        logging.exception("Monthly Today gate read skipped: ticker=%s", ticker)
+        return {}
+
+
+def monthly_execution_context():
+    """C-6/C-11 step 3 inputs for the plan / executed / executable panel (no write happens here)."""
+    client = None
+    if not IS_PUBLIC_DEMO:
+        try:
+            client = get_supabase_client()
+        except Exception:
+            logging.warning("Monthly execution storage client unavailable")
+    return {
+        "gate_reader": monthly_today_gate,
+        "cash_krw": get_cash_available_for_dca(None),
+        "store": {"client": client, "owner_email": CURRENT_USER_EMAIL,
+                  "accounts": list(st.session_state.get("acc_filter", []))},
+    }
+
+
 def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summary, monthly_logs_df=None):
     from stock_lab_core.monthly_rebalance_view import render_monthly_rebalancing_calculator as render_calculator
 
@@ -3869,6 +3907,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
     render_calculator(
         st, holdings_table, usdkrw, portfolio_summary, monthly_logs_df,
         signal_multiplier=_rebcalc_signal_multiplier, signal_scope_valid=globals().get("monthly_signal_cache_scope_valid", lambda: True)(),
+        execution_context=globals().get("monthly_execution_context", lambda: None)(),
         CURRENT_USER_EMAIL=CURRENT_USER_EMAIL, IS_PUBLIC_DEMO=IS_PUBLIC_DEMO,
         save_monthly_logs_db=save_monthly_logs_db,
     )
