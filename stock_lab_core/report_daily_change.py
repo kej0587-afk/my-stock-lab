@@ -324,14 +324,19 @@ def sector_leader_change(context, market):
 def completed_event_changes(context, pipeline):
     """'오늘 달라진 점' for results that became official on the report's session dates (no forecast, no reading)."""
     from stock_lab_core.report_presentation import kst_time
+    from stock_lab_core.report_policy_panel import BANK_NAMES, central_bank_result_text
     days = {d for d in (context.get("sessions") or {}).values() if d}
     changes = []
     for row in records(context.get("central_bank_results")):
         if row.get("status") != "official" or text(row.get("date")) not in days:
             continue
-        action = {"hold": "동결", "hike": "인상", "cut": "인하"}.get(row.get("action"), "결정")
         at = kst_time(row["release_at"]) if row.get("release_at") else text(row.get("date")) + " · 시각 미제공"
-        changes.append(f"{text(row.get('bank'))} 정책 결정 발표 완료: {action}({at}, 공식 성명)")
+        name = BANK_NAMES.get(row.get("bank"), text(row.get("bank")))
+        if row.get("bank") == "BOK":
+            changes.append(f"{name} 기준금리 결정 발표 완료: {central_bank_result_text(row)}({at}, 공식 결정문)")
+            continue
+        action = {"hold": "동결", "hike": "인상", "cut": "인하"}.get(row.get("action"), "결정")
+        changes.append(f"{name} 정책 결정 발표 완료: {action}({at}, 공식 성명)")
     for row in (pipeline or {}).get("events", []):
         if row.get("event_status") != "released" or text(row.get("date")) not in days:
             continue

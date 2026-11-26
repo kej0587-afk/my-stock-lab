@@ -1,4 +1,4 @@
-"""Official FOMC/BOJ decisions, separate from calendars and daily rate series.
+"""Official FOMC/BOJ/BOK decisions, separate from calendars and daily rate series.
 
 ``fetch_central_bank_results(now=None)`` returns one row per bank. ``date`` is
 the KST release date when its time is published; ``decision_date`` is the
@@ -22,13 +22,18 @@ from zoneinfo import ZoneInfo
 from lxml import html as html_parser
 import requests
 
-from stock_lab_core.release_calendar import FOMC_URL, _clock, _fomc_events
+from stock_lab_core.release_calendar import BOK_URL, FOMC_URL, _BOK_2026_DATES, _clock, _fomc_events
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
 
 BOJ_CALENDAR_URL = "https://www.boj.or.jp/en/mopo/mpmsche_minu/index.htm"
 BOJ_STATEMENTS_URL = "https://www.boj.or.jp/en/mopo/mpmdeci/state_{year}/"
+# The BOK press list shows "콘텐츠 준비중"; the main page links the latest 통화정책방향 (2026-11-26 check).
+BOK_MAIN_URL = "https://www.bok.or.kr/portal/main/main.do"
+BOK_VIEW_PATH = "/portal/bbs/P0000559/view.do"
+_BOK_VIEW_QUERY = re.compile(r"nttId=\d{1,12}&menuNo=200690")
+_BOK_TITLE = re.compile(r"통화정책방향\s*\(\s*(\d{4})\s*\.\s*(\d{1,2})\s*\.\s*(\d{1,2})\s*\)")
 REQUEST_TIMEOUT = (2.0, 3.0)
 BANK_BUDGET_SECONDS = 15.0
 CACHE_TTL = 900
@@ -58,9 +63,12 @@ def _flat(value):
 
 def _official_url(url):
     parsed = urlsplit(url)
-    return (parsed.scheme == "https" and not parsed.username and not parsed.password
-            and parsed.netloc in {"www.federalreserve.gov", "www.boj.or.jp"}
-            and not parsed.query and not parsed.fragment)
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.fragment:
+        return False
+    if parsed.netloc == "www.bok.or.kr":  # only the main page and a 통화정책방향 press-release view
+        return ((parsed.path == "/portal/main/main.do" and not parsed.query)
+                or (parsed.path == BOK_VIEW_PATH and bool(_BOK_VIEW_QUERY.fullmatch(parsed.query))))
+    return parsed.netloc in {"www.federalreserve.gov", "www.boj.or.jp"} and not parsed.query
 
 
 def _request(url, deadline):
@@ -90,10 +98,10 @@ def _request(url, deadline):
         response.close()
 
 
-def _document(data):
+def _document(data, *, utf8=False):
     if not data or len(data) > MAX_BYTES:
         raise _Unavailable("invalid_html")
-    root = html_parser.fromstring(data)
+    root = html_parser.fromstring(data.decode("utf-8") if utf8 else data)
     for element in root.xpath("//script|//style|//noscript"):
         element.drop_tree()
     return root
@@ -272,18 +280,104 @@ def _boj_result(data, day, now, *, pdf=True):
                 release_precision="datetime" if release else "date", date=day.isoformat())
 
 
+def _bok_meeting_day(now):
+    """Latest verified 2026 schedule date (release_calendar fixture); other years stay unconfirmed."""
+    local = now.astimezone(_KST).date()
+    days = [date.fromisoformat(d) for d in _BOK_2026_DATES]
+    if local.year > max(d.year for d in days):
+        raise _Unavailable("verified_schedule_year_unavailable")
+    return _latest(days, local)
+
+
+def _title_date(value):
+    match = _BOK_TITLE.search(_flat(value))
+    return date(int(match[1]), int(match[2]), int(match[3])) if match else None
+
+
+def _bok_statement_link(data, day):
+    root = _document(data, utf8=True)
+    matches, titled, dated = set(), False, False
+    for anchor in root.xpath("//a[@href]")[:3000]:
+        found = _title_date(anchor.text_content())
+        if found is None:
+            continue
+        titled = True
+        if found != day:
+            continue
+        dated = True
+        url = urljoin(BOK_MAIN_URL, anchor.get("href").strip())
+        if _official_url(url) and urlsplit(url).path == BOK_VIEW_PATH:
+            matches.add(url)
+    if titled and not dated:  # the page lists 통화정책방향 links, none for this meeting yet
+        raise _Unavailable("statement_for_meeting_not_posted")
+    if len(matches) != 1:
+        raise _Unavailable("official_statement_link_unavailable")
+    return matches.pop()
+
+
+_BOK_CHANGE = re.compile(r"기준금리를(?:현재의|현)?(\d+\.\d+)%(?:수준)?에서(\d+\.\d+)%로(상향조정|인상|하향조정|인하)")
+_BOK_HOLD = re.compile(r"기준금리를(?:현재의|현)?(?:수준)?\(?(\d+\.\d+)%\)?(?:수준)?(?:에서|으로|로)(?:유지|동결)")
+
+
+def _bok_result(data, day):
+    root = _document(data, utf8=True)
+    if _title_date(" ".join(root.xpath("//title//text()"))) != day:
+        raise _Unavailable("decision_date_mismatch")
+    posted = [_flat(v.text_content()) for v in
+              root.xpath("//dd[contains(concat(' ', normalize-space(@class), ' '), ' date ')]")]
+    if len(posted) != 1 or not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", posted[0]) \
+            or date(*map(int, posted[0].split("."))) != day:
+        raise _Unavailable("registration_date_mismatch")
+    bodies = root.xpath("//div[contains(concat(' ', normalize-space(@class), ' '), ' dbdata ')]")
+    if not bodies:
+        raise _Unavailable("policy_decision_unrecognized")
+    # The page splits words ("3.25% 로", "하였다 ."), so match on text without whitespace.
+    paragraphs = [p for p in re.sub(r"\s+", "", bodies[0].text_content()).split("□") if p]
+    first = paragraphs[0] if paragraphs else ""
+    if not first.startswith("금융통화위원회는") or "기준금리" not in first:
+        raise _Unavailable("policy_decision_unrecognized")
+    changes, holds = _BOK_CHANGE.findall(first), _BOK_HOLD.findall(first)
+    if len(changes) + len(holds) != 1:
+        raise _Unavailable("policy_rate_unrecognized")
+    if changes:
+        previous, rate = _number(changes[0][0]), _number(changes[0][1])
+        up = changes[0][2] in {"상향조정", "인상"}
+        if rate == previous or (rate > previous) != up:
+            raise _Unavailable("policy_direction_mismatch")
+        action = "hike" if up else "cut"
+    else:
+        previous = rate = _number(holds[0])
+        action = "hold"
+    return dict(fact=f"BOK base rate: {previous:.2f}% -> {rate:.2f}% ({action}).", action=action,
+                policy_rate=rate, previous_rate=previous, rate_lower=None, rate_upper=None,
+                release_at=None, release_precision="date", date=day.isoformat())
+
+
+_BANKS = {
+    "FOMC": dict(calendar_url=FOMC_URL, market="US", indicator="US_FED_RATE_DECISION", source="Federal Reserve"),
+    "BOJ": dict(calendar_url=BOJ_CALENDAR_URL, market="JP", indicator="JP_BOJ_RATE_DECISION", source="Bank of Japan"),
+    "BOK": dict(calendar_url=BOK_URL, market="KR", indicator="KR_BOK_RATE_DECISION", source="Bank of Korea"),
+}
+
+
 def _load_bank(bank, now):
-    calendar_url = FOMC_URL if bank == "FOMC" else BOJ_CALENDAR_URL
-    row = dict(bank=bank, event=f"{bank} policy decision", market="US" if bank == "FOMC" else "JP",
-               indicator="US_FED_RATE_DECISION" if bank == "FOMC" else "JP_BOJ_RATE_DECISION",
-               fact=None, date=None, decision_date=None, scheduled_date=None,
-               source="Federal Reserve" if bank == "FOMC" else "Bank of Japan",
+    spec = _BANKS[bank]
+    calendar_url = spec["calendar_url"]
+    row = dict(bank=bank, event=f"{bank} policy decision", market=spec["market"], indicator=spec["indicator"],
+               fact=None, date=None, decision_date=None, scheduled_date=None, source=spec["source"],
                source_url=calendar_url, calendar_url=calendar_url, status="missing", reason="",
-               action=None, policy_rate=None, rate_lower=None, rate_upper=None, unit="%",
+               action=None, policy_rate=None, previous_rate=None, rate_lower=None, rate_upper=None, unit="%",
                release_at=None, release_precision="unconfirmed", checked_at=now.isoformat(),
                from_cache=False, price_reaction_verified=False)
     deadline = time.monotonic() + BANK_BUDGET_SECONDS
     try:
+        if bank == "BOK":  # schedule from the verified fixture; no request for the calendar
+            day = _bok_meeting_day(now)
+            row.update(scheduled_date=day.isoformat(), source_url=BOK_MAIN_URL)
+            url = _bok_statement_link(_request(BOK_MAIN_URL, deadline), day)
+            row["source_url"] = url
+            row.update(_bok_result(_request(url, deadline), day), status="official", decision_date=day.isoformat())
+            return row
         calendar = _request(calendar_url, deadline)
         if bank == "FOMC":
             local = now.astimezone(ZoneInfo("America/New_York"))
@@ -309,7 +403,7 @@ def _load_bank(bank, now):
 
 
 def fetch_central_bank_results(now=None):
-    """Return FOMC and BOJ rows; max five requests, no retries or failed cache.
+    """Return FOMC, BOJ and BOK rows; max five requests per bank, no retries or failed cache.
 
     Naive ``now`` follows release_calendar's UTC convention. Each bank has a
     request/size budget. Only verified decisions are cached for 15 minutes;
@@ -318,7 +412,7 @@ def fetch_central_bank_results(now=None):
     """
     now = _clock(now)
     results = []
-    for bank in ("FOMC", "BOJ"):
+    for bank in ("FOMC", "BOJ", "BOK"):
         local = now.astimezone(ZoneInfo("America/New_York") if bank == "FOMC" else _KST)
         key = (bank, local.date().isoformat())
         with _LOCK:
