@@ -313,8 +313,11 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     judgment = [line for line in judgment if not line.startswith("**시장 해석** · ")]
 
     head = [title, ""]
+    pipeline = build_earnings_pipeline(context, summary_rows, news, now)
+    from stock_lab_core.report_daily_change import completed_event_changes
+    changes = [*synthesis.get("daily_changes", ()), *completed_event_changes(context, pipeline)]
     quick = _quick_summary_lines(judgment, current_state, indices, states, interpretation, context,
-                                 changes=synthesis.get("daily_changes", ()))
+                                 changes=changes)
     board = ["## 지수", "", *indices]
 
     macro_lines = ["## 매크로", "", *macro]
@@ -332,7 +335,6 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     events = ["## 주요 기업과 사건", "", *(["**해외·공통 재료**", *shared] if shared else
                                       ["시장별 기업 실적·사건은 미국·한국 시장 구역에 있습니다.", ""])]
 
-    pipeline = build_earnings_pipeline(context, summary_rows, news, now)
     explained = {(r.get("link") or r.get("url")) for r in synthesis.get("background_news", [])}
     market_blocks = {}
     for market, label in (("KR", "한국 시황"), ("US", "미국 시황")):
