@@ -29781,7 +29781,17 @@ def render_today_unified_briefing_panel(
             # Rebooted session: a report made now has no holdings and no company earnings (not "0 results").
             st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
                        "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
+        # Last completed report first (owner-bound); a newly generated one replaces and is stored.
+        from stock_lab_core import report_latest
+        latest_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+        latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
+                        if latest_owner and supabase is not None else None)
+        report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, store=latest_store,
+                                          build_id=get_report_build_info(__file__)["loaded_source_sha256"])
+        if notice := report_latest.restored_notice(st.session_state):
+            st.info(notice)
         render_today_market_memo_panel(df)
+        report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, store=latest_store)
         return
     if detail == "키움":
         render_kiwoom_market_evidence("today_kiwoom")
