@@ -31,3 +31,5 @@
 - 새 테스트: `tests/test_earnings_profit_kind.py` 3개(네 행 분리, 미표기 EPS, DART·PDF 매핑), 기존 PANW 테스트를 새 행 기준으로 수정.
   `tests/test_report_reading.py` 절 순서에 마무리 추가.
 - 전체 테스트: 33 failed / 10,142 passed, 실패 목록은 `main`과 같음. `check_refactor.py --scope report`: 208 passed, 0 failed.
+- 배포: PR #76 병합, 운영 재부팅 17:29 KST. 운영 화면 확인은 아직 못 했습니다(재부팅 직후 앱 브라우저 연결이 끊김).
+  다음 점검 때 확인할 것: 시황 생성 결과의 실적 이익 4행·오늘 달라진 점·마무리 절, 월적립 표의 오늘 추가 가능액·현재 대기액·실제 집행률 열.
