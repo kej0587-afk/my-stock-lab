@@ -16,7 +16,7 @@ from io import BytesIO
 import re
 import threading
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 from lxml import html as html_parser
@@ -294,6 +294,20 @@ def _title_date(value):
     return date(int(match[1]), int(match[2]), int(match[3])) if match else None
 
 
+def _bok_view_url(url):
+    """Canonical press-release view URL. The main page adds navigation parameters
+    (searchCnd, depth, programType, relate ...) to the same nttId (2026-11-26 check)."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc != "www.bok.or.kr" or parsed.path != BOK_VIEW_PATH:
+        return None
+    query = parse_qs(parsed.query)
+    ntt, menu = query.get("nttId", []), query.get("menuNo", [])
+    if len(ntt) != 1 or not re.fullmatch(r"\d{1,12}", ntt[0]) or menu != ["200690"]:
+        return None
+    canonical = f"https://www.bok.or.kr{BOK_VIEW_PATH}?nttId={ntt[0]}&menuNo=200690"
+    return canonical if _official_url(canonical) else None
+
+
 def _bok_statement_link(data, day):
     root = _document(data, utf8=True)
     matches, titled, dated = set(), False, False
@@ -305,8 +319,8 @@ def _bok_statement_link(data, day):
         if found != day:
             continue
         dated = True
-        url = urljoin(BOK_MAIN_URL, anchor.get("href").strip())
-        if _official_url(url) and urlsplit(url).path == BOK_VIEW_PATH:
+        url = _bok_view_url(urljoin(BOK_MAIN_URL, anchor.get("href").strip()))
+        if url:
             matches.add(url)
     if titled and not dated:  # the page lists 통화정책방향 links, none for this meeting yet
         raise _Unavailable("statement_for_meeting_not_posted")
@@ -333,6 +347,8 @@ def _bok_result(data, day):
         raise _Unavailable("policy_decision_unrecognized")
     # The page splits words ("3.25% 로", "하였다 ."), so match on text without whitespace.
     paragraphs = [p for p in re.sub(r"\s+", "", bodies[0].text_content()).split("□") if p]
+    if paragraphs and paragraphs[0] == "통화정책방향":  # the body repeats the title before the first □ (2026-11-26 page)
+        paragraphs = paragraphs[1:]
     first = paragraphs[0] if paragraphs else ""
     if not first.startswith("금융통화위원회는") or "기준금리" not in first:
         raise _Unavailable("policy_decision_unrecognized")
