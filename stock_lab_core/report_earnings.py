@@ -211,7 +211,19 @@ def earnings_coverage_lines(pipeline):
     coverage = pipeline["coverage"]
     filing_note = (f"정기보고서 확인 {coverage['filings']}개(실적 발표일 별도) · "
                    if coverage.get("filings") else "")
-    lines = ["", "**실적 연결 상태**",
+    from stock_lab_core.earnings_pipeline import coverage_state
+    state = coverage_state(coverage)
+    if state["not_computed"]:
+        status = ("실적 점검 상태: **오늘 점검 미계산** · 보유·관심 종목 실적은 연결하지 않았습니다(확인 결과 0개가 아님). "
+                  "오늘 점검 계산 후 다시 생성하면 연결됩니다.")
+    else:
+        parts = [f"공식 발표 확인 {state['official']}개" if state["official"] else "공식 발표 확인 결과 0개"]
+        if state["failed"]:
+            parts.append(f"일부 조회 실패 {state['failed']}개(시간초과·한도·오류, 다시 생성 시 재조회)")
+        if state["no_official"]:
+            parts.append(f"공식값 없음 {state['no_official']}개(조회는 됐으나 해당 공식 자료 미확인)")
+        status = "실적 점검 상태: " + " · ".join(parts)
+    lines = ["", "**실적 연결 상태**", status,
              f"점검 기업 {coverage['registered']}개 · 공식 발표 확인 기업 {coverage['official']}개 · "
              f"{filing_note}기존 뉴스에서 발견 {coverage['discovered']}개(서로 중복 가능). "
              "전시장 실적 캘린더가 아니라 기존 수집자료의 연결 범위입니다.",

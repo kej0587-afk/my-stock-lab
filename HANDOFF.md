@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-24 KST. Read before large source files or edits.
+Updated: 2026-11-26 KST. Read before large source files or edits.
 This is the current work order. Historical next-task instructions are superseded.
 
 ## Resume Safely
@@ -569,6 +569,27 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Current work order (user, 2026-11-26 21:18 KST; replaces the order below; status table §4):** errors and speed before new features.
+(1) prod-check records up to date (done: status table v3). (2) incomplete results visible to the user: report made right after a reboot
+before Today shows 0 companies → now labelled `오늘 점검 미계산` with counts for 확인 결과 0개 / 일부 조회 실패 / 공식값 없음 and a
+warning above the 시황 view (PR after #82); BOK MPC '예정' fixed by PR #82 (collector `central_bank_results` BOK, main-page link →
+통화정책방향 decision paragraph; live check on the home PC pending, bok.or.kr blocked from the cloud); still to check: KR export data
+timeout, US filing time budget, classify the 33 known test failures by effect on report / decision / account amounts. (3) measure the
+deployed version (Today 100 tickers 115 s, report 113 s before): first boot / same-condition rerun / plain refresh, time to first readable
+summary and to completion, external requests, missing counts, decision/amount parity; fix the slowest stage first. (4) report and
+observatory quality → needed refactoring → short-term trading. (5) Android/Google Play: review item only. Result format: one table
+`문제 | 사용자에게 보이는 영향 | 수정 전후 수치 또는 화면 | 운영 확인 상태 | 남은 일`. Decision rules and monthly multipliers unchanged.
+
+**Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
+(a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
+update of the last bar's price/volume during the session; measure first-chart and bar-switch time on SOXL; show realtime support,
+delay and available history per market. (b) moving averages: user-entered periods incl. 5/20/120/240/1000, toggle each line, saved
+settings; default computed on the chart's own bars; review daily MAs over intraday bars; show "데이터 부족" when history is short
+(e.g. 1000-day). (c) short-term trading criteria (KR/US stocks, ETFs, leveraged ETFs; SOXL first): define the "−20%" reference price
+first, replay +10% vs +20% exits on the same entries (win rate, avg P/L after costs, max loss, holding days). Long-term decisions,
+monthly DCA and L3 stay. When errors/speed are done: one summary split into existing implementation / new development / needed price
+data and cost for these three items.
 
 **Work order after C-6/C-11 (2026-11-26 14:40 KST, full status table `/mnt/project-files/status/20261126_stock_lab_status_v3.md`):**
 (1)–(3) C-8/C-9/C-12/C-13 **decided 2026-11-26 15:03 KST (C-8 one-tranche-per-day rule 15:13) and applied** (doc `docs/maintenance/20261126_c8_c9_c12_c13_apply.md`): C-12 monthly 0x for the 3 codes when the profit condition holds; C-9 screen text '100% = 1x of the ticker's normal monthly share'; C-13 macro missing/recovery log + monthly caption; C-8 crisis fund (time split 6, guard respect, 1 tranche per ticker per day, per-ticker fund + account cash check, candidate without a saved fund). Tables created 15:53 KST, PR #69/#70 rebooted 15:54, monthly panel and precision hold panels checked 15:56–16:00 KST. Supabase tables `crisis_fund_plans`/`crisis_fund_executions`/`macro_status_events` (SQL in `db_schema.get_crisis_macro_log_create_sql`). (4) C-7 hold panel: **comparison done 2026-11-26 (doc `docs/maintenance/20261126_c7_hold_panel_compare.md`), **user chose (c) 2026-11-26 and applied** (§8 of that doc): single verdict from hold_judgement, lower panel = evidence (fin trend, macro), '현재 보유분 관리' and '오늘 추가매수' shown separately (gate only), loss emergency exit needs MA 역배열 (445 states moved to 🚨/📉/⚠️, table §8.2; fin 0/1 boundary tests §8.3), fin ≤0 exit kept; verdict shown once (upper panel), lower panel evidence only (PR #72, rebooted 16:24, checked 16:27 KST). (5) C-10 YELLOW scout + D12b: **comparison done 2026-11-26 (doc `docs/maintenance/20261126_c10_d12b_yellow_leader_compare.md`), **user kept both as is (2026-11-26, comparison done · 현행 유지)**: YELLOW new entry stays 1/3 first scout, holding adds keep shortfall/monthly formula, leader overweight block stays. (6) long-term stock monthly execution rate: **analysis done 2026-11-26** (doc `docs/maintenance/20261126_long_term_stock_execution_rate.md`, mock account, C1 as is): planned stock-months executable at least once 14.6% (149/1,019), replay executable rate by amount 14.6%; months with no executable day mostly blocked first by stock timing (MTF trend damage 382, R/R/overheat/condition 448), market defense 39; timing-only full-month blocks 89. App records (16:43 KST): plans and executions tables empty. Monthly screen now uses the standard names (PR #74, rebooted 16:51, checked 16:52–16:53 KST) (월계획액 · 누적 집행기록액 · 남은 계획액 · 오늘 추가 가능액 · 현재 대기액 · 계획 초과 집행액 · 앱 기록 기준 실제 집행률; 0원 vs 미확인), `monthly_execution.standard_amounts`; gate and amounts unchanged. User 2026-11-26 17:10 KST: keep C1; 870 never-executable months replayed under 6 options (doc §5): single relaxations R/R 108, overheat 0, condition wait 153, MTF 80 months; all four together 635 months (73.0%), Δ 29,325,000 of 40,200,000 (72.9%); status 'analysis done · C1 kept'. Report overhaul started: earnings profit rows split into 영업이익/순이익/GAAP EPS/조정 EPS (unlabelled EPS separate), '오늘 달라진 점' always shown, closing section '마무리 · 보유 종목 영향과 다음 확인 사항' (doc `docs/maintenance/20261126_report_overhaul_earnings_closing.md`). PR #76 rebooted 17:29 KST; PR #78 (sector leader change, completed official results) merged 19:41. **Rebooted 20:33 KST (main e079af9e) and prod-checked 20:36–20:43 KST** (doc §6): profit rows (SK hynix/PANW/NVDA/INTC), sector-leader lines in '오늘 달라진 점' (KR 4, US 12), closing section (holdings rows copied from the portfolio table, 5 next items), monthly columns (남은 = 오늘 추가 가능액 + 현재 대기액 for all 7 rows). Not seen in prod: a '발표 완료' line (no official result on the 11-26 KR / 11-25 US sessions; BOK MPC 11-26 still 예정 in the report). Follow-up: PANW EPS from the net income sentence fixed by PR #80 (rebooted 20:56 KST, checked 21:03 report: GAAP EPS $0.57 and 조정 EPS $1.05 rows filled, doc §7). BOK MPC official result not collected yet: page structure recorded in `docs/maintenance/20261126_bok_mpc_source_structure.md` (latest decision via main-page link `통화정책방향 (date)` → P0000559 view `div.dbdata`; press list pages show "준비중"; meeting table decision cell empty on the day). Next: build the collector from that doc. (7) report: #7

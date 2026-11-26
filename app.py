@@ -29776,6 +29776,10 @@ def render_today_unified_briefing_panel(
         render_today_action_news_panel(df)
         return
     if detail == "시황":
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            # Rebooted session: a report made now has no holdings and no company earnings (not "0 results").
+            st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
+                       "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
         render_today_market_memo_panel(df)
         return
     if detail == "키움":
