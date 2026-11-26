@@ -76,3 +76,11 @@ def test_dart_components_and_pdf_rows_map_without_new_numbers():
            "source_url": "https://images.samsung.com/x.pdf"}
     assert set(profit_rows(pdf)) == {"영업이익"}
     assert profit_rows({"status": "missing"}) == {}
+
+
+def test_net_income_sentence_with_per_share_fills_both_rows():
+    # 2026-11-26 20:40 report: PANW GAAP net income sentence also states GAAP EPS.
+    panw = "GAAP net income for the fiscal first quarter 2027 was $383 million, or $0.57 per diluted share."
+    assert classify_sentence(panw) == {"순이익": "GAAP", "GAAP EPS": "GAAP"}
+    assert classify_sentence("Net income per diluted share was $1.20.") == {"EPS(회계기준 미표기)": "기준 미표기"}
+    assert classify_sentence("Net income was $2.5 billion.") == {"순이익": "기준 미표기"}
