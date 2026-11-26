@@ -90,7 +90,7 @@ def _multiplier(tap, bucket, dip_level=0, decision=None):
 
 def test_shared_monthly_plan_equals_the_calculator_rows():
     holdings = _holdings()
-    signals = {"QQQ": ENGINE["dec"], "TQQQ": "⚡레버리지 조건부 DCA", "005930.KS": "-", "NVDA": "🟢눌림 매수"}
+    signals = {"QQQ": ENGINE["dec"], "TQQQ": "⚡레버리지 조건부 DCA", "005930.KS": "⏸️비중 충족: 보유 유지", "NVDA": "🟢눌림 매수"}
     decisions = {"QQQ": ENGINE}
     for redistribute in (True, False):
         for always in (set(), {"005930.KS"}):

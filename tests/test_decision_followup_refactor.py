@@ -47,7 +47,8 @@ def restore_followup_for_ast(fn):
     local_helper = next(n for n in baseline_function().body if isinstance(n, ast.FunctionDef)
                         and n.name == "_set_decision")
     fn.body.insert(fn.body.index(choice(fn)), deepcopy(local_helper))
-    return fn
+    from tests.explicit_weights_ast_contract import restore_weight_defaults  # C-6/C-11 step 2 defaults only
+    return restore_weight_defaults(fn)
 
 
 def defaults():

@@ -1,5 +1,7 @@
 """SMC extraction parity: original expressions, complete results and failure order."""
 import ast
+
+from tests.explicit_weights_ast_contract import restore_weight_defaults
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -92,7 +94,7 @@ def test_dependency_failure_not_retried_or_hidden(app_module, failed):
 
 def test_only_assembly_extracted_with_same_expressions_and_wiring(app_module):
     current = function((ROOT / "app.py").read_text(encoding="utf-8-sig"))
-    assert ast.dump(restore_smc_for_ast(current)) == ast.dump(baseline())
+    assert ast.dump(restore_weight_defaults(restore_smc_for_ast(current))) == ast.dump(baseline())
     helper = next(n for n in ast.parse(Path(decision_smc.__file__).read_text(encoding="utf8")).body
                   if isinstance(n, ast.FunctionDef))
     start, end = smc_block(baseline())

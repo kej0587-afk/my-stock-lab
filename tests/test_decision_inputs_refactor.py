@@ -1,6 +1,8 @@
 """Exact retained-baseline checks for price/technical input preparation."""
 
 import ast
+
+from tests.explicit_weights_ast_contract import restore_weight_defaults
 from copy import deepcopy
 from functools import lru_cache
 import json
@@ -165,7 +167,7 @@ def test_input_exceptions_are_not_swallowed_or_retried():
 def test_only_input_extraction_and_reused_row_reads_changed():
     source = (ROOT / "app.py").read_text(encoding="utf-8-sig")
     current = function(source)
-    assert ast.dump(restore_inputs_for_ast(current)) == ast.dump(baseline_function())
+    assert ast.dump(restore_weight_defaults(restore_inputs_for_ast(current))) == ast.dump(baseline_function())
     helpers = {n.name: n for n in ast.parse(Path(decision_inputs.__file__).read_text(encoding="utf8")).body
                if isinstance(n, ast.FunctionDef)}
     class ReusedReads(ast.NodeTransformer):

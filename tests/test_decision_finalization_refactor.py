@@ -1,5 +1,7 @@
 """Exact safety/sizing and complete-result parity against c623569b."""
 import ast
+
+from tests.explicit_weights_ast_contract import restore_weight_defaults
 from copy import deepcopy
 import json
 import os
@@ -70,7 +72,7 @@ def test_final_outputs_order_and_nonmutation(app_module, inputs):
 def test_only_final_block_changes_and_all_expressions_are_identical():
     from stock_lab_core import decision_finalization
     current = function((ROOT / "app.py").read_text(encoding="utf-8-sig"))
-    assert ast.dump(restore_finalization_for_ast(current)) == ast.dump(baseline())
+    assert ast.dump(restore_weight_defaults(restore_finalization_for_ast(current))) == ast.dump(baseline())
     helper = next(n for n in ast.parse(Path(decision_finalization.__file__).read_text(encoding="utf8")).body
                   if isinstance(n, ast.FunctionDef))
     start, end = final_block(baseline())

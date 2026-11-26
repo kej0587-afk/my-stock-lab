@@ -340,7 +340,7 @@ def _render_completion(st, swing_rows, buyable_rows, active_rows, _done_key, _th
 
 def render_monthly_rebalancing_calculator(
     st, holdings_table, usdkrw, portfolio_summary, monthly_logs_df=None, *,
-    signal_multiplier, CURRENT_USER_EMAIL, IS_PUBLIC_DEMO, save_monthly_logs_db,
+    signal_multiplier, CURRENT_USER_EMAIL, IS_PUBLIC_DEMO, save_monthly_logs_db, signal_scope_valid=True,
 ):
     import datetime as _dt
 
@@ -348,9 +348,12 @@ def render_monthly_rebalancing_calculator(
     _done_key = f"rebcalc_done_{_this_month}"
     _initialize_state(st, _done_key)
     _signal_cache = st.session_state.get("_ticker_signal_cache", {})
-    _has_signals = bool(_signal_cache)
+    _has_signals = bool(_signal_cache) and bool(signal_scope_valid)
 
     with st.expander("💰 월 적립 리밸런싱 계산기", expanded=False):
+        if _signal_cache and not signal_scope_valid:
+            st.warning("계좌 선택이나 보유 입력이 신호 계산 이후 바뀌었습니다. 이전 범위의 신호는 쓰지 않으며, "
+                       "분석을 다시 실행하기 전까지 모든 종목이 신호 미확인입니다.")
         monthly, carryover, total_invest, redistribute_mode = _render_inputs(st, _this_month, _has_signals)
         if holdings_table is None or holdings_table.empty or total_invest <= 0:
             st.info("적립금을 입력하면 계산이 시작됩니다.")
@@ -373,17 +376,22 @@ def render_monthly_rebalancing_calculator(
             signal_decisions=st.session_state.get("_ticker_signal_decision_cache", {}),
             always_invest_set=always_invest_set, redistribute_mode=redistribute_mode,
             accumulated=st.session_state["rebcalc_accum"], signal_multiplier=signal_multiplier, month=_this_month,
+            signal_scope_valid=signal_scope_valid,
+            account_scope=st.session_state.get("_ticker_signal_cache_context"),
         )
         calc_rows = plan["rows"]
         _refresh_accumulated_state(st, calc_rows)
         # C-3: the leveraged L3 tranche reads this month's allocation so the monthly contribution and the
         # crisis budget never fill the same target shortfall twice (KRW, per ticker).
-        st.session_state["_monthly_plan_alloc"] = {"month": _this_month, "alloc": plan["alloc"]}
+        st.session_state["_monthly_plan_alloc"] = {"month": _this_month, "alloc": plan["alloc"],
+                                                   "account_scope": plan.get("account_scope")}
 
         active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
-        blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]
+        unknown_rows     = [r for r in calc_rows if r.get("signal_unknown")]
+        blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0 and not r.get("signal_unknown")]
         swing_rows       = [r for r in blocked_rows if r["bucket"] == "swing"]
-        leverage_rows    = [r for r in calc_rows if r["bucket"] == "leverage"]
+        # Unknown-signal leverage rows have no multiplier to show; they are listed in the 미확인 caption.
+        leverage_rows    = [r for r in calc_rows if r["bucket"] == "leverage" and not r.get("signal_unknown")]
         lev_active       = [r for r in leverage_rows if r["multiplier"] > 0]
         lev_blocked      = [r for r in leverage_rows if r["multiplier"] == 0]
         underalloc_rows  = [r for r in active_rows if r["is_underalloc"]]
@@ -393,6 +401,11 @@ def render_monthly_rebalancing_calculator(
         remainder_krw = _render_budget_summary(
             st, active_rows, blocked_rows, total_invest, usdkrw, redistribute_mode,
         )
+        if unknown_rows:
+            st.caption(
+                f"❔ 신호 미확인 {len(unknown_rows)}종목({', '.join(r['name'] for r in unknown_rows)}): "
+                "이번 달 계획 금액 미확인 · 오늘 실행 0 · 다른 종목에 재분배하지 않습니다. 신호가 복구되면 다시 계산합니다."
+            )
         _render_accumulation(st, underalloc_rows)
         _render_leverage(st, leverage_rows, lev_active, lev_blocked)
         _render_target_shares(st, calc_rows, portfolio_summary, usdkrw)

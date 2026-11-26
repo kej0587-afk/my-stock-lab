@@ -71,7 +71,8 @@ def test_original_expressions_order_constants_and_signature_are_preserved():
         if name == "calc_scores_and_decision":
             from tests.decision_finalization_reference import restore_finalization_for_ast
             current = restore_finalization_for_ast(current)
-        assert ast.dump(current) == ast.dump(old)
+        from tests.explicit_weights_ast_contract import restore_weight_defaults
+        assert ast.dump(restore_weight_defaults(current)) == ast.dump(old)
 
 
 BOUNDARIES = {

@@ -12,6 +12,49 @@ from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
 
+# C-6/C-11 step 2 (2026-11-26, user decisions 3 and 4). Applied after the unchanged base allocation.
+UNKNOWN_SIGNAL_LABEL = "신호 미확인 · 데이터확인"
+UNKNOWN_SIGNAL_STATUS = "❔ 신호 미확인"
+# Always-invest no longer overrides these: hard block, target 0, target overweight/filled, data check.
+ALWAYS_INVEST_SAFETY_CODES = frozenset({
+    "HARD_BLOCK_FINANCIAL_F", "HARD_BLOCK_MACRO_STORM",
+    "TARGET_ZERO_NO_ADD", "LEVERAGED_TARGET_ZERO_DCA_EXCLUDED",
+    "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "TARGET_FILLED_HOLD", "TARGET_FILLED_S_GRADE_WAIT",
+    "BELOW_COST_TARGET_FILLED", "NEW_ETF_TARGET_FILLED", "LEVERAGED_TARGET_FILLED_DCA_EXCLUDED",
+    "DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA",
+})
+_EMPTY_SIGNALS = ("-", "", "nan", "None", "none")
+
+
+def signal_is_missing(tap_raw):
+    """No valid signal: no label, or the engine run failed (계산 실패). Never estimated (decision 3)."""
+    tap = str(tap_raw).strip()
+    return tap in _EMPTY_SIGNALS or tap.startswith("계산 실패")
+
+
+def always_invest_blocked(decision):
+    code = str(decision.get("decision_code") or "") if isinstance(decision, dict) else ""
+    return code in ALWAYS_INVEST_SAFETY_CODES
+
+
+def apply_monthly_signal_safety(calc_rows, always_invest_set, signal_multiplier, signal_decisions=None):
+    """Decision 3: a missing signal gets no estimate (multiplier 0, plan 미확인, flagged signal_unknown).
+    Decision 4: always-invest keeps the engine multiplier when the engine code is a safety block.
+    Rows are changed in place before redistribution; every other row is left exactly as built."""
+    decisions = signal_decisions or {}
+    for r in calc_rows:
+        r["signal_unknown"] = signal_is_missing(r["tap_raw"])
+        if r["signal_unknown"]:
+            r["multiplier"], r["eff_alloc"] = 0.0, 0.0
+            r["tap_disp"] = UNKNOWN_SIGNAL_LABEL + (" → 항상투자 보류" if r["ticker"] in always_invest_set else "")
+            continue
+        decision = decisions.get(r["ticker"])
+        if r["ticker"] in always_invest_set and r["bucket"] != "leverage" and always_invest_blocked(decision):
+            r["multiplier"] = signal_multiplier(r["tap_raw"], r["bucket"], dip_level=r["dip_level"], decision=decision)
+            r["eff_alloc"] = r["base_alloc"] * r["multiplier"]
+            r["tap_disp"] = f"{r['tap_raw']} → 항상투자 보류(안전 차단)"
+    return calc_rows
+
 
 def prepare_rebalance_holdings(holdings_table):
     df = holdings_table.copy()
@@ -199,19 +242,33 @@ def apply_share_counts(calc_rows, usdkrw, accumulated):
 
 
 def build_rebalance_plan(eligible, target_w_sum, total_invest, usdkrw, signal_cache,
-                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, signal_decisions=None):
+                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, signal_decisions=None,
+                         signal_scope_valid=True):
     """Build new rows; never modify the caller's holdings or accumulated-money map."""
+    if not signal_scope_valid:
+        # Signals computed for another account scope are invalid, never reused (decision 3).
+        signal_cache, signal_decisions = {}, {}
     calc_rows = build_base_allocations(
         eligible, target_w_sum, total_invest, signal_cache, always_invest_set, signal_multiplier,
         signal_decisions=signal_decisions,
     )
-    redistribute_allocations(calc_rows, total_invest, redistribute_mode)
+    apply_monthly_signal_safety(calc_rows, always_invest_set, signal_multiplier, signal_decisions)
+    # Unknown-signal amounts are never moved to other tickers: redistribute among known rows only.
+    known = [r for r in calc_rows if not r["signal_unknown"]]
+    redistribute_allocations(known, total_invest, redistribute_mode)
+    for r in calc_rows:
+        if r["signal_unknown"]:
+            r["final_alloc"] = 0.0
     apply_share_counts(calc_rows, usdkrw, accumulated)
+    for r in calc_rows:
+        if r["signal_unknown"]:
+            r["status"] = UNKNOWN_SIGNAL_STATUS
     return calc_rows
 
 
 def compute_monthly_plan(holdings_table, *, total_invest, usdkrw, signal_cache, signal_decisions,
-                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, month):
+                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, month,
+                         signal_scope_valid=True, account_scope=None):
     """C-6/C-11 step 1: the calculator's plan as one shared, widget-free call (same results as before).
 
     Returns None when there is nothing to plan (no holdings, no eligible rows, zero target sum), with the
@@ -228,8 +285,11 @@ def compute_monthly_plan(holdings_table, *, total_invest, usdkrw, signal_cache, 
         return {"status": "zero_target", "rows": [], "alloc": {}, "month": month, "eligible": eligible}
     rows = build_rebalance_plan(
         eligible, target_w_sum, total_invest, usdkrw, signal_cache, always_invest_set, redistribute_mode,
-        accumulated, signal_multiplier, signal_decisions=signal_decisions,
+        accumulated, signal_multiplier, signal_decisions=signal_decisions, signal_scope_valid=signal_scope_valid,
     )
-    alloc = {str(r.get("ticker", "")).upper(): float(r.get("final_alloc") or 0.0) for r in rows}
+    # Unknown-signal tickers carry NaN (미확인) so the L3 read never takes them as a 0 plan.
+    alloc = {str(r.get("ticker", "")).upper(): (float("nan") if r.get("signal_unknown") else float(r.get("final_alloc") or 0.0))
+             for r in rows}
     return {"status": "ok", "rows": rows, "alloc": alloc, "month": month, "eligible": eligible,
-            "target_w_sum": target_w_sum}
+            "target_w_sum": target_w_sum, "account_scope": account_scope,
+            "unknown": sorted(str(r.get("ticker", "")).upper() for r in rows if r.get("signal_unknown"))}

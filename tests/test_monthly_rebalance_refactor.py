@@ -1,4 +1,10 @@
-"""Exact UI, allocation and state parity with the pre-extraction calculator."""
+"""Exact UI, allocation and state parity with the pre-extraction calculator.
+
+C-6/C-11 step 2 (2026-11-26, user decision 3): an empty signal is no longer estimated (core 1.0 / leverage
+0.5); it becomes 미확인. Parity with the old calculator therefore holds for rows that have a signal, so the
+scenarios below use a non-empty label where they used "-". The new empty-signal rule is pinned in
+tests/test_monthly_signal_safety.py. ``signal_unknown`` is the one added row key and is dropped before comparing.
+"""
 
 import ast
 from copy import deepcopy
@@ -85,10 +91,17 @@ class UI(BaseUI):
         raise Rerun()
 
 
+FILLED = "보유 유지"  # a non-empty label; "-" (no signal) is 미확인 since step 2
+
+
+def monthly_signal_cache_scope_valid():
+    return True
+
+
 def scenario():
     frame = holdings()
     frame.loc[3, "bucket"] = "swing"
-    frame["기술적타점"] = ["분할 매수", "과열", "분할 매수", "-", "-", "-"]
+    frame["기술적타점"] = ["분할 매수", "과열", "분할 매수", FILLED, FILLED, FILLED]
     return frame
 
 
@@ -240,7 +253,7 @@ def calculate_pair(original_calculation, frame, *, total=750000., fx=1400., sign
     state_before = deepcopy(accumulated)
     result = build_rebalance_plan(eligible, float(eligible["목표비중"].sum()), total, fx,
         signals or {}, set(always), redistribute, accumulated or {}, env["_rebcalc_signal_multiplier"])
-    assert freeze(result) == freeze(env["calc_rows"])
+    assert freeze([{k: v for k, v in r.items() if k != "signal_unknown"} for r in result]) == freeze(env["calc_rows"])
     pd.testing.assert_frame_equal(frame, frame_before, check_exact=True)
     pd.testing.assert_frame_equal(eligible, eligible_before, check_exact=True)
     assert accumulated == state_before
@@ -255,7 +268,7 @@ def test_raw_amounts_share_counts_multipliers_and_statuses_are_exact(original_ca
     frame["매입가"] = rng.choice([0., 100., 11000.], len(frame))
     frame["목표비중"] = rng.choice(["0", "bad", "10", "20.001", "30", "-1"], len(frame))
     frame.loc[0, "목표비중"] = "40.123456789"
-    signals = {ticker: str(rng.choice(["분할 매수", "추세방어", "과열", "소액 1차", "-", "DCA 대기", "150% 적립"]))
+    signals = {ticker: str(rng.choice(["분할 매수", "추세방어", "과열", "소액 1차", FILLED, "DCA 대기", "150% 적립"]))
         for ticker in ["379810.KS", "MSFT", "SOXL", "ABC"]}
     calculate_pair(original_calculation, frame, signals=signals, always=["MSFT", "SOXL"] if seed % 3 else [],
         redistribute=bool(seed % 2), total=float(rng.choice([0., 1., 1000., 750000., 1000000.])),

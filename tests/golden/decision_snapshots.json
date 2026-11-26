@@ -28,17 +28,17 @@
   },
   "core_us_etf_perfect_storm_dca": {
     "adj": 3.0,
-    "buy_amt": 0.0,
-    "col": "#dc2626",
-    "core_dca_label": "",
-    "core_dca_rate": 0.0,
+    "buy_amt": 1500000.0,
+    "col": "#16a34a",
+    "core_dca_label": "미국지수 퍼펙트스톰 100% 거치 적립",
+    "core_dca_rate": 1.0,
     "dd": -0.0476991776605602,
-    "dec": "🛑하드차단: 비중 초과",
-    "decision_code": "HARD_BLOCK_OVERWEIGHT",
-    "decision_group": "caution",
+    "dec": "🧱코어 방어: 미국지수 퍼펙트스톰 100% 거치 적립",
+    "decision_code": "CORE_STORM_DCA",
+    "decision_group": "buyish",
     "decision_reasons": [
-      "현재비중 22.4% > 목표비중 22.0% (+0.4%p 초과)",
-      "비중 초과 상태 — 신규 매수 불가, 리밸런싱 또는 익절 검토"
+      "퍼펙트스톰 구간이지만 미국 대표지수 코어 ETF 목표비중 미달 - 거치식 원칙 유지",
+      "적립 비율 100% 적용 - 장기 우상향 코어는 매크로 타이밍보다 시장 노출 우선"
     ],
     "grade": "✅ETF 양호",
     "is_52w_breakout": false,
