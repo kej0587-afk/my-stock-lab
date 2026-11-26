@@ -34,7 +34,13 @@ def _metric_facts(packet, *, full=False):
             scope = f"{packet['fiscal_period']} 발표에서 제시 · 전망 대상 기간은 원문 기준 · 실제치 아님"
         # Keep the complete source sentence; truncating can remove a sign or unit.
         evidence = text(metric["text"]).replace("$", r"\$")
-        facts.append(f"{METRIC_LABELS[key]} ({scope}): {evidence} "
+        label = METRIC_LABELS[key]
+        if key == "profit":
+            # Name the measures this sentence actually states (영업이익·순이익·GAAP EPS·조정 EPS), never a blend.
+            from stock_lab_core.earnings_profit_rows import profit_rows
+            shown = [name for name, row in profit_rows(metric).items() if row.get("text") == metric.get("text")]
+            label = "·".join(shown) or label
+        facts.append(f"{label} ({scope}): {evidence} "
                      + f"[원문]({safe_link(metric['source_url'])})")
     return facts
 

@@ -86,12 +86,10 @@ def _result_detail_lines(row):
     lines = [f"**{name} · {row.get('fiscal_period', '')} 결과 대조**", "항목 | 확인 내용 | 근거", "--- | --- | ---"]
     for key, label in METRIC_LABELS.items():
         metric = row["result_metrics"].get(key, {})
+        if key == "profit":
+            lines.extend(_profit_lines(metric))
+            continue
         detail = text(metric.get("text")).replace("$", r"\$") or "미연결"
-        kind = metric.get("profit_kind") if key == "profit" and metric.get("status") == "reported" else None
-        if isinstance(kind, dict) and kind.get("measures"):
-            missing = [name for name in ("영업이익", "순이익", "EPS") if name not in kind["measures"]]
-            detail = (f"문장에 있는 항목: {'·'.join(kind['measures'])} ({kind.get('basis', '기준 미표기')})"
-                      + (f" · 이 문장에 없음: {'·'.join(missing)}" if missing else "") + " · " + detail)
         if metric.get("period_scope") == "trailing_twelve_months":
             detail = "최근 12개월 누적(TTM), 분기값 아님 · " + detail
         if metric.get("status") == "missing" and metric.get("reason") == "not_reported_in_supported_pdf":
@@ -107,3 +105,30 @@ def _result_detail_lines(row):
     lines.append("예상치 비교: 동일 분기·회계기준의 출처 확인 컨센서스 미연결 시 상회/하회 판단 보류. 회사 전망과 애널리스트 예상치, 목표주가와 모형 적정가는 서로 다릅니다.")
     lines.append("")
     return lines
+
+
+def _profit_lines(metric):
+    """영업이익 · 순이익 · GAAP EPS · 조정 EPS as separate rows; a missing row says so instead of borrowing another."""
+    from stock_lab_core.earnings_profit_rows import EPS_UNLABELLED, ROWS, profit_rows
+    rows = profit_rows(metric)
+    out = []
+    names = list(ROWS) + ([EPS_UNLABELLED] if EPS_UNLABELLED in rows else [])
+    for name in names:
+        entry = rows.get(name)
+        if not entry:
+            reason = "미연결" if metric.get("status") != "reported" else "확인한 원문에 이 항목 없음 · 다른 항목으로 대신하지 않음"
+            out.append(" | ".join(_cell(v) for v in (name, reason, "-")))
+            continue
+        detail = text(entry.get("text")).replace("$", r"\$")
+        basis = entry.get("basis") or "기준 미표기"
+        if basis == "GAAP·조정":
+            basis = "GAAP·조정 함께 표기된 문장"
+        if metric.get("period_scope") == "trailing_twelve_months":
+            detail = "최근 12개월 누적(TTM), 분기값 아님 · " + detail
+        url = safe_link(entry.get("source_url") or metric.get("source_url"))
+        source = f"[공식 원문]({url})" if url else "미연결"
+        if metric.get("source_page"):
+            source += " · p." + str(metric["source_page"])
+        out.append(" | ".join(_cell(v) for v in (name, f"({basis}) {detail}", source)))
+    return out
+

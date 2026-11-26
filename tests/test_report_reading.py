@@ -62,7 +62,7 @@ def test_reading_order_keeps_one_report_and_unique_audit_evidence():
     # Quick summary -> market body -> account -> schedule (2026-11-24 report-overhaul request).
     assert [title for title, _ in parts][1:] == ["빠른 요약", "지수", "미국 시황", "한국 시황", "세계 시장과 국가 ETF",
         "매크로", "물가·고용·소비·경기", "관측실 지표 연결 상태", "이번 주 테마 5개", "돈흐름 · 업종 순환",
-        "주요 기업과 사건", "오늘의 판단", "포트폴리오 · 교체 검토", "다음 일정"]
+        "주요 기업과 사건", "오늘의 판단", "포트폴리오 · 교체 검토", "다음 일정", "마무리 · 보유 종목 영향과 다음 확인 사항"]
     main, audit = output.split("## " + AUDIT_TITLE, 1)
     assert "반도체·AI가 회복하는지와" not in main
     assert output.count("# Stock Lab 자동 뉴스픽 · fixture") == 1
