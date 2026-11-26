@@ -360,3 +360,21 @@ def test_slow_dart_directory_does_not_hold_back_sec_issuers(monkeypatch):
     assert release_dart.is_set()
     assert reasons["123456.KS"] == "dart_corporate_mapping_read_timeout"
     assert reasons["CYBR"] == "http_404"
+
+
+def test_accession_documents_are_reused_after_issuer_cache_expiry():
+    """2026-11-26 speed work: after the 10-minute issuer cache, only the submissions JSON is re-read;
+    the immutable 8-K and exhibit bodies come from the day cache and are parsed again with the new clock."""
+    sources.clear_cache()
+    primary = b'<table><tr><td>99.1</td><td><a href="results.htm">release</a></td></tr></table>'
+    get = Mock(side_effect=[Response({"0": dict(ticker="CYBR", cik_str=1234)}), Response(submissions()),
+                            Response(primary), Response(release()), Response(submissions())])
+    kwargs = dict(sec_user_agent="Research contact@example.com", dart_api_key="", get=get)
+    first = sources.collect_filing_earnings(["CYBR"], NOW, **kwargs)
+    later = sources.collect_filing_earnings(["CYBR"], NOW + timedelta(seconds=sources.CACHE_TTL + 1), **kwargs)
+    assert get.call_count == 5  # directory (day cache) + submissions only on the second run
+    assert later["results"][0]["fiscal_period"] == first["results"][0]["fiscal_period"]
+    assert later["sources"][0]["attempted"] and not later["sources"][0]["from_cache"]
+    urls = [call.args[0] for call in get.call_args_list]
+    assert urls[-1].startswith("https://data.sec.gov/submissions/")
+    sources.clear_cache()

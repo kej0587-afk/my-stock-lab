@@ -33,7 +33,12 @@ def reuse_kr_history_requests():
     """Share only successful identical requests within one joined calculation.
 
     Keys are resolved inside the reader, after its original date normalization.
-    No range slicing, cross-run retention or change to the provider cache TTL.
+    Within the scope a request is served from an already fetched wider window of
+    the same code and end date, sliced to the requested start (the feed returns the
+    latest N daily bars and the parser slices start:end, so the rows are the same).
+    Windows shorter than one year are fetched as the one-year window that the
+    money-flow reader asks for anyway (2026-11-26: 384 requests for ~100 tickers).
+    No cross-run retention or change to the provider cache TTL.
     """
     if _request_scope.get() is not None:
         yield
@@ -105,6 +110,13 @@ def parse_history(text, start, end):
     return frame
 
 
+def _slice(frame, start, end):
+    """Rows start..end of a fetched window, as parse_history would have returned them."""
+    out = deepcopy(frame.loc[start:end])
+    out.attrs = deepcopy(frame.attrs)
+    return out
+
+
 class KrFlowHistoryReader:
     def __init__(self, *, request=None, clock=time.monotonic):
         self._request = request or _request_history
@@ -136,12 +148,27 @@ class KrFlowHistoryReader:
             return self._read_resolved(code, start, end)
         entries, guard = scope
         generation = _request_generation
-        # Include the reader/endpoint and all effective request/parse semantics.
-        key = (generation, self, _URL, code, start.value, end.value,
-               "day", (end - start).days + 2, "0")
+        wanted = start
         count_event("kr_history_scope.lookup")
         count_event("kr_history_scope.default_start" if default_start
                     else "kr_history_scope.explicit_start")
+        with guard:
+            wider = [entry for (gen, reader, url, c, s_value, e_value, *_), entry in entries.items()
+                     if gen is generation and reader is self and url == _URL and c == code
+                     and e_value == end.value and s_value <= wanted.value and entry["frame"] is not None
+                     and 0 <= self._clock() - entry["at"] < 900]
+        if wider:
+            count_event("kr_history_scope.reuse")
+            count_event("kr_history_scope.slice_reuse")
+            marker = _cache_reuse_probe.get()
+            if marker is not None:  # an alias must not start a fresh cache lifetime
+                marker[0] = True
+            return _slice(wider[0]["frame"], wanted, end)
+        # A short window is fetched as the one-year window and sliced (same rows).
+        start = min(start, end - pd.DateOffset(years=1))
+        # Include the reader/endpoint and all effective request/parse semantics.
+        key = (generation, self, _URL, code, start.value, end.value,
+               "day", (end - start).days + 2, "0")
         with guard:
             if key not in entries:
                 entries[key] = {"lock": Lock(), "frame": None, "at": 0.0}
@@ -158,12 +185,12 @@ class KrFlowHistoryReader:
                 marker = _cache_reuse_probe.get()
                 if marker is not None:
                     marker[0] = True
-                return deepcopy(entry["frame"])
+                return _slice(entry["frame"], wanted, end)
             count_event("kr_history_scope.miss")
             frame = self._read_resolved(code, start, end)
             if not frame.empty and generation is _request_generation:
                 entry["frame"], entry["at"] = deepcopy(frame), self._clock()
-            return frame
+            return _slice(frame, wanted, end) if wanted != start and not frame.empty else frame
 
     def _read_resolved(self, code, start, end):
         # A worker may have waited behind another request that opened cooldown.

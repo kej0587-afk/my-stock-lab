@@ -31,6 +31,13 @@ _CACHE = {}
 _LOCK = threading.RLock()
 _SEC_LOCK = threading.Lock()
 _SEC_NEXT = 0.0
+# Documents inside one EDGAR accession folder never change once filed, so a successful body
+# is kept for a day and re-parsed with the current clock (2026-11-26 speed work: a rerun spent
+# 43.9 s in SEC fair-access waits for 94 requests). Submissions JSON is not covered (it changes).
+_ARCHIVE = re.compile(r"https://www\.sec\.gov/Archives/edgar/data/\d{1,10}/\d{18}/[A-Za-z0-9_.-]+")
+ARCHIVE_TTL = 86400
+ARCHIVE_MAX_BYTES = 40_000_000
+_ARCHIVE_BODIES = {}
 
 
 class CachedFailure(ValueError):
@@ -40,6 +47,23 @@ class CachedFailure(ValueError):
 def clear_cache():
     with _LOCK:
         _CACHE.clear()
+        _ARCHIVE_BODIES.clear()
+
+
+def _archive_get(url):
+    with _LOCK:
+        saved = _ARCHIVE_BODIES.get(url)
+        if saved and 0 <= time.monotonic() - saved[0] < ARCHIVE_TTL:
+            cache_event(("sec_archive",), "hit")
+            return saved[1]
+    return None
+
+
+def _archive_put(url, body):
+    with _LOCK:
+        _ARCHIVE_BODIES[url] = (time.monotonic(), body)
+        while sum(len(v[1]) for v in _ARCHIVE_BODIES.values()) > ARCHIVE_MAX_BYTES and len(_ARCHIVE_BODIES) > 1:
+            _ARCHIVE_BODIES.pop(min(_ARCHIVE_BODIES, key=lambda k: _ARCHIVE_BODIES[k][0]))
 
 
 def _cached(key, now, loader, *, ttl=CACHE_TTL):
@@ -65,6 +89,9 @@ def _cached(key, now, loader, *, ttl=CACHE_TTL):
 
 def _request(url, *, deadline, user_agent="", params=None, get=requests.get):
     global _SEC_NEXT
+    archive = bool(user_agent and not params and _ARCHIVE.fullmatch(str(url)))
+    if archive and (body := _archive_get(url)) is not None:
+        return body
     remaining = deadline - time.monotonic()
     if remaining < 1:
         raise ValueError("collection_time_budget")
@@ -92,7 +119,10 @@ def _request(url, *, deadline, user_agent="", params=None, get=requests.get):
                         if time.monotonic() > deadline:
                             raise ValueError("collection_time_budget")
                         chunks.append(chunk)
-                    return b"".join(chunks)
+                    body = b"".join(chunks)
+                    if archive:
+                        _archive_put(url, body)
+                    return body
             finally:
                 response.close()
     except requests.Timeout:
