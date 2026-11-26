@@ -20984,32 +20984,21 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
     from stock_lab_core.hold_judgement import build_hold_decision as _hold_decision, HoldDecision as _HD
     judgement = _hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos)
     decision = judgement.decision.value
-    color = {_HD.STRONG_HOLD: "#16a34a", _HD.CONDITIONAL_HOLD: "#22c55e", _HD.WATCH: "#d97706",
-             _HD.REDUCE: "#f97316", _HD.STOP_LOSS: "#dc2626", _HD.EMERGENCY_EXIT: "#7f1d1d"}.get(judgement.decision, "#64748b")
     workflow = precision_display_context(c).get("execution_workflow")
     action = qualify_hold_action_plan(judgement.action_plan, workflow)
     readings = split_hold_and_entry(judgement.action_plan, workflow, reduce_side=judgement.decision in (
         _HD.REDUCE, _HD.STOP_LOSS, _HD.EMERGENCY_EXIT))
 
-    # ── UI 렌더링 ───────────────────────────────
+    # ── UI 렌더링 (C-7: the verdict is shown once, in the upper panel; here only its evidence) ──
+    macro_text = ("미확인" if not finite_num(macro_risk) else f"{macro_risk:.1f}")
     h1, h2, h3, h4 = st.columns(4)
-    h1.metric("대표 결론", decision.split(" ", 1)[-1])
-    h2.metric("고점 대비", f"{dd*100:.1f}%" if finite_num(dd) else "-")
-    h3.metric("평단 대비", f"{price_vs_avg*100:.1f}%" if finite_num(price_vs_avg) else "-")
+    h1.metric("고점 대비", f"{dd*100:.1f}%" if finite_num(dd) else "-")
+    h2.metric("평단 대비", f"{price_vs_avg*100:.1f}%" if finite_num(price_vs_avg) else "-")
     fin_dir_label = fin_trend.get("label", "ETF") if not is_etf else "ETF"
-    h4.metric("재무 방향", fin_dir_label)
-
-    st.markdown(
-        f"<div class='info-panel' style='border-left:6px solid {color};'>"
-        f"<b>{escape_html_value(name)} 보유 판단</b> · 위 장기보유 종합 판정과 같은 대표 결론<br>"
-        f"<span class='highlight' style='color:{color};font-size:1.15em;'>"
-        f"{escape_html_value(decision)}</span><br><br>"
-        f"<b>현재 보유분 관리:</b> {escape_html_value(readings['hold'])}<br>"
-        f"<b>오늘 추가매수:</b> {escape_html_value(readings['entry'])}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption("아래는 같은 결론의 근거입니다. 분기 재무 방향성과 매크로는 대표 결론 점수에 넣지 않고 함께 확인하는 근거로 보여 줍니다.")
+    h3.metric("재무 방향", fin_dir_label)
+    h4.metric("매크로 위험", macro_text)
+    st.caption("대표 결론과 '현재 보유분 관리 · 오늘 추가매수'는 위 장기보유 종합 판정에 한 번만 표시합니다. "
+               "아래는 그 판단의 근거입니다.")
 
     rc1, rc2 = st.columns(2)
     with rc1:

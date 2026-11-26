@@ -724,10 +724,11 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
         assert captured["leveraged_state"] is leveraged_state
         assert captured["action"] in "\n".join(ui.markdowns)
     else:
-        assert captured["decision"] in "\n".join(ui.markdowns)
-        assert captured["hold_reading"] in "\n".join(ui.markdowns)
-        assert captured["entry_reading"] in "\n".join(ui.markdowns)
+        # C-7: the verdict and its two readings are shown once, in the upper panel; this panel shows evidence.
+        assert captured["decision"] not in "\n".join(ui.markdowns)
+        assert captured["hold_reading"] and captured["entry_reading"]
         assert captured["hold_reasons"]
+        assert all(reason in "\n".join(ui.markdowns) for reason in captured["hold_reasons"])
     archive, data = _read(hold_or_cut=captured)
     assert data["sections"]["hold_or_cut"] == captured
     assert "hold_or_cut.csv" in archive.namelist()
