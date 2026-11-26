@@ -44,7 +44,13 @@
 - 엔진 AST 고정 테스트는 `tests/explicit_weights_ast_contract.py`로 기본값 두 개만 되돌려 비교합니다.
 
 ## 재생 비교 (C-5 패리티 41,391행 대비)
-- (작성 중)
+- `scripts/policy_replay.py parity --step 10`을 같은 가격 파일로 다시 돌려 C-5 결과와 행 단위로 비교했습니다(오류 0).
+- 달라진 행은 1,701행이고 전부 재생 환경 샘플 계좌에 있던 두 종목입니다: MSFT 861행, 000660.KS 840행. 다른 종목은 모든 열이 같습니다.
+- MSFT: 판정코드 861행 변경. 대부분 `HARD_BLOCK_OVERWEIGHT`(샘플 계좌 비중 초과)가 원래 판정으로 돌아옴
+  (예: `QUALITY_RECOVERY_WATCH` 171, `STRUCTURE_DAMAGE_HOLDING_CHECK` 106, `COST_MINUS_15_CAUSE_CHECK` 97).
+  게이트는 방어우선→대기/관찰 508행, 방어우선→실행가능 2행.
+- 000660.KS: 판정코드는 같고 필요금액(buy_amt)만 넘긴 비중 기준으로 바뀜.
+- 4단계 비교 재생은 이 수정이 들어간 엔진으로 돌립니다.
 
 ## 운영 확인
 - (배포 후 기록)
