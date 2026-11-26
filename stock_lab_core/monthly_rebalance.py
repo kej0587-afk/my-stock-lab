@@ -208,3 +208,28 @@ def build_rebalance_plan(eligible, target_w_sum, total_invest, usdkrw, signal_ca
     redistribute_allocations(calc_rows, total_invest, redistribute_mode)
     apply_share_counts(calc_rows, usdkrw, accumulated)
     return calc_rows
+
+
+def compute_monthly_plan(holdings_table, *, total_invest, usdkrw, signal_cache, signal_decisions,
+                         always_invest_set, redistribute_mode, accumulated, signal_multiplier, month):
+    """C-6/C-11 step 1: the calculator's plan as one shared, widget-free call (same results as before).
+
+    Returns None when there is nothing to plan (no holdings, no eligible rows, zero target sum), with the
+    reason, so callers keep their own messages. ``alloc`` is the per-ticker final allocation (KRW) that the
+    leveraged L3 read uses for this month.
+    """
+    if holdings_table is None or getattr(holdings_table, "empty", True) or total_invest <= 0:
+        return {"status": "no_input", "rows": [], "alloc": {}, "month": month}
+    eligible = prepare_rebalance_holdings(holdings_table)
+    if eligible.empty:
+        return {"status": "no_eligible", "rows": [], "alloc": {}, "month": month, "eligible": eligible}
+    target_w_sum = float(eligible["목표비중"].sum())
+    if target_w_sum <= 0:
+        return {"status": "zero_target", "rows": [], "alloc": {}, "month": month, "eligible": eligible}
+    rows = build_rebalance_plan(
+        eligible, target_w_sum, total_invest, usdkrw, signal_cache, always_invest_set, redistribute_mode,
+        accumulated, signal_multiplier, signal_decisions=signal_decisions,
+    )
+    alloc = {str(r.get("ticker", "")).upper(): float(r.get("final_alloc") or 0.0) for r in rows}
+    return {"status": "ok", "rows": rows, "alloc": alloc, "month": month, "eligible": eligible,
+            "target_w_sum": target_w_sum}

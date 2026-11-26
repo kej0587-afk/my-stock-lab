@@ -3,7 +3,7 @@
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float
-from stock_lab_core.monthly_rebalance import prepare_rebalance_holdings, build_rebalance_plan
+from stock_lab_core.monthly_rebalance import prepare_rebalance_holdings, build_rebalance_plan, compute_monthly_plan
 from stock_lab_core.monthly_rebalance_log import render_monthly_log_panel
 from stock_lab_core.report_build import register_loaded_source
 
@@ -367,18 +367,18 @@ def render_monthly_rebalancing_calculator(
             return
 
         always_invest_set = _select_always_invest(st, eligible)
-        calc_rows = build_rebalance_plan(
-            eligible, target_w_sum, total_invest, usdkrw, _signal_cache,
-            always_invest_set, redistribute_mode, st.session_state["rebcalc_accum"], signal_multiplier,
+        # C-6/C-11 step 1: one shared plan call (same results); widgets stay here.
+        plan = compute_monthly_plan(
+            holdings_table, total_invest=total_invest, usdkrw=usdkrw, signal_cache=_signal_cache,
             signal_decisions=st.session_state.get("_ticker_signal_decision_cache", {}),
+            always_invest_set=always_invest_set, redistribute_mode=redistribute_mode,
+            accumulated=st.session_state["rebcalc_accum"], signal_multiplier=signal_multiplier, month=_this_month,
         )
+        calc_rows = plan["rows"]
         _refresh_accumulated_state(st, calc_rows)
         # C-3: the leveraged L3 tranche reads this month's allocation so the monthly contribution and the
         # crisis budget never fill the same target shortfall twice (KRW, per ticker).
-        st.session_state["_monthly_plan_alloc"] = {
-            "month": _this_month,
-            "alloc": {str(r.get("ticker", "")).upper(): float(r.get("final_alloc") or 0.0) for r in calc_rows},
-        }
+        st.session_state["_monthly_plan_alloc"] = {"month": _this_month, "alloc": plan["alloc"]}
 
         active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
         blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]

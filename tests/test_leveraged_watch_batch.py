@@ -187,6 +187,8 @@ def test_only_explicit_io_wrapping_changed_against_immutable_reference():
     for name, node in new.items():
         from tests.leveraged_view_ast_contract import before_leveraged_product_view
         node = before_leveraged_product_view(node)
+        from tests.decision_record_ast_contract import without_decision_record_capture
+        node = without_decision_record_capture(node)
         node.body = [n for n in node.body if not (
             isinstance(n, ast.ImportFrom) and any(alias.asname == 'watch_loader' for alias in n.names))]
         if name == 'build_leveraged_precision_watch_rows':

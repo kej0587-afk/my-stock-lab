@@ -312,7 +312,8 @@ def test_investment_functions_are_unchanged():
                      if isinstance(node, ast.FunctionDef) and node.name in names}
         if index:
             functions['load_display_live_price'] = before_quote_observation(functions['load_display_live_price'])
-            functions['_compute_summary_item'] = before_price_basis_identity(functions['_compute_summary_item'])
+            from tests.decision_record_ast_contract import without_decision_record_capture
+            functions['_compute_summary_item'] = before_price_basis_identity(without_decision_record_capture(functions['_compute_summary_item']))
             # Restore only the approved SMC/finalization extractions. Their actual
             # bodies, arguments, return order and outputs are independently frozen
             # by test_decision_smc_refactor / test_decision_finalization_refactor,

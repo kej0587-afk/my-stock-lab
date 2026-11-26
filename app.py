@@ -21198,7 +21198,8 @@ def render_financial_evidence_review(review):
 
 @timed_call("decision")
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
-                          snap_cash_available, snap_reserve_available, *, _price_df=None, _long_price_df=None):
+                          snap_cash_available, snap_reserve_available, *, _price_df=None, _long_price_df=None,
+                          _record_sink=None):
     """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
     from stock_lab_core.financial_freshness import financial_basis
@@ -21278,6 +21279,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             live_price=_live_p,
             _live_indicator_context=live_context,
         )
+        # C-6/C-11 step 1: keep the raw engine decision for the shared record (read-only copy).
+        from stock_lab_core.decision_record import CANDIDATE_FIELDS as _REC_CAND, ENGINE_FIELDS as _REC_ENGINE
+        engine_view = {key: c.get(key) for key in (*_REC_ENGINE, *_REC_CAND)}
         stage = "pattern_indicators"
         pattern_df, _, pattern_issue = live_context
         if pattern_issue:
@@ -21372,7 +21376,56 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "qty": clean_float(item.get("qty"), np.nan),
         "has_pos": clean_float(item.get("qty"), float(has_p)) > 0,
     }
+    if isinstance(_record_sink, dict):
+        # C-6/C-11 step 1: side channel for the shared record; the returned item is unchanged.
+        _record_sink[tkr] = {"tkr": tkr, "row": row, "engine": engine_view, "post": dict(c), "has_pos": bool(has_p),
+                             "price_asof": (c.get("input_basis") or {}).get("가격자료기준일")}
     return {"tkr": tkr, "f_score": f_score, "row": row}
+
+
+def store_today_decision_records(sink):
+    try:
+        scope = portfolio_signal_input_context()
+    except Exception:
+        logging.exception("Decision record scope unavailable")
+        return
+    for result in (sink or {}).values():
+        store_today_decision_record(result, scope)
+
+
+def store_today_decision_record(result, account_scope):
+    """C-6/C-11 step 1: shared record for a Today row (engine + post). Display and decisions are unchanged."""
+    if not isinstance(result, dict) or not isinstance(result.get("engine"), dict):
+        return
+    try:
+        from stock_lab_core.decision_record import SOURCE_TODAY, build_decision_record, store_record
+        record = build_decision_record(
+            ticker=result.get("tkr"), source=SOURCE_TODAY, engine=result["engine"], post=result.get("post"),
+            workflow=result.get("row"), account_scope=account_scope, has_pos=result.get("has_pos"),
+            price_asof=result.get("price_asof"), macro_status=globals().get("_APP_MACRO_STATUS") or {},
+        )
+        store_record(st.session_state, record)
+    except Exception:
+        logging.exception("Decision record (Today) skipped: ticker=%s", result.get("tkr"))
+
+
+def attach_today_gate_to_records(summary_df, account_scope):
+    """Copy the final Today gate (after market guard) into the stored Today records of the same scope."""
+    try:
+        from stock_lab_core.decision_record import SOURCE_TODAY, read_record, store_record
+        if not isinstance(summary_df, pd.DataFrame) or "티커" not in summary_df:
+            return
+        for _, row in summary_df.iterrows():
+            record = read_record(st.session_state, row.get("티커"), SOURCE_TODAY, account_scope=account_scope)
+            if record is None:
+                continue
+            record = dict(record)
+            record["gate"] = {"state": row.get("게이트상태"), "reason": row.get("게이트근거"),
+                              "final_read": row.get("최종읽기"), "group": row.get("판정분류"),
+                              "market": row.get("시장실행상태")}
+            store_record(st.session_state, record)
+    except Exception:
+        logging.exception("Decision record gate attach skipped")
 
 
 def _timed_today_analyst_snapshot(ticker):
@@ -21453,6 +21506,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
+    record_sink: dict[str, dict] = {}
     # Only explicit quote-cache-clearing refreshes prefetch. Ordinary reruns
     # keep the existing warm caches; older loaded modules use the old path.
     quote_scope = (price_loader.fresh_kr_quote_scope(all_tickers)
@@ -21465,6 +21519,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
                 snap_cash_available, snap_reserve_available,
                 _price_df=(price_frames or {}).get(sanitize_ticker_value(item.get("ticker", ""))),
                 _long_price_df=(long_price_frames or {}).get(sanitize_ticker_value(item.get("ticker", ""))),
+                _record_sink=record_sink,
             ): i
             for i, item in enumerate(watchlist_items)
         }
@@ -21495,6 +21550,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
             seen_ticker_keys.add(ticker_key)
         rows.append(r["row"])
 
+    # C-6/C-11 step 1: shared records for this run (main thread; optional when the helper is absent).
+    globals().get("store_today_decision_records", lambda _sink: None)(record_sink)
     return dedupe_dashboard_summary_df(pd.DataFrame(rows))
 
 
@@ -24375,6 +24432,36 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
 
     with st.expander("매칭 근거 자세히 보기", expanded=False):
         st.dataframe(show, width='stretch', hide_index=True)
+
+
+def store_engine_decision_record(ticker, c, price_df, *, has_pos):
+    """C-6/C-11 step 1: shared record for the raw engine decision (자산관리 · 월적립). Read-only."""
+    try:
+        from stock_lab_core.decision_record import SOURCE_ENGINE, build_decision_record, store_record
+        price_asof = str(pd.to_datetime(price_df.index[-1]).date()) if isinstance(price_df, pd.DataFrame) and not price_df.empty else None
+        record = build_decision_record(
+            ticker=ticker, source=SOURCE_ENGINE, engine=c, account_scope=portfolio_signal_input_context(),
+            has_pos=has_pos, price_asof=price_asof, macro_status=globals().get("_APP_MACRO_STATUS") or {},
+        )
+        store_record(st.session_state, record)
+    except Exception:
+        logging.exception("Decision record (engine) skipped: ticker=%s", ticker)
+
+
+def store_precision_decision_record(ticker, engine_view, c, *, has_pos, manual_price, price_asof, tech_review):
+    """C-6/C-11 step 1: precision record. A manual-price result is stored under its own source and never
+    replaces the normal record."""
+    try:
+        from stock_lab_core.decision_record import SOURCE_PRECISION, build_decision_record, store_record
+        record = build_decision_record(
+            ticker=ticker, source=SOURCE_PRECISION, engine=engine_view, post=c, workflow=c.get("execution_workflow"),
+            account_scope=portfolio_signal_input_context(), has_pos=has_pos, price_asof=price_asof,
+            macro_status=globals().get("_APP_MACRO_STATUS") or {}, leverage_l3=c.get("leveraged_l3"),
+            tech_review=tech_review, manual_price=manual_price,
+        )
+        store_record(st.session_state, record)
+    except Exception:
+        logging.exception("Decision record (precision) skipped: ticker=%s", ticker)
 
 
 def portfolio_signal_input_context():
@@ -33429,6 +33516,7 @@ def _render_today_queue_tab(mode):
         upside_map=_upside_value_map,
     )
     summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
+    attach_today_gate_to_records(summary_df, portfolio_signal_input_context())
     if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
         portfolio_signals = summary_df.copy()
         portfolio_signals.attrs.update(portfolio_signal_attrs)
@@ -34974,6 +35062,8 @@ if main_page == "precision":
             decision=c, financial=fin_meta, completion="partial", stage="daily_decision",
             ohlcv={"daily_source": df, "display_chart": chart_df},
         )
+        # C-6/C-11 step 1: raw engine view for the shared record (copy; the decision itself is unchanged).
+        precision_engine_snapshot = dict(c)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
         c = apply_precision_post_decision(
@@ -35003,6 +35093,7 @@ if main_page == "precision":
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
         # B-4 shadow / C-5 v2: shown beside the existing decision, never written back into c.
         precision_tech_review_record = None
+        precision_engine_view = dict(precision_engine_snapshot)
         try:
             from stock_lab_core.chart_patterns import detect_recent_invalidated_patterns
             from stock_lab_core.tech_review_view import render_tech_review_shadow
@@ -35019,6 +35110,10 @@ if main_page == "precision":
         except Exception:
             logging.exception("Tech review shadow failed: ticker=%s", tkr)
             st.caption("기술검토 계산 실패: 기존 판정에는 영향 없음")
+        store_precision_decision_record(
+            tkr, precision_engine_view, c, has_pos=bool(precision_has_pos), manual_price=manual_cur_p > 0,
+            price_asof=precision_signal_basis.get("가격자료기준일"), tech_review=precision_tech_review_record,
+        )
         from stock_lab_core.data_freshness import input_freshness_rows
         c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
         st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
@@ -35844,6 +35939,7 @@ if main_page == "asset":
                         live_price=load_display_live_price(tkr),
                     )
 
+                    store_engine_decision_record(tkr, c, px, has_pos=float(r["보유량"] or 0) > 0)
                     signal_rows.append({
                         "티커": tkr,
                         "_signal_decision": {key: c.get(key) for key in ("decision_code", "dec", "core_dca_label", "core_dca_rate")},
