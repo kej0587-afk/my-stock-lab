@@ -65,17 +65,14 @@ def replay(module, delay=0):
 def test_exact_response_parity_and_proven_duplicate_requests():
     before, old_calls, _, _ = replay(old_module())
     after, new_calls, _, report = replay(history)
-    assert len(old_calls) == 8 and len(new_calls) == 5
-    # Compare actual resolved provider URL/parameters, not assumed ticker names.
-    distinct = []
-    for call in old_calls:
-        if call not in distinct:
-            distinct.append(call)
-    assert new_calls == distinct
+    # 2026-11-26: shorter windows of the same code/end are sliced from a wider fetched window
+    # (1-year minimum), so 8 old requests become 3; every returned frame stays identical.
+    assert len(old_calls) == 8 and len(new_calls) == 3
+    assert all(call in old_calls for call in new_calls)
     for expected, actual in zip(before, after):
         pd.testing.assert_frame_equal(actual, expected, check_exact=True)
         assert actual.attrs == expected.attrs
-    assert report["transport_events"]["kr_history_scope.reuse"] == 3
+    assert report["transport_events"]["kr_history_scope.reuse"] == 5
     assert history._request_scope.get() is None
 
 

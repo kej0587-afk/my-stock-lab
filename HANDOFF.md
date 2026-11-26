@@ -581,6 +581,15 @@ summary and to completion, external requests, missing counts, decision/amount pa
 observatory quality → needed refactoring → short-term trading. (5) Android/Google Play: review item only. Result format: one table
 `문제 | 사용자에게 보이는 영향 | 수정 전후 수치 또는 화면 | 운영 확인 상태 | 남은 일`. Decision rules and monthly multipliers unchanged.
 
+**Progress on the order above (updated after each unit, user 23:21 KST):** PR #82/#83 BOK result (prod 22:01 KST: 3.00%→3.25% in the
+central-bank table, 오늘 달라진 점, calendar row), PR #84 미계산 labels (prod checked), PR #85 XKRX calendar race (first Today run had
+0 '거래소 달력' rows) and 33 → 22 known failures (`docs/maintenance/20261126_known_test_failures.md`). Prod timings (condition A,
+`20261126_prod_check_bok_today_gate_perf.md`): Today 87.8 / 75.3 s, report 125.0 / 63.7 s, refresh 26.4 s. Speed round 1
+(`docs/maintenance/20261126_speed_round1.md`): KR history requests sliced from a wider window inside one calculation; EDGAR
+accession documents kept for a day. **Next:** re-measure condition A through the home-PC thread (ask the coordinator; do not merge
+to main while it measures, Streamlit auto-redeploys), then the first-boot SEC wait (needs the user's policy choice: request spacing
+or stored filings) and showing the quick summary before the full report.
+
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
 update of the last bar's price/volume during the session; measure first-chart and bar-switch time on SOXL; show realtime support,

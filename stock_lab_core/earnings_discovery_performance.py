@@ -58,7 +58,7 @@ class FilingProbe:
 
 
 def cache_event(key, outcome):
-    allowed = {"sec_directory", "dart_codes", "issuer_accounts_v1", "dart_company", "dart_accounts"}
+    allowed = {"sec_directory", "dart_codes", "issuer_accounts_v1", "dart_company", "dart_accounts", "sec_archive"}
     bucket = key[0] if isinstance(key, tuple) and key and key[0] in allowed else "other"
     count_event("earnings_discovery.cache." + bucket + "." + outcome)
 
