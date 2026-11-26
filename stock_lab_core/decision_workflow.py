@@ -149,6 +149,25 @@ def qualify_hold_action_plan(action, workflow):
     )
 
 
+HOLD_ADD_SUFFIX = " (목표 비중까지 분할 매수 가능)"
+
+
+def split_hold_and_entry(action, workflow, *, reduce_side=False):
+    """C-7: '현재 보유분 관리' and '오늘 추가매수' as two separate readings (texts only, no new rule).
+
+    The entry reading comes only from the existing execution gate; the holding reading never grants a buy.
+    """
+    hold = str(action or "-").replace(HOLD_ADD_SUFFIX, "")
+    gate = (workflow or {}).get("게이트상태")
+    if gate == GATE_EXECUTABLE:
+        entry = "실행가능 · 목표비중·월적립 규칙 안에서"
+        if reduce_side:
+            entry += " (보유 판단이 축소·손절 쪽이라 추가매수 전에 보유분 점검이 먼저)"
+    else:
+        entry = f"보류 · {(workflow or {}).get('게이트근거') or '실행 게이트 미확인'}"
+    return {"hold": hold, "entry": entry, "entry_executable": gate == GATE_EXECUTABLE}
+
+
 def format_precision_take_profit_condition(current_price, stop, target):
     """Describe the existing min(target, entry + risk) first exit accurately."""
     cur, stop, target = (clean_float(value, math.nan) for value in (current_price, stop, target))

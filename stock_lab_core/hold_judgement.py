@@ -31,6 +31,10 @@ class HoldJudgement:
     action_plan: str = ""
 
 
+LOSS_EXIT_PCT = -0.25
+LOSS_EXIT_DD = -0.25
+
+
 def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -> HoldJudgement:
     score = 0
     r_hold, r_caution, r_exit = [], [], []
@@ -128,10 +132,15 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     thesis_score = 0
     score += thesis_score
 
-    hard_exit = (
-        (not is_etf and fin_valid and fin <= 0) or
-        (has_pos and finite_num(price_vs_avg) and price_vs_avg <= -0.25 and finite_num(dd) and dd <= -0.25)
-    )
+    # C-7 (user decision 2026-11-26): the loss emergency exit needs the MA downtrend as well. Without it the score
+    # grade stands and the loss/drawdown stay visible as an exit reason. Financial score <= 0 stays a separate exit.
+    loss_and_drawdown = (has_pos and finite_num(price_vs_avg) and price_vs_avg <= LOSS_EXIT_PCT
+                         and finite_num(dd) and dd <= LOSS_EXIT_DD)
+    downtrend = "역배열" in trend
+    if loss_and_drawdown and not downtrend:
+        r_exit.append(f"평단 대비 {price_vs_avg*100:.1f}% · 고점 대비 {dd*100:.1f}%: 긴급 매도 손실 기준 충족, "
+                      "이동평균 역배열이 아니라 점수 등급으로 표시")
+    hard_exit = (not is_etf and fin_valid and fin <= 0) or (loss_and_drawdown and downtrend)
 
     if hard_exit:
         decision = HoldDecision.EMERGENCY_EXIT
