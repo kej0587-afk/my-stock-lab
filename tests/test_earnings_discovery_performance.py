@@ -17,7 +17,8 @@ from tests.test_earnings_filing_discovery import NOW, Response, submissions, rel
 @pytest.fixture(autouse=True)
 def isolated_cache(monkeypatch):
     sources.clear_cache()
-    monkeypatch.setattr(sources, "_SEC_NEXT", 0.)
+    from stock_lab_core import sec_rate
+    monkeypatch.setattr(sources.sec_rate, "limiter", sec_rate.SecLimiter())  # fresh app-wide SEC window
     yield
     sources.clear_cache()
 

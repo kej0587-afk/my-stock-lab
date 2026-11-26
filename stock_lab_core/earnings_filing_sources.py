@@ -8,6 +8,8 @@ import json
 import re
 import threading
 import time
+from contextlib import contextmanager, nullcontext
+from urllib.parse import urlsplit
 
 import requests
 from lxml import etree
@@ -15,6 +17,7 @@ from lxml import etree
 from stock_lab_core.earnings_filing_evidence import (
     latest_dart_report, latest_sec_filing, parse_sec_release, sec_base, sec_document, sec_release_link,
 )
+from stock_lab_core import sec_rate
 from stock_lab_core.performance import measure, submit_with_context
 from stock_lab_core.earnings_discovery_performance import FilingProbe, cache_event, release_validation_event
 from stock_lab_core.report_build import register_loaded_source
@@ -29,8 +32,6 @@ MARKET_WORKERS = 3
 MAX_BYTES = 3_000_000
 _CACHE = {}
 _LOCK = threading.RLock()
-_SEC_LOCK = threading.Lock()
-_SEC_NEXT = 0.0
 # Documents inside one EDGAR accession folder never change once filed, so a successful body
 # is kept for a day and re-parsed with the current clock (2026-11-26 speed work: a rerun spent
 # 43.9 s in SEC fair-access waits for 94 requests). Submissions JSON is not covered (it changes).
@@ -88,25 +89,19 @@ def _cached(key, now, loader, *, ttl=CACHE_TTL):
 
 
 def _request(url, *, deadline, user_agent="", params=None, get=requests.get):
-    global _SEC_NEXT
     archive = bool(user_agent and not params and _ARCHIVE.fullmatch(str(url)))
     if archive and (body := _archive_get(url)) is not None:
         return body
     remaining = deadline - time.monotonic()
     if remaining < 1:
         raise ValueError("collection_time_budget")
-    if user_agent:
-        # Shared workers stay below the SEC fair-access request rate.
-        with measure("external_data", "earnings_discovery.sec_rate_wait"):
-            with _SEC_LOCK:
-                delay = max(0, _SEC_NEXT - time.monotonic())
-                if delay:
-                    time.sleep(delay)
-                _SEC_NEXT = time.monotonic() + 0.2
+    sec = bool(user_agent) and (urlsplit(str(url)).hostname or "") in sec_rate.SEC_HOSTS
     try:
         with measure("external_data", "earnings_official.request"):
-            response = get(url, params=params, headers={"User-Agent": user_agent} if user_agent else {},
-                           timeout=(min(2, remaining), min(3, remaining)), allow_redirects=False, stream=True)
+            # App-wide SEC limiter (stock_lab_core.sec_rate): one 1 s window for every SEC caller.
+            with (_sec_slot() if sec else nullcontext()):
+                response = get(url, params=params, headers={"User-Agent": user_agent} if user_agent else {},
+                               timeout=(min(2, remaining), min(3, remaining)), allow_redirects=False, stream=True)
             try:
                 if response.status_code != 200:
                     raise ValueError(f"http_{response.status_code}")
@@ -125,10 +120,23 @@ def _request(url, *, deadline, user_agent="", params=None, get=requests.get):
                     return body
             finally:
                 response.close()
+    except sec_rate.SecRateLimited:
+        raise ValueError("sec_rate_limited") from None
     except requests.Timeout:
         raise ValueError("request_timeout") from None
     except requests.RequestException:
         raise ValueError("request_transport_error") from None
+
+
+@contextmanager
+def _sec_slot():
+    with measure("external_data", "earnings_discovery.sec_rate_wait"):
+        cm = sec_rate.slot()
+        cm.__enter__()
+    try:
+        yield
+    finally:
+        cm.__exit__(None, None, None)
 
 
 def _json(url, **kwargs):
