@@ -217,7 +217,9 @@ def earnings_coverage_lines(pipeline):
         status = ("실적 점검 상태: **오늘 점검 미계산** · 보유·관심 종목 실적은 연결하지 않았습니다(확인 결과 0개가 아님). "
                   "오늘 점검 계산 후 다시 생성하면 연결됩니다.")
     else:
-        parts = [f"공식 발표 확인 {state['official']}개" if state["official"] else "공식 발표 확인 결과 0개"]
+        parts = [f"공식 발표 확인 {state['official']}개" if state["official"]
+                 else "점검 대상 기업 없음(ETF만 있거나 등록 기업 없음)" if not coverage.get("registered") and not state["failed"] + state["no_official"]
+                 else "공식 발표 확인 결과 0개"]
         if state["failed"]:
             parts.append(f"일부 조회 실패 {state['failed']}개(시간초과·한도·오류, 다시 생성 시 재조회)")
         if state["no_official"]:

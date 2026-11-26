@@ -1,6 +1,7 @@
 """Bounded official-result/event-calendar bridge; never fetch prices or results."""
 
 from functools import lru_cache
+import threading
 
 import pandas as pd
 
@@ -17,8 +18,18 @@ MAX_EVENTS = 128
 HISTORY_DAYS = 400
 
 
-@lru_cache(maxsize=8)
+_CALENDAR_LOCK = threading.Lock()
+
+
 def _exchange_schedule(market, start, end):
+    """Serialized: concurrent first builds of exchange_calendars XKRX raise ValueError (index length
+    mismatch), which made Today's first parallel run after a reboot show 거래소 달력 조회불가 (2026-11-26)."""
+    with _CALENDAR_LOCK:
+        return _exchange_schedule_cached(market, start, end)
+
+
+@lru_cache(maxsize=8)
+def _exchange_schedule_cached(market, start, end):
     import exchange_calendars as calendars
 
     raw = calendars.get_calendar(CALENDARS[market], start=start, end=end).schedule
@@ -35,6 +46,9 @@ def _exchange_schedule(market, start, end):
         checked.loc[pd.Timestamp("2026-11-19"), "market_close"] = pd.Timestamp("2026-11-19T07:30Z")
         checked.attrs["exception_source"] = "https://kind.krx.co.kr/external/2026/11/05/000141/20261105000216/99303.htm"
     return checked
+
+
+_exchange_schedule.cache_clear = _exchange_schedule_cached.cache_clear
 
 
 def collect_event_study_context(context, now, *, window=5):

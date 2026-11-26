@@ -36,7 +36,7 @@ from stock_lab_core.formatters import (
     normalize_ticker, sanitize_ticker_value,
 )
 from stock_lab_core.performance import measure, submit_with_context, timed_call
-from stock_lab_core.signal_basis import build_signal_basis
+from stock_lab_core.signal_basis import build_signal_basis, selection_basis
 from stock_lab_core.ta_engine import build_indicators
 
 
@@ -151,6 +151,7 @@ def replay(monkeypatch, summary_ast):
         build_sideways_quality_state=build_sideways_quality_state, classify_macro_state=classify_macro_state,
         build_decision_workflow=build_decision_workflow, classify_sector_rs_state=classify_sector_rs_state,
         build_signal_basis=lambda source, context, **kwargs: build_signal_basis(source, context, calculated_at="fixture clock", **kwargs),
+        selection_basis=selection_basis,
         build_source_flow_context=lambda *args: {},
         calc_series_mdd=lambda series: (series / series.cummax() - 1).min(),
         prefetch_price_data_parallel=Mock(side_effect=prefetch),
