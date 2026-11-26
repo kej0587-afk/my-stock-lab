@@ -19,7 +19,9 @@ ROWS = (OPERATING, NET, EPS_GAAP, EPS_ADJ)
 
 _OPERATING = re.compile(r"\boperating (?:income|profit|loss)\b|영업이익|영업손익|영업손실", re.I)
 _NET = re.compile(r"\bnet (?:income|profit|loss|earnings)\b|순이익|순손실|순손익", re.I)
-_EPS = re.compile(r"\bearnings per (?:diluted |basic )?share\b|\b(?:diluted |basic )?EPS\b|주당순이익", re.I)
+_EPS = re.compile(r"\bearnings per (?:diluted |basic )?share\b|\b(?:diluted |basic )?EPS\b|\bper (?:diluted |basic )?share\b|주당순이익", re.I)
+# "net income per diluted share" names EPS only; "net income was $X, or $Y per diluted share" names both.
+_NET_PER_SHARE = re.compile(r"\bnet (?:income|earnings|loss) per (?:diluted |basic )?share\b", re.I)
 _ADJ = re.compile(r"\bnon-GAAP\b|\badjusted\b|\bnon-IFRS\b", re.I)
 _GAAP = re.compile(r"(?<!non-)\bGAAP\b", re.I)
 _MONEY = re.compile(r"\$\s*\(?[\d,.]+|\b(?:KRW|USD)\s*[\d,.]+|[\d,.]+\s*(?:billion|million|trillion)\b|[\d,.]+\s*(?:조원|억원|원)", re.I)
@@ -39,7 +41,7 @@ def classify_sentence(sentence):
         basis = _basis(clause)
         if _OPERATING.search(clause):
             found.setdefault(OPERATING, basis)
-        if _NET.search(clause) and not _EPS.search(clause):
+        if _NET.search(_NET_PER_SHARE.sub("", clause)):
             found.setdefault(NET, basis)
         if _EPS.search(clause):
             if basis in ("GAAP", "GAAP·조정"):
