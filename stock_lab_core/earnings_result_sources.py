@@ -289,6 +289,7 @@ def profit_kind(sentence):
 
 def _prose_metrics(blocks, spec):
     metrics = {key: _metric("", "missing", spec, reason="not_in_supported_source_text") for key in _METRICS}
+    profit_sentences = []
     for key, pattern in _METRICS.items():
         if key == "guidance":
             continue
@@ -307,9 +308,18 @@ def _prose_metrics(blocks, spec):
             if re.search(r"\b(?:define|defined|definition)\b", block, re.I) or (not ttm and _outside_current_quarter(current_clause, spec)):
                 continue
             scope = "trailing_twelve_months" if ttm else spec["fiscal_period"]
+            if key == "profit":
+                # Every current-quarter profit sentence feeds the 영업이익/순이익/GAAP EPS/조정 EPS rows.
+                profit_sentences.append(block)
+                if metrics["profit"]["status"] == "reported":
+                    continue
             extra = {"profit_kind": profit_kind(current_clause)} if key == "profit" else {}
             metrics[key] = _metric(block, "reported", spec, period_scope=scope, extraction="source_sentence", **extra)
-            break
+            if key != "profit":
+                break
+    if metrics["profit"]["status"] == "reported":
+        from stock_lab_core.earnings_profit_rows import breakdown_from_sentences
+        metrics["profit"]["breakdown"] = breakdown_from_sentences(profit_sentences, spec["source_url"])
     deferred = next((b for b in blocks if re.search(r"will (?:provide|discuss).{0,80}(?:guidance|outlook)", b, re.I)
                      and re.search(r"conference call|webcast", b, re.I)), None)
     guidance = next((b for b in blocks if _FORWARD.search(b) and re.search(r"guidance|outlook|revenue|sales|capital expenditure", b, re.I)

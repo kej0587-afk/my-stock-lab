@@ -177,8 +177,9 @@ def _quick_summary_lines(judgment_lines, current_state, indices, states, interpr
              + " · 숫자는 이 보고서 생성시점 기준입니다.", ""]
     if interpretation:
         lines += ["**시장 해석** · " + interpretation, ""]
-    if changes:
-        lines += ["**오늘 달라진 점**", *("- " + change for change in changes), ""]
+    # Always visible (2026-11-26): an empty list says the comparison is missing, not that nothing changed.
+    lines += ["**오늘 달라진 점**", *(["- " + change for change in changes] if changes else
+                                    ["- 전 거래일과 비교할 변화 자료 미연결 · 변화가 없다는 뜻은 아닙니다."]), ""]
     if indices:
         lines += ["**주요시장**", *indices]
     guard = (context.get("market_guard") or {}).get("action")
@@ -191,6 +192,35 @@ def _quick_summary_lines(judgment_lines, current_state, indices, states, interpr
     # The existing current-state block keeps its own heading right below.
     if current_state:
         lines += [current_state, ""]
+    return lines
+
+
+def _closing_lines(portfolio_lines, calendar_lines, *, limit=5):
+    """마무리: holdings impact and next checks, copied from the tables above (no new numbers)."""
+    lines = ["## 마무리 · 보유 종목 영향과 다음 확인 사항", ""]
+    impact = []
+    for header, rows in tables("\n".join(portfolio_lines)):
+        if header and header[0] == "종목":
+            status = len(header) - 1
+            impact = [(row[0], row[1], row[status]) for row in rows]
+            break
+    lines += ["**보유 종목에 미치는 영향**", ""]
+    if impact:
+        lines += _table(["종목", "일간(위 보유 표 그대로)", "상태/사유"], impact)
+    else:
+        lines += ["보유 종목 표 미연결 · 영향 미확인.", ""]
+    checks = []
+    for header, rows in tables("\n".join(calendar_lines)):
+        if header and header[0].startswith("일정") and header[-1].startswith("확인할"):
+            checks += [(row[0], row[-1]) for row in rows]
+        elif header and header[0] in ("일정·촉매", "기업·상태") and not checks:
+            checks += [(row[0], row[1]) for row in rows]
+    lines += ["**다음 확인 사항**", ""]
+    if checks:
+        lines += _table(["일정", "확인할 것"], checks[:limit])
+    else:
+        lines += ["확인된 다음 일정 미연결 · 일정이 없다는 뜻은 아닙니다.", ""]
+    lines += ["표는 위 「포트폴리오 · 교체 검토」와 「다음 일정」에서 그대로 옮겼습니다. 매수·매도 지시가 아닙니다.", ""]
     return lines
 
 
@@ -388,9 +418,11 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                 if extra:
                     calendar_lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
 
+    portfolio = _portfolio_lines(sections)
     lines = [*head, *quick, *board, *market_blocks[order[0]], *market_blocks[order[1]], *world,
              *macro_lines, *economy_lines, *observatory, *weekly_theme_lines(digest), *_flow_lines(sections),
-             *events, *judgment, *account_preamble, *_portfolio_lines(sections), *calendar_lines]
+             *events, *judgment, *account_preamble, *portfolio, *calendar_lines,
+             *_closing_lines(portfolio, calendar_lines)]
     # Keep unique evidence; do not append a second complete legacy report.
     reading = "\n".join(lines)
     status, checks = check_lines(connection_checks(context, summary_rows, digest, reading, now))
