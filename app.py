@@ -472,7 +472,7 @@ from stock_lab_core.execution_gate import (
 from stock_lab_core.decision_workflow import (
     align_precision_entry_plan_rows, align_precision_final_check_rows,
     attach_market_execution_context, build_decision_workflow,
-    format_precision_take_profit_condition, partition_today_queue, qualify_hold_action_plan,
+    format_precision_take_profit_condition, partition_today_queue, qualify_hold_action_plan, split_hold_and_entry,
 )
 from stock_lab_core.relative_strength import compute_relative_strength, get_sector_provenance
 from stock_lab_core.today_enrichment import attach_today_analyst_context, build_today_analyst_upside_map
@@ -827,13 +827,18 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
     }
     color = color_map.get(judgement.decision, "#64748b")
     
+    readings = split_hold_and_entry(judgement.action_plan, hold_workflow, reduce_side=judgement.decision in (
+        HoldDecision.REDUCE, HoldDecision.STOP_LOSS, HoldDecision.EMERGENCY_EXIT))
+    loss_notes = [r for r in judgement.reasons_exit if "긴급 매도 손실 기준" in r]
     st.markdown(
         f"<div class='info-panel' style='border-left: 6px solid {color};'>"
-        f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+        f"<b>{escape_html_value(name)} 보유 판단 (대표 결론)</b><br>"
         f"<span class='highlight' style='font-size:1.3em; color:{color};'>"
         f"{escape_html_value(judgement.decision.value)}</span> (총 {judgement.score}점)<br><br>"
-        f"<b>행동 제안:</b> {escape_html_value(qualify_hold_action_plan(judgement.action_plan, hold_workflow))}"
-        f"</div>",
+        f"<b>현재 보유분 관리:</b> {escape_html_value(readings['hold'])}<br>"
+        f"<b>오늘 추가매수:</b> {escape_html_value(readings['entry'])}"
+        + "".join(f"<br><span style='color:#f87171;'>⚠️ {escape_html_value(n)}</span>" for n in loss_notes)
+        + "</div>",
         unsafe_allow_html=True,
     )
     
@@ -20865,8 +20870,8 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
     rs_label = str(c.get("rs_label", ""))
     price_vs_avg = (cur_p / my_price - 1) if my_price > 0 and cur_p > 0 else 0.0
 
-    st.markdown("### 🏛️ 보유 지속 vs 손절 종합 판단")
-    st.caption("재무 방향성(좋아지고 있나 나빠지고 있나) + 기술 구조 + 내 손익을 종합합니다.")
+    st.markdown("### 🏛️ 보유판단 근거 (재무 방향성·매크로)")
+    st.caption("대표 결론은 위 장기보유 종합 판정 한 곳에서 냅니다. 여기서는 재무 방향성(좋아지고 있나 나빠지고 있나), 기술 구조, 내 손익, 매크로를 근거로 보여 줍니다.")
 
     leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
     if leveraged_state:
@@ -20974,51 +20979,37 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
         total_score -= 1
         cut_reasons.append(f"매크로 리스크 {macro_risk:.1f}: 보수적 접근")
 
-    # ── 하드 손절 조건 ──────────────────────────
-    hard_cut = (
-        (not is_etf and fin_score <= 1) or
-        (price_vs_avg <= -0.25 and dd <= -0.25 and "역배열" in trend)
-    )
-
-    # ── 최종 판정 ──────────────────────────────
-    if hard_cut:
-        decision, color = "❌ 손절 강력 검토", "#7f1d1d"
-        action = "재무 훼손 + 기술 손상 동시 발생. 손실이 더 커지기 전에 포지션 정리를 검토하세요."
-    elif total_score >= 6:
-        decision, color = "💎 장기보유 적합", "#16a34a"
-        action = "재무 방향성·추세·RS 모두 살아있습니다. 목표비중까지 보유 유지, 추가 확대도 검토 가능."
-    elif total_score >= 3:
-        decision, color = "✅ 조건부 보유", "#22c55e"
-        action = "대부분 건전합니다. 다음 실적 발표에서 방향성 재확인 후 추매 여부 결정."
-    elif total_score >= 0:
-        decision, color = "⚠️ 모니터링 강화", "#d97706"
-        action = "긍·부정 혼재. 추매 보류, 다음 트리거(실적/추세 회복)까지 대기."
-    elif total_score >= -3:
-        decision, color = "📉 비중 축소 검토", "#f97316"
-        action = "부정 신호 우세. 일부 익절 또는 비중을 줄이고 현금화 고려."
-    else:
-        decision, color = "🚨 손절 검토", "#dc2626"
-        action = "여러 훼손 신호 동시 발생. 손절선을 명확히 설정하고 지키세요."
+    # ── C-7 (2026-11-26): the representative verdict comes only from hold_judgement ──
+    from stock_lab_core.execution_readiness import precision_display_context
+    from stock_lab_core.hold_judgement import build_hold_decision as _hold_decision, HoldDecision as _HD
+    judgement = _hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos)
+    decision = judgement.decision.value
+    color = {_HD.STRONG_HOLD: "#16a34a", _HD.CONDITIONAL_HOLD: "#22c55e", _HD.WATCH: "#d97706",
+             _HD.REDUCE: "#f97316", _HD.STOP_LOSS: "#dc2626", _HD.EMERGENCY_EXIT: "#7f1d1d"}.get(judgement.decision, "#64748b")
+    workflow = precision_display_context(c).get("execution_workflow")
+    action = qualify_hold_action_plan(judgement.action_plan, workflow)
+    readings = split_hold_and_entry(judgement.action_plan, workflow, reduce_side=judgement.decision in (
+        _HD.REDUCE, _HD.STOP_LOSS, _HD.EMERGENCY_EXIT))
 
     # ── UI 렌더링 ───────────────────────────────
-    from stock_lab_core.execution_readiness import precision_display_context
-    action = qualify_hold_action_plan(action, precision_display_context(c).get("execution_workflow"))
     h1, h2, h3, h4 = st.columns(4)
-    h1.metric("종합 판정", decision.split(" ", 1)[-1])
-    h2.metric("종합 점수", f"{total_score:+d}점")
+    h1.metric("대표 결론", decision.split(" ", 1)[-1])
+    h2.metric("고점 대비", f"{dd*100:.1f}%" if finite_num(dd) else "-")
     h3.metric("평단 대비", f"{price_vs_avg*100:.1f}%" if finite_num(price_vs_avg) else "-")
     fin_dir_label = fin_trend.get("label", "ETF") if not is_etf else "ETF"
     h4.metric("재무 방향", fin_dir_label)
 
     st.markdown(
         f"<div class='info-panel' style='border-left:6px solid {color};'>"
-        f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+        f"<b>{escape_html_value(name)} 보유 판단</b> · 위 장기보유 종합 판정과 같은 대표 결론<br>"
         f"<span class='highlight' style='color:{color};font-size:1.15em;'>"
         f"{escape_html_value(decision)}</span><br><br>"
-        f"{escape_html_value(action)}"
+        f"<b>현재 보유분 관리:</b> {escape_html_value(readings['hold'])}<br>"
+        f"<b>오늘 추가매수:</b> {escape_html_value(readings['entry'])}"
         f"</div>",
         unsafe_allow_html=True,
     )
+    st.caption("아래는 같은 결론의 근거입니다. 분기 재무 방향성과 매크로는 대표 결론 점수에 넣지 않고 함께 확인하는 근거로 보여 줍니다.")
 
     rc1, rc2 = st.columns(2)
     with rc1:
@@ -21049,7 +21040,8 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             st.caption("재무 방향성은 DART/FMP 자동 계산 데이터 기반입니다. 재무점수를 먼저 돌린 뒤 봐야 정확합니다.")
     return {
         "ticker": ticker, "displayed": True, "decision": decision, "action": action,
-        "total_score": total_score, "price_vs_avg": price_vs_avg, "macro_risk": macro_risk,
+        "hold_score": judgement.score, "evidence_score": total_score, "hold_reading": readings["hold"],
+        "entry_reading": readings["entry"], "price_vs_avg": price_vs_avg, "drawdown": dd, "macro_risk": macro_risk,
         "financial_trend": fin_trend, "hold_reasons": hold_reasons, "cut_reasons": cut_reasons,
     }
 

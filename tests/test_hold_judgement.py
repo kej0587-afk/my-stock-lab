@@ -159,3 +159,33 @@ def test_etf_and_rs_wording_only_changes_descriptions_not_scores(label, slope, t
     assert "부도 리스크 없음" not in " ".join(reasons)
     assert any(reason in item and "미확인" in item for item in reasons)
     assert context == original
+
+
+# C-7 (user decision 2026-11-26): loss emergency exit needs the MA downtrend; fin <= 0 stays a separate exit.
+def _loss_case(trend, fin=4, cur=74, dd=-0.30):
+    return build_hold_decision("X", "X", False, fin, {"cur_p": cur, "dd": dd, "trend": trend, "rs_label": "➖보통",
+                                                      "rs_slope_label": "➡️RS횡보"}, 100, True)
+
+
+def test_loss_exit_requires_downtrend():
+    assert _loss_case("🌊역배열(하락)").decision == HoldDecision.EMERGENCY_EXIT
+    mixed = _loss_case("⏳혼조세")
+    assert mixed.decision != HoldDecision.EMERGENCY_EXIT
+    note = next(r for r in mixed.reasons_exit if "긴급 매도 손실 기준" in r)
+    assert "평단 대비 -26.0%" in note and "고점 대비 -30.0%" in note
+
+
+@pytest.mark.parametrize("cur,dd", [(76, -0.30), (74, -0.24)])
+def test_loss_exit_boundaries_need_both_conditions(cur, dd):
+    j = _loss_case("🌊역배열(하락)", cur=cur, dd=dd)
+    assert j.decision != HoldDecision.EMERGENCY_EXIT
+    assert not any("긴급 매도 손실 기준" in r for r in j.reasons_exit)
+
+
+@pytest.mark.parametrize("fin,exit_", [(0, True), (-1, True), (1, False)])
+def test_financial_score_zero_keeps_separate_exit_and_one_does_not(fin, exit_):
+    j = build_hold_decision("X", "X", False, fin, {"cur_p": 100, "dd": -0.05, "trend": "🚀정배열(상승)",
+                                                    "rs_label": "🚀강함"}, 100, True)
+    assert (j.decision == HoldDecision.EMERGENCY_EXIT) is exit_
+    if fin <= 0:
+        assert any("재무 0점" in r for r in j.reasons_exit)

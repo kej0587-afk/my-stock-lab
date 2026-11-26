@@ -19,6 +19,7 @@ from stock_lab_core.decision_workflow import (
     build_decision_workflow,
     format_precision_take_profit_condition,
     qualify_hold_action_plan,
+    split_hold_and_entry,
 )
 from stock_lab_core.execution_gate import GATE_EXECUTABLE
 from stock_lab_core.formatters import format_rr_ratio
@@ -710,7 +711,7 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
         "st": ui, "clean_float": lambda value, default: default if value is None else float(value),
         "finite_num": np.isfinite, "escape_html_value": str,
         "build_leveraged_precision_state": build,
-        "qualify_hold_action_plan": qualify_hold_action_plan,
+        "qualify_hold_action_plan": qualify_hold_action_plan, "split_hold_and_entry": split_hold_and_entry,
         "detect_fin_trend_direction": lambda meta: {"score": 0, "label": "stable", "has_data": False},
     })
     captured = render("Test", "MSFT", False, 4, {}, {
@@ -724,7 +725,8 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
         assert captured["action"] in "\n".join(ui.markdowns)
     else:
         assert captured["decision"] in "\n".join(ui.markdowns)
-        assert captured["action"] in "\n".join(ui.markdowns)
+        assert captured["hold_reading"] in "\n".join(ui.markdowns)
+        assert captured["entry_reading"] in "\n".join(ui.markdowns)
         assert captured["hold_reasons"]
     archive, data = _read(hold_or_cut=captured)
     assert data["sections"]["hold_or_cut"] == captured
@@ -870,7 +872,7 @@ def test_hold_or_cut_panel_reports_missing_macro_as_unchecked_not_zero():
             "st": ui, "clean_float": lambda value, default: default if value is None else float(value),
             "finite_num": np.isfinite, "escape_html_value": str,
             "build_leveraged_precision_state": lambda *args: {},
-            "qualify_hold_action_plan": qualify_hold_action_plan,
+            "qualify_hold_action_plan": qualify_hold_action_plan, "split_hold_and_entry": split_hold_and_entry,
             "detect_fin_trend_direction": lambda meta: {"score": 0, "label": "stable", "has_data": False},
         })
         return render("Test", "MSFT", False, 4, {}, {
@@ -878,7 +880,7 @@ def test_hold_or_cut_panel_reports_missing_macro_as_unchecked_not_zero():
         }, 100, True)
 
     missing, normal = run({}), run({"_app_final_macro_risk": 1.0})
-    assert missing["total_score"] == normal["total_score"]
+    assert missing["evidence_score"] == normal["evidence_score"]
     assert missing["decision"] == normal["decision"]
     assert any("매크로 미확인" in reason for reason in missing["cut_reasons"])
     assert not any("매크로 미확인" in reason for reason in normal["cut_reasons"])
