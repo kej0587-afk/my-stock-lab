@@ -599,11 +599,12 @@ wait −30% with no more time-budget failures, or failures −30% with no more w
 builds; find the +12 s assembly growth from the `report_assembly` spans; Supabase filing store (B) only if reboot re-downloads dominate.
 **A1 (A only, reboot 02:18 KST):** report 123.3 s, first summary 166.1 s, SEC wait 17.8 s / 146 requests, no access limit, official 23, time-limit failures 10 (all KR). Rerun 67.5 s, SEC 0 s / 32. Legacy runs wait for the user's Secrets approval; no verdict before 3 pairs.
 
-**Last completed report first (user 02:06 KST; doc `docs/maintenance/20261127_last_report_first.md`, branch, not merged while the
-home PC measures):** `stock_lab_core/report_latest.py` stores each newly completed auto report per owner (Supabase `report_latest`,
-SQL `docs/20261127_report_latest.sql` **not applied yet**, plus an owner-hashed local copy) and restores it once per session when the
-시황 slot is empty, with a banner naming its generation time; a new report replaces it. Until the SQL runs it survives new sessions but
-not reboots. Prod check pending: apply SQL → generate → reboot → banner and time visible, replaced after a new report.
+**Last completed report first (user 02:06 KST; decided 06:28 KST: create Supabase `report_latest`, merge PR #91 only after the SEC
+comparison; doc `docs/maintenance/20261127_last_report_first.md`):** `stock_lab_core/report_latest.py` stores each new complete report
+per verified login + selected account set (`account_key` hash), restores it once per session even before Today runs, and keeps it
+when a new report fails or is 미계산 (replaced only by the next complete one). SQL `docs/20261127_report_latest.sql` (RLS forced,
+service_role only) **not applied yet**. Prod check in the user's order: save one report → reboot → before Today the last report and
+its time are visible (record time to visible), then new report completion time.
 
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live

@@ -1,20 +1,23 @@
 -- Prepared only; this migration has NOT been applied by the app or agent.
 -- Stores each owner's last completed market report so a new session or a reboot can show it
--- first (with its generation time) while a new report is built. One row per owner; a new
--- report overwrites it. The text names holdings: owner isolation for the server-only
--- service_role client is enforced by SupabaseReportLatestStore (every read filters
--- owner_email; every upsert is keyed by that owner). Same pattern as report_history.
+-- first (with its generation time) while a new report is built. One row per owner and selected
+-- account set; a new complete report overwrites it. The text names holdings: owner isolation for the server-only
+-- service_role client is enforced by SupabaseReportLatestStore (every read filters owner_email
+-- and account_key and re-checks both on the returned row; every upsert is keyed by both). Same pattern as report_history.
 -- Until this runs the app keeps an owner-hashed local copy only (lost on reboot).
 -- Existing tables/rows are untouched. No retention deletion is performed.
 
 begin;
 
 create table if not exists public.report_latest (
-    owner_email text primary key
+    owner_email text not null
         check (owner_email <> '' and owner_email = lower(btrim(owner_email))),
+    -- hash of the selected account set (no account names); a different set never reads this row
+    account_key text not null check (account_key ~ '^acc_[0-9a-f]{32}$'),
     generated_at timestamptz not null,
     report_text text not null
-        check (length(report_text) between 1 and 1000000)
+        check (length(report_text) between 1 and 1000000),
+    primary key (owner_email, account_key)
 );
 
 alter table public.report_latest enable row level security;
