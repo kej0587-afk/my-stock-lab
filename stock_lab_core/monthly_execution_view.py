@@ -46,7 +46,7 @@ def build_execution_rows(calc_rows, holdings_table, *, total_asset, cash_krw, ga
         else:
             plan_krw, plan_src, version = float(r.get("final_alloc") or 0.0), "임시(미확정)", None
         gate = (gate_reader(ticker) if gate_reader else None) or {}
-        allowed, gate_text = monthly_gate(htype, gate.get("state"), gate.get("reason"))
+        allowed, gate_text = monthly_gate(htype, gate.get("state"), gate.get("reason"), gate.get("core_exception"))
         if r.get("signal_unknown") and conf is not None:
             allowed, gate_text = False, "신호 미확인 · 데이터확인 (확정 계획은 보존, 신호 복구 후 재평가)"
         exec_amt = executed.get(ticker, 0.0) if executed_status == "ok" else None
@@ -87,7 +87,8 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
         (st.success if flash[0] == "ok" else st.warning)(flash[1])
     st.caption(f"{month_key} (KST) · 계좌 범위 {scope} · ① 계획 ② 이번 달 집행 ③ 오늘 실행가능 ④ 오늘 이후 남은 대기. "
                "③은 계획 잔액·목표비중 부족분·월적립 게이트·정찰 1/3·가용 현금 중 가장 작은 값이며, 표시만으로 ②가 늘지 않습니다. "
-               "코어 ETF의 상위 시간대 추세훼손 예외는 비교 검토 후 적용 예정이라 아직 반영하지 않았습니다.")
+               "코어 ETF 정기적립은 상위 시간대 추세훼손만으로는 막지 않습니다(CORE 일반·과열·낙폭·폭락 코드, 위기·패닉 제외). "
+               "다른 안전 차단이 함께 있으면 그대로 막고, 추세훼손 사실은 월적립 게이트 열에 표시합니다.")
     if plan_status == "table_missing" or exec_status == "table_missing":
         st.warning("월적립 계획·집행 저장 테이블이 아직 없습니다. 계획은 임시 계산이고 집행은 미확인입니다.")
         with st.expander("월적립 계획·집행 저장 테이블 SQL (Supabase SQL Editor에서 한 번 실행)"):
@@ -113,6 +114,7 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
                                                existing=plan_rows)
         msg = {"ok": f"이번 달 계획을 확정했습니다({n}종목).", "nothing": "확정할 종목이 없습니다(신호 미확인 종목은 확정하지 않음)."}
         st.session_state["_monthly_execution_flash"] = (status, msg.get(status, f"계획을 확정하지 못했습니다: {status}"))
+        st.session_state["_monthly_store_rev"] = st.session_state.get("_monthly_store_rev", 0) + 1
         st.rerun()
     with c2.expander("집행 기록 (실제로 매수한 금액만)"):
         options = [r for r in rows if r["plan"] is not None and r["executed"] is not None and r["plan"] - r["executed"] > 0]
@@ -140,6 +142,7 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
                             "decision_code": chosen.get("decision_code"), "plan_src": chosen["plan_src"]})
             msg = {"ok": "집행 기록을 저장했습니다.", "duplicate": "같은 신호의 오늘 집행 기록이 이미 있어 저장하지 않았습니다."}
             st.session_state["_monthly_execution_flash"] = (status, msg.get(status, f"저장하지 못했습니다: {status}"))
+            st.session_state["_monthly_store_rev"] = st.session_state.get("_monthly_store_rev", 0) + 1
             st.rerun()
     return rows
 

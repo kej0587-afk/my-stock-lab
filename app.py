@@ -3873,7 +3873,8 @@ def monthly_today_gate(ticker):
             if t_asof != e_asof:
                 return {}
         return {"state": today["gate"].get("state"), "reason": today["gate"].get("reason"),
-                "sizing": today.get("sizing"), "signal_key": today.get("cache_key")}
+                "sizing": today.get("sizing"), "signal_key": today.get("cache_key"),
+                "core_exception": today.get("core_dca_gate")}
     except Exception:
         logging.exception("Monthly Today gate read skipped: ticker=%s", ticker)
         return {}
@@ -18749,18 +18750,36 @@ LEVERAGE_DCA_ACCOUNT_MODE = "total"
 
 
 def current_month_monthly_plan_krw(ticker):
-    """This month's monthly-contribution allocation for the ticker, from the monthly calculator (None = 미확인)."""
+    """C-6/C-11 step 5: the unexecuted rest (plan − executed) of this KST month's CONFIRMED monthly plan for the
+    ticker, in the current account scope. None = 미확인 (no confirmed plan this month, storage missing or unreadable),
+    so L3 stays a candidate. A confirmed month without this ticker gives 0.0. The L3 rule itself is unchanged:
+    it subtracts this amount from the target shortfall so the two never fill the same shortfall twice."""
     try:
-        plan = st.session_state.get("_monthly_plan_alloc") or {}
+        from stock_lab_core import monthly_store
+        from stock_lab_core.monthly_execution import confirmed_plan_remaining, kst_month_key
+        if IS_PUBLIC_DEMO or not CURRENT_USER_EMAIL:
+            return None
+        scope = monthly_store.storage_scope(st.session_state.get("acc_filter", []))
+        month = kst_month_key()
+        plans, plan_status, execs, exec_status = _load_monthly_store_month(
+            CURRENT_USER_EMAIL, scope, month, st.session_state.get("_monthly_store_rev", 0))
+        return confirmed_plan_remaining(plans, plan_status, execs, exec_status, account_scope=scope,
+                                        month_key=month, ticker=ticker)
     except Exception:
+        logging.exception("Confirmed monthly plan read skipped: ticker=%s", ticker)
         return None
-    if plan.get("month") != datetime.now().strftime("%Y-%m"):
-        return None
-    alloc = (plan.get("alloc") or {})
-    value = alloc.get(str(ticker).upper())
-    if value is None:
-        return 0.0 if alloc else None  # the calculator ran this month and gave this ticker nothing
-    return clean_float(value, np.nan) if finite_num(value) else None
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _load_monthly_store_month(owner_email, account_scope, month_key, rev=0):
+    """Read-only. rev changes after a confirm or execution write so the next read is fresh."""
+    from stock_lab_core import monthly_store
+    client = get_supabase_client()
+    plans, plan_status = monthly_store.load_month(client, monthly_store.PLANS, owner_email=owner_email,
+                                                  account_scope=account_scope, month_key=month_key)
+    execs, exec_status = monthly_store.load_month(client, monthly_store.EXECUTIONS, owner_email=owner_email,
+                                                  account_scope=account_scope, month_key=month_key)
+    return plans, plan_status, execs, exec_status
 
 
 def _leverage_dca_table_missing(exc) -> bool:
@@ -21478,6 +21497,10 @@ def attach_today_gate_to_records(summary_df, account_scope):
             record["gate"] = {"state": row.get("게이트상태"), "reason": row.get("게이트근거"),
                               "final_read": row.get("최종읽기"), "group": row.get("판정분류"),
                               "market": row.get("시장실행상태")}
+            # C-6/C-11 D: core regular-DCA gate without the trend-damage label only (monthly ③ reads it for
+            # core ETFs; the Today gate above is unchanged).
+            from stock_lab_core.monthly_execution import core_dca_gate_without_mtf_damage
+            record["core_dca_gate"] = core_dca_gate_without_mtf_damage(row.to_dict())
             store_record(st.session_state, record)
     except Exception:
         logging.exception("Decision record gate attach skipped")

@@ -158,3 +158,87 @@ def test_execution_rows_keep_confirmed_plan_when_signal_is_lost_and_share_cash()
     no_store = build_execution_rows(calc, holdings, total_asset=10_000_000, cash_krw=250000.0, gate_reader=gate.get,
                                     decisions={}, confirmed={}, executed={}, executed_status="no_client")
     assert no_store[0]["plan"] is None and no_store[1]["executed"] is None and no_store[1]["executable"] is None
+
+
+# ── D: core regular-DCA trend-damage exception (user decision 2026-11-26 12:59 KST) ──────────────────────────
+from stock_lab_core.monthly_execution import (CORE_MTF_EXCEPTION_CODES, CORE_MTF_EXCEPTION_TEXT,  # noqa: E402
+                                              core_dca_gate_without_mtf_damage)
+from stock_lab_core.execution_gate import build_execution_gate  # noqa: E402
+
+
+def _row(code, **extra):
+    row = {"티커": "QQQ", "판정코드": code, "상위시간대상태": "상위 시간대 경고", "시장실행상태": "정상",
+           "데이터상태": "OK", "매크로상태": "OK", "최종읽기": "", "🔥기술적 타점": "", "RSI": 40.0, "MFI": 40.0,
+           "볼린저 %B": 0.3, "RR값": 1.5, "판정분류": "buyish"}
+    row.update(extra)
+    return row
+
+
+def test_trend_damage_alone_blocks_today_but_not_core_dca_for_allowed_codes():
+    for code in CORE_MTF_EXCEPTION_CODES:
+        row = _row(code)
+        assert build_execution_gate(row)["게이트근거"] == "상위 시간대 추세훼손"  # Today gate unchanged
+        d = core_dca_gate_without_mtf_damage(row)
+        assert d["state"] == "실행가능" and d["mtf_exception"] is True, code
+        allowed, text = monthly_gate(TYPE_CORE_ETF, "방어우선", "상위 시간대 추세훼손", d)
+        assert allowed is True and text.startswith(CORE_MTF_EXCEPTION_TEXT)
+
+
+def test_exception_never_bypasses_other_safety_blocks():
+    cases = {
+        "market": dict(시장실행상태="시장방어: 신규매수 중단"),
+        "data": dict(데이터상태="가격 기준일 확인 필요"),
+        "macro_unknown": dict(매크로상태="UNKNOWN", 매크로누락="VIX"),
+        "weight": dict(최종읽기="비중 초과: 추매 금지"),
+        "target_zero": dict(최종읽기="TARGET_ZERO 추가 제외"),
+        "defense": dict(최종읽기="급락방어 우선"),
+        "indicator": dict(RSI=float("nan")),
+    }
+    for name, extra in cases.items():
+        d = core_dca_gate_without_mtf_damage(_row("CORE_DRAWDOWN_DCA", **extra))
+        assert d["state"] in ("방어우선", "데이터확인"), (name, d)
+        allowed, text = monthly_gate(TYPE_CORE_ETF, "방어우선", "상위 시간대 추세훼손", d)
+        assert allowed is False and "다른 차단 유지" in text, name
+
+
+def test_exception_excludes_storm_panic_hard_blocks_and_rows_without_damage():
+    for code in ("CORE_STORM_DCA", "PANIC_CASH_DEPLOY", "PANIC_FINAL_DEPLOY", "MACRO_STORM_HOLDING_CAUTION",
+                 "HARD_BLOCK_MACRO_STORM", "HARD_BLOCK_OVERWEIGHT", "TARGET_ZERO_NO_ADD", "S_PULLBACK_ENTRY"):
+        assert core_dca_gate_without_mtf_damage(_row(code)) is None, code
+    assert core_dca_gate_without_mtf_damage(_row("CORE_CRASH_DCA", 상위시간대상태="중립 확인")) is None
+    # Without an exception the core ETF gate is the C2 rule from step 3.
+    assert monthly_gate(TYPE_CORE_ETF, "방어우선", "상위 시간대 추세훼손", None)[0] is False
+
+
+def test_exception_is_ignored_for_stock_swing_and_leverage():
+    d = {"state": "실행가능", "reason": "", "mtf_exception": True}
+    for htype in (TYPE_STOCK, TYPE_SWING, TYPE_LEVERAGE):
+        assert monthly_gate(htype, "방어우선", "상위 시간대 추세훼손", d)[0] is False
+
+
+# ── step 5: L3 reads the unexecuted rest of the confirmed plan (same scope, KST month) ───────────────────────
+from stock_lab_core.monthly_execution import confirmed_plan_remaining  # noqa: E402
+from stock_lab_core import leverage_l3_policy as l3  # noqa: E402
+
+
+def test_l3_monthly_planned_is_confirmed_plan_minus_executed():
+    plans = [{"account_scope": "A", "month_key": "2026-11", "ticker": "TQQQ", "plan_version": 1, "plan_krw": 300000},
+             {"account_scope": "A", "month_key": "2026-11", "ticker": "TQQQ", "plan_version": 2, "plan_krw": 200000},
+             {"account_scope": "B", "month_key": "2026-11", "ticker": "TQQQ", "plan_version": 9, "plan_krw": 900000}]
+    execs = [{"account_scope": "A", "month_key": "2026-11", "ticker": "TQQQ", "amount_krw": 50000},
+             {"account_scope": "A", "month_key": "2026-10", "ticker": "TQQQ", "amount_krw": 70000}]
+    kw = dict(account_scope="A", month_key="2026-11")
+    assert confirmed_plan_remaining(plans, "ok", execs, "ok", ticker="tqqq", **kw) == 150000.0
+    assert confirmed_plan_remaining(plans, "ok", execs, "ok", ticker="QLD", **kw) == 0.0  # confirmed month, no plan
+    assert confirmed_plan_remaining([], "ok", [], "ok", ticker="TQQQ", **kw) is None  # no confirmed plan: candidate
+    assert confirmed_plan_remaining(plans, "table_missing", [], "ok", ticker="TQQQ", **kw) is None
+    assert confirmed_plan_remaining(plans, "ok", [], "error", ticker="TQQQ", **kw) is None
+    over = execs + [{"account_scope": "A", "month_key": "2026-11", "ticker": "TQQQ", "amount_krw": 500000}]
+    assert confirmed_plan_remaining(plans, "ok", over, "ok", ticker="TQQQ", **kw) == 0.0
+
+
+def test_l3_tranche_rule_is_unchanged_and_uses_the_remaining_plan():
+    # Same tranche formula: min(budget/3, budget − invested, shortfall − monthly remaining).
+    assert l3.tranche_amount(900000, 0, 1000000, 150000) == 300000
+    assert l3.tranche_amount(900000, 0, 400000, 150000) == 250000
+    assert l3.tranche_amount(900000, 0, 400000, None) == 300000
