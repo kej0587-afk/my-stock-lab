@@ -570,6 +570,29 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
+**Work order after C-6/C-11 (2026-11-26 14:40 KST, full status table `/mnt/project-files/status/20261126_stock_lab_status_v3.md`):**
+(1) C-8 + C-9 crisis/panic DCA comparison in one report (core −40/−50% crisis fund: price tranches / time split / mix,
+PANIC_* 0.5x, US core perfect storm 100% CORE_STORM_DCA: current block vs exception) with the C-2 historical macro series
+and the market guard → user decision → apply. (2) C-13 core DCA on macro-missing days. (3) C-12 profit-condition 1.0x
+states. (4) C-7 hold panel. (5) C-10 YELLOW scout + D12b. (6) long-term stock monthly execution rate. (7) report: #7
+earnings fields, #9 step 3, daily-reading follow-ups. (8) observatory/economic links (#10/#12/#13/#15) with a perf check.
+(9) performance #18, Naver intraday comparison, cross-view fixed cases. (10) #19 next step, the 33 known test failures, B-8.
+Date-bound: observe the 11-27 (Fri) US short session in a real report. Kept on hold: #6 preferred-share link (no official
+source), AAPL release date (no dateline). Do not restart completed items (table marks prod-checked vs not).
+
+**New follow-up after the list above: short-term trading decision redesign (user, 2026-11-26).** Background: the user bought
+SOXL in small size after a big drop and sold at about +10–20% over their own cost a few times, while the app only showed
+long-term / monthly / L3 hold or risk with no short-term entry or exit basis. Scope: KR/US stocks, normal ETFs, leveraged
+ETFs; SOXL is the first case. Deliverables: existing-feature map (swing radar, flow/volume, precision pattern/supply/
+position/scenario, entry/exit) without double counting and with candidate quality vs real entry kept apart; holding period
+and trade types (crash rebound, uptrend pullback, volume breakout) per product group; a per-ticker view (state | entry zone
++ confirmation | stop/invalidation | take-profit/trailing | max holding | today's hold reason) with long-term and short-term
+quantities/budget/exits kept separate; SOXL numbers as hypotheses ("−20%" basis undefined; "+10/+20%" = over own cost),
+both exits on the same entry sample incl. misses: trades, win rate, avg P/L after costs, worst trade, strategy MDD, holding
+days. First output: status table, design, replay comparison, and which existing blocks apply only to long-term DCA. Design
+starts only after items (1)–(10); no rule change before the user's decision.
+
+
 **C-1 policy (2026-11-25, user decision after the C-1/C-1b comparison):** apply one at a time, each with a replay diff
 and regression tests: (1) EXCEPTION_ENTRY = executable 1/3 scout + trend exit — done (PR #40, prod checked 11-25 13:25 KST), `docs/maintenance/20261125_c1_step1_exception_trend_exit.md`;
 (2) NEW_ENTRY_LEADER trend exit in 상승장 only (SPY/KOSPI 200DMA + 20-day slope; measured move rejected; 하락장 keeps current limits) — done (PR #41, prod checked 11-25 13:53 KST), `docs/maintenance/20261125_c1_step2_leader_uptrend_trend_exit.md`;
