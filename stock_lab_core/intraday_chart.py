@@ -188,6 +188,51 @@ def daily_overlay(daily: pd.DataFrame, bars: pd.DataFrame, periods) -> tuple[dic
     return lines, status
 
 
+def _naive_days(index):
+    index = pd.DatetimeIndex(index)
+    return index.tz_localize(None).normalize() if index.tz is not None else index.normalize()
+
+
+def daily_basis_lines(daily: pd.DataFrame, bars: pd.DataFrame, periods, *, label: str) -> tuple[dict, dict]:
+    """Trading-day N-day SMA on daily, weekly or monthly bars (2026-11-27, user request).
+
+    The SMA is computed on the full daily history first, then mapped to the displayed bars: a daily bar takes
+    its own date, a weekly/monthly bar takes the last daily close on or before its label date (an unfinished
+    week/month therefore shows the value through the latest daily bar). ``bars`` closes override the daily
+    history on the same dates so the daily chart keeps its own last (possibly live) bar. No shorter window
+    stands in for a missing one; status carries have/need and the last value with its daily date."""
+    lines, status = {}, {}
+    if daily is None or daily.empty or "Close" not in daily or bars is None or bars.empty:
+        have = 0 if daily is None or getattr(daily, "empty", True) else len(daily)
+        return lines, {p: {"ok": False, "have": have, "need": p} for p in periods}
+    closes = pd.Series(pd.to_numeric(daily["Close"], errors="coerce").to_numpy(), index=_naive_days(daily.index))
+    closes = closes[~closes.index.duplicated(keep="last")].dropna()
+    bar_days = _naive_days(bars.index)
+    if label == "일봉":
+        own = pd.Series(pd.to_numeric(bars["Close"], errors="coerce").to_numpy(), index=bar_days).dropna()
+        own = own[~own.index.duplicated(keep="last")]
+        closes = own.combine_first(closes) if not own.empty else closes
+    closes = closes.sort_index()
+    for period in periods:
+        if len(closes) < period:
+            status[period] = {"ok": False, "have": len(closes), "need": period}
+            continue
+        sma = closes.rolling(period, min_periods=period).mean()
+        pos = closes.index.searchsorted(bar_days, side="right") - 1
+        values = [sma.iloc[i] if i >= 0 else float("nan") for i in pos]
+        series = pd.Series(values, index=bars.index, dtype="float64")
+        if not series.notna().any():
+            status[period] = {"ok": False, "have": len(closes), "need": period}
+            continue
+        last_pos = int(pos[-1])
+        lines[period] = series
+        status[period] = {"ok": True, "have": len(closes), "need": period,
+                          "last_value": float(sma.iloc[last_pos]) if last_pos >= 0 else float("nan"),
+                          "last_date": str(closes.index[last_pos].date()) if last_pos >= 0 else "",
+                          "first_date": str(sma.first_valid_index().date())}
+    return lines, status
+
+
 def last_bar_state(frame: pd.DataFrame, label: str, now: pd.Timestamp, session: dict | None) -> dict:
     """Describe the newest bar: start, close, volume, whether still in progress, and how far it
     lags the clock. ``session`` is report_exchange_clock.exchange_clock output (or None)."""

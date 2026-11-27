@@ -59,7 +59,8 @@ def build_figure(frame, label, market, ma_lines, overlay_lines, *, provisional=F
                                  close=frame["Close"], name="가격",
                                  increasing_line_color="#22c55e", decreasing_line_color="#ef4444"), row=1, col=1)
     for i, (period, series) in enumerate(sorted(ma_lines.items())):
-        fig.add_trace(go.Scatter(x=x, y=series.to_numpy(), mode="lines", name=f"MA{period}",
+        fig.add_trace(go.Scatter(x=x, y=series.to_numpy(), mode="lines",
+                                 name=period if isinstance(period, str) else f"MA{period}",
                                  line=dict(color=MA_COLORS[i % len(MA_COLORS)], width=1.4)), row=1, col=1)
     for i, (period, series) in enumerate(sorted(overlay_lines.items())):
         fig.add_trace(go.Scatter(x=x, y=series.to_numpy(), mode="lines", name=f"일봉 {period}일선",
@@ -112,8 +113,44 @@ def market_support_rows():
     ]
 
 
+BAR_UNIT = {"주봉": "주", "월봉": "개월"}
+BASIS_DAILY = "거래일 기준 N일선"
+BASIS_BAR = "봉 단위(N주선·N개월선)"
+
+
+def daily_basis_view(daily_long, frame, label, enabled, basis):
+    """2026-11-27: on 일/주/월봉 the user's N means trading days by default. Returns
+    (ma_lines, overlay_lines, notes). ``daily_long`` is the long daily history the 주/월봉 were built from."""
+    if label == "일봉":
+        lines, status = ic.daily_basis_lines(daily_long, frame, enabled, label=label)
+        ma = {f"{p}일선": s for p, s in lines.items()}
+        return ma, {}, _basis_notes(status, "일선")
+    if basis == BASIS_BAR:
+        lines, status = ic.moving_averages(frame, enabled)
+        unit = BAR_UNIT[label]
+        notes = [f"{p}{unit}선: 계산 불가 (확보 {r['have']:,}{'주' if unit == '주' else '개월'}봉 < 필요 {r['need']:,})"
+                 for p, r in sorted(status.items()) if not r["ok"]]
+        return {f"{p}{unit}선": s for p, s in lines.items()}, {}, notes
+    lines, status = ic.daily_basis_lines(daily_long, frame, enabled, label=label)
+    notes = _basis_notes(status, "일선", prefix="일봉 ")
+    if any(r.get("ok") for r in status.values()):
+        notes.append("주·월봉 위 일선 = 각 봉의 마지막 거래일까지 계산한 일봉 이동평균. 진행 중인 봉은 마지막 일봉 날짜까지")
+    return {}, lines, notes
+
+
+def _basis_notes(status, unit, prefix=""):
+    notes = []
+    for period, row in sorted(status.items()):
+        if row.get("ok"):
+            notes.append(f"{prefix}{period}{unit} 마지막 값 {row['last_value']:,.2f} (일봉 {row['last_date']} 기준 · "
+                         f"첫 유효 {row['first_date']} · 확보 {row['have']:,}거래일)")
+        else:
+            notes.append(f"{prefix}{period}{unit}: 계산 불가 (확보 {row['have']:,}거래일 < 필요 {row['need']:,}거래일)")
+    return notes
+
+
 def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_fn=None,
-                          timeframe_frames=None, analysis_renderer=None):
+                          timeframe_frames=None, analysis_renderer=None, daily_long=None):
     if not ticker:
         return
     prefs = cp.load_into_state(st.session_state, store)
@@ -169,8 +206,18 @@ def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_f
         if frame is None or frame.empty:
             st.warning(f"{ticker} {label} 가격을 받지 못했습니다 (Yahoo 응답 없음). 잠시 뒤 다시 시도하세요.")
             return
-        ma_lines, ma_status = ic.moving_averages(frame, enabled)
-        overlay_lines, overlay_status = ic.daily_overlay(daily, frame, enabled) if daily is not None else ({}, {})
+        basis_notes = None
+        if spec["minutes"] is None and supplied is not None and daily_long is not None and not daily_long.empty:
+            basis = BASIS_DAILY
+            if label in BAR_UNIT:
+                basis = st.radio("주·월봉 이동평균 기준", [BASIS_DAILY, BASIS_BAR], horizontal=True,
+                                 key=f"{prefix}_basis_{label}",
+                                 help="기본은 같은 거래일 기준 일선(240일선=최근 240거래일)입니다. 봉 단위는 240주선처럼 단위를 붙여 표시합니다.")
+            ma_lines, overlay_lines, basis_notes = daily_basis_view(daily_long, frame, label, enabled, basis)
+            ma_status, overlay_status = {}, {}
+        else:
+            ma_lines, ma_status = ic.moving_averages(frame, enabled)
+            overlay_lines, overlay_status = ic.daily_overlay(daily, frame, enabled) if daily is not None else ({}, {})
         state = ic.last_bar_state(frame, label, now, session)
         build_started = time.perf_counter()
         if analysis_renderer is not None:
@@ -202,7 +249,7 @@ def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_f
         st.caption(" · ".join(p.strip() for p in parts))
         first = frame.index[0].tz_convert(zone) if frame.index.tz is not None else frame.index[0]
         shown = min(len(frame), DISPLAY_BARS)
-        st.caption(f"받은 범위 {first.strftime('%Y-%m-%d')}부터 {len(frame):,}봉 (화면 최근 {shown:,}봉, 이동평균은 받은 전체로 계산) · 요청 한도 {ic.REQUEST_LIMIT_TEXT[label]} · "
+        st.caption(f"받은 범위 {first.strftime('%Y-%m-%d')}부터 {len(frame):,}봉 (화면 최근 {shown:,}봉, 이동평균은 {"장기 일봉 " + format(len(daily_long), ",") + "거래일로 먼저 계산" if basis_notes else "받은 전체로 계산"}) · 요청 한도 {ic.REQUEST_LIMIT_TEXT[label]} · "
                    f"공급처 {'기존 분석 원자료' if supplied is not None else 'Yahoo Finance(정규장)'}")
         aggregation = frame.attrs.get("aggregation")
         if aggregation:
@@ -210,6 +257,8 @@ def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_f
                        f"화면 캔들 {shown:,} · 개장 기준 묶음 · 정규장 밖 제외 {aggregation['excluded']} · "
                        f"원봉 일부 미수집/진행 중 구간 {aggregation['incomplete']} · 마감 짧은 구간 보존")
         notes = _shortage_text(ma_status, label) + _shortage_text(overlay_status, label, overlay=True)
+        if basis_notes:
+            st.caption(" · ".join(basis_notes))
         if notes:
             st.caption(" · ".join(notes))
         total = time.perf_counter() - started
