@@ -99,13 +99,18 @@ def test_report_front_order_missing_reasons_and_leverage_not_double_multiplied()
                                   market_news_rows=[article("CXMT 반도체 매출 증가")],
                                   summary_rows=[{"티커": "SOXL", "보유량": 1, "현재비중": 6, "목표비중": 5}])
     assert memo.index("## 오늘의 시장 스토리") < memo.index("## 지수·매크로 한눈에") < memo.index("## 내 보유 종목 영향") < memo.index("## 경제지표")
-    assert memo.index("## 빠른 요약\n") < memo.index("## 지수\n") < memo.index("## 매크로\n") < memo.index("## 포트폴리오 · 교체 검토\n")
+    main, audit = memo.split("## 상세 근거 · 계산 기준 · 연결 상태", 1)
+    assert main.index("## 빠른 요약\n") < main.index("## 미국 시황\n") < main.index("## 한국 시황\n") < main.index("## 매크로\n") < main.index("## 포트폴리오 · 교체 검토\n")
+    # Index observations now belong to the quick summary, not a duplicate section.
+    quick = main.split("## 빠른 요약\n", 1)[1].split("\n## ", 1)[0]
+    assert "나스닥" in quick and "-2.00%" in quick
+    assert "## 지수\n" not in main and "## 지수·매크로 한눈에" in audit
     assert "🧭 오늘점검" not in memo
     assert "전년비" in memo and "예상대비 +0.20 %p" in memo
     assert "× 3 = -12.00%" in memo and "-36.00%" not in memo
     assert "비중초과, 레버리지 보유" in memo
     assert memo.count("CXMT 반도체 매출 증가") < 6
-    assert "원자료" not in memo
+    assert "원자료" not in main  # provenance wording is legitimate in detailed audit
     assert "일정 미연결" in memo
     assert memo.count("오늘의 전략:") <= 1
 

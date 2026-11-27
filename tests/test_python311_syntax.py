@@ -1,13 +1,14 @@
 """Streamlit Cloud runs Python < 3.12: PEP 701 f-strings (same quotes nested) crash the app on import."""
 
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-PY311 = shutil.which("python3.11")
+PY311 = sys.executable if sys.version_info[:2] == (3, 11) else shutil.which("python3.11")
 
 CHECK = """
 import ast, pathlib, sys

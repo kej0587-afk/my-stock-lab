@@ -1,5 +1,9 @@
 # 남은 실패 테스트 분류와 큰 함수 정리 순서 (2026-11-27, 우선순위 5번 셋째 건)
 
+최신 재개: [B/C 정리·재집계](20261127_test_resume_bc.md). Python3.11 지원 환경 main339baf81에서
+전체16실패(C 단독 실패/전체 통과), 해당16개 수정 후 재실행13실패(A12/E1).
+아래19/17은 이전 실행 기록이며 최신 실패 수로 사용하지 않는다.
+
 ## 실행 조건
 - 전체 suite: `main` ded72c8b(#122 병합 직후), python 3.12 venv + pandas 2.3.3 / numpy 1.26.4,
   `python -m pytest tests -q -p no:cacheprovider --tb=line -rf`.

@@ -81,7 +81,12 @@ def test_existing_reading_report_retains_bok_without_duplicates_or_input_changes
     assert len(rows) == 1
     assert "2026-11-26" in rows[0] and "예정" in rows[0] and "시각 미확인" in rows[0]
     assert "공식 결과 확인" not in rows[0]
-    assert audit.endswith(original) and (context, holdings) == before
+    # The integrated report moves holdings to the portfolio section and retains
+    # only remaining evidence below the audit heading, rather than appending a copy.
+    portfolio = main.split("## 포트폴리오 · 교체 검토", 1)[1].split("\n## ", 1)[0]
+    assert "판정 원문 유지" in portfolio
+    assert output.count("판정 원문 유지") == 1
+    assert (context, holdings) == before
 
 
 @pytest.mark.parametrize(("at", "state"), [

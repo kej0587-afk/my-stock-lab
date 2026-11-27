@@ -1,5 +1,24 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 재개 완료 · 최신 작업 지시 (아래 과거 다음 작업보다 우선)
+
+- 시작: clean `claude/project-thread-a6hied/20452bea` → fetch한 main `339baf81`과102커밋 차이,
+  고유 커밋0, 열린 PR0. 기존 브랜치 보존, `codex/resume-report-tests`에서 재개. 미커밋 이월 없음.
+- 완료: B 리포트 위치3건 계약 수정, C 오프라인 국내 종가·FRED 경계 보완,
+  Windows에서도 실제 Python3.11 문법검사 실행. 앱/stock_lab_core 운영 코드·점수·판정은 변경 없음.
+- **실제 남은 실패13건(A12/E1)**: main 기준 전체10313통과/16실패/2skip(780.21초).
+  그 실패16건을 수정본에서 재실행해3통과/13실패(47.92초). C는 전체에서 통과했으나
+  단독에서 실패했던 실행순서/캐시 영향 검사로, 단독 수정 후 통과. 수정 후 전체 suite 재실행은 하지 않음.
+- 테스트 범위: B/C/3.11 문법/A-B-C·분봉194통과, 정밀차트·신규진입·단기전략22통과,
+  선택 report208통과. golden 재생성/실패 skip 없음. [기록](docs/maintenance/20261127_test_resume_bc.md).
+- 운영 범위: #121 이후18:11~18:21 기록을 재사용(일·주·월 MA, 차트 아래 A/B/C·신규진입 근거·단기 선택기).
+  이번 새 브라우저 확인/재부팅 없음(운영 코드 변경 없음). 보유 L2/L3·보유종목 Today 일치는 여전히 미확인.
+- 비공개 연구 상세표69건은 Downloads에서 확인, Git 제외. 다음 시가/신호일 공통 평가일/미진입 현금/
+  개별주·ETF 분리의 후속 방법을 연구 문서에 기록. 다른 PC `/mnt/project-files/` 원본은 접근 불가.
+- **다음 한 건:** A의 `tests/test_company_cash_comparison.py::test_app_entry_and_decision_reader_unchanged`.
+  과거 app.py 전체 동일 요구를 해당 현금흐름 표시/조회가 판정·점수에 들어가지 않는 실제 입력→출력 계약으로
+  좁힌다. 현재 app 전체를 새 golden으로 덮지 말 것. 이후 A 나머지→E→ROADMAP 병목 순서.
+
 ## 2026-11-27 KST 새 우선순위 1~6 (17:37 사용자 지시) · 1~6 1차 완료 (18:55 기록)
 
 순서는 [ROADMAP 맨 위](docs/maintenance/ROADMAP.md) 1~6. 시작 시 main `a3e027a`는 16:50 기록과 같았다.

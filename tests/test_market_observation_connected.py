@@ -69,10 +69,18 @@ def test_report_collects_rotation_histories_without_expanding_live_quote_request
     monkeypatch.setattr(provider, "load_price_df", lambda *args, **kwargs: pd.DataFrame())
     monkeypatch.setattr(report_live, "supplement_kr_indices", lambda frames: frames)
     monkeypatch.setattr(report_quotes, "load_report_quotes", quotes)
+    from stock_lab_core import kr_regular_history, macro_monitor
+    from stock_lab_core.report_dashboard import OBSERVATORY_FRED
+    regular = Mock(side_effect=lambda frames, tickers, now: frames)
+    fred = Mock(return_value=pd.DataFrame())
+    monkeypatch.setattr(kr_regular_history, "align_regular_frames", regular)
+    monkeypatch.setattr(macro_monitor, "load_macro_series", fred)
     collect_report_context(now=pd.Timestamp("2026-10-30T08:00:00+09:00"), economic_releases=[],
         calendar={"events": [], "sources": []}, scenario_frames={})
     assert set(ROTATION_UNIVERSE) <= set(batch.call_args_list[0].args[0])
     quotes.assert_called_once()
+    regular.assert_called_once()
+    assert {call.args[0] for call in fred.call_args_list} == set(OBSERVATORY_FRED)
     assert set(quotes.call_args.args[0]) == {ticker for ticker in SECTORS if not ticker.endswith((".KS", ".KQ"))}
     assert set(quotes.call_args.kwargs["kr_tickers"]) == {ticker for ticker in SECTORS if ticker.endswith((".KS", ".KQ"))} | {"0167A0.KS"}
 
