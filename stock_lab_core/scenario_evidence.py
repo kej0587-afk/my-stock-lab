@@ -128,7 +128,8 @@ def build_scenario_evidence(frame, expected_close, *, profile=None):
         poc = None
     result.update(available=True, fresh=status == "완료 일봉", asof=at, close=close, levels=levels,
                   support=support, recovery=recovery, target=target, next_lower=below[1] if len(below) > 1 else None,
-                  rr=rr, range=bounds, measures=measures, poc=dict(poc) if poc else None)
+                  rr=rr, range=bounds, measures=measures, poc=dict(poc) if poc else None,
+                  last_low=float(view.Low.iloc[-1]), last_high=float(view.High.iloc[-1]))
     return result
 
 

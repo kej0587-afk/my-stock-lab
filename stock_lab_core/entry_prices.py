@@ -31,15 +31,25 @@ def build_entry_price_plan(decision, *, wait_for_pullback=False):
         if all(abs(value - used) > min_gap for _, used in supports):
             supports.append((label, value))
 
+    formula = {"MA5": "일봉 MA5 값", "MA20": "일봉 MA20 값", "FVG 상단": "일봉 FVG 상단", "FVG 하단": "일봉 FVG 하단",
+               "0.5ATR": "판정가 − 0.5×ATR", "1ATR": "판정가 − 1×ATR"}
     entry1 = supports[0] if wait_for_pullback and supports else ("현재가", cur)
-    entry2 = (supports[1] if len(supports) >= 2 else supports[0] if supports
-              else ("0.5ATR", max(stop + risk * 0.45, cur - risk * 0.25)))
+    basis1 = formula.get(entry1[0], "판정가") if entry1[0] != "현재가" else "판정가(현재가 기준 1차)"
+    if len(supports) >= 2:
+        entry2, basis2 = supports[1], formula.get(supports[1][0], supports[1][0])
+    elif supports:
+        entry2, basis2 = supports[0], formula.get(supports[0][0], supports[0][0])
+    else:
+        entry2 = ("0.5ATR", max(stop + risk * 0.45, cur - risk * 0.25))
+        basis2 = "지지 후보 없음 · max(손절 + 위험폭×0.45, 판정가 − 위험폭×0.25)"
     if len(supports) >= 3:
-        entry3 = supports[2]
+        entry3, basis3 = supports[2], formula.get(supports[2][0], supports[2][0])
     else:
         last = stop + risk * 0.25
+        basis3 = "손절 + 위험폭×0.25"
         if abs(last - entry2[1]) <= min_gap:
             last = max(stop + risk * 0.15, entry2[1] - risk * 0.25)
+            basis3 = "2차와 겹쳐 max(손절 + 위험폭×0.15, 2차 − 위험폭×0.25)"
         entry3 = ("손절 전 마지막 방어선", last)
 
     if c.get("rr_target_is_projection") and atr > 0:
@@ -50,7 +60,9 @@ def build_entry_price_plan(decision, *, wait_for_pullback=False):
     else:
         exits = [min(target, entry1[1] + (entry1[1] - stop)), target, target]
     return {"valid": True, "rr": rr, "supports": supports,
-            "entries": (entry1, entry2, entry3), "exits": tuple(exits)}
+            "entries": (entry1, entry2, entry3), "exits": tuple(exits),
+            # Display only: which line or formula produced each entry (위험폭 = 판정가 − 손절).
+            "basis": (basis1, basis2, basis3)}
 
 
 register_loaded_source(__name__, __file__)

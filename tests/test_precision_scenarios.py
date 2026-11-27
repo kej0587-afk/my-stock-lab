@@ -272,7 +272,7 @@ def test_renderer_escapes_evidence_plan_and_gate_html_without_mutating_model(cas
     ui = FakeUI()
     render_precision_scenarios(ui, model)
     output = "\n".join(value for value, _ in ui.markdowns)
-    assert len(ui.tab_names) == 3 and len(ui.markdowns) == 5
+    assert len(ui.tab_names) == 3 and len(ui.markdowns) == 8  # + headline, comparison title, cards
     assert payload not in output and "<script>" not in output and "<img " not in output
     assert html.escape(payload) in output
     assert "현재 근거·반대 근거" in output and "table-layout:fixed" in output
@@ -290,5 +290,5 @@ def test_summary_scenario_opens_first_and_evidence_remains_accessible(case, focu
     assert ui.tab_names[0].startswith(focus)
     assert len(ui.tab_names) == 3
     assert ui.expanders == [{"expanded": False}]
-    assert "구조" in ui.markdowns[1][0] and "유동성" in ui.markdowns[1][0]
+    assert "구조" in ui.markdowns[4][0] and "유동성" in ui.markdowns[4][0]
     assert_unchanged(model, before)
