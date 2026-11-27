@@ -603,7 +603,7 @@ builds; find the +12 s assembly growth from the `report_assembly` spans; Supabas
 comparison; doc `docs/maintenance/20261127_last_report_first.md`):** `stock_lab_core/report_latest.py` stores each new complete report
 per verified login + selected account set (`account_key` hash), restores it once per session even before Today runs, and keeps it
 when a new report fails or is 미계산 (replaced only by the next complete one). SQL `docs/20261127_report_latest.sql` (RLS forced,
-service_role only) **not applied yet**. Prod check in the user's order: save one report → reboot → before Today the last report and
+service_role only) applied 10:33 KST. **Merged (PR #91, main 2db1e580) and prod-checked 10:29-10:47 KST:** after reboot, the 오늘 점검 screen shows the last report caption 7.9 s after entering (first screen 8.5 s), before Today; 시황 view body 3.4 s; a 미계산 new report kept the old one; after Today a new report (148.7 s on screen) replaced it and updated the row. Not tested live: other user/account isolation (unit tests only). Prod check in the user's order: save one report → reboot → before Today the last report and
 its time are visible (record time to visible), then new report completion time.
 
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
