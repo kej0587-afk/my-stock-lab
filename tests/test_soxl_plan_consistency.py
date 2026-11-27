@@ -95,6 +95,10 @@ def test_entry_plan_passes_one_effective_target_to_the_leverage_rows(plan_app):
     assert split["오늘 실행가능액"].startswith("0 · 오늘 신규·추가 실행 보류(레버리지 시장방어")
     assert split["실제 집행기록액"].startswith("미연결")
     assert decision["target_w"] == 0.0  # the input decision is never rewritten
+    basis = plan["entry_basis"]
+    assert [row["단계"] for row in basis][-2:] == ["최종 목표", "계획 무효·손절"]
+    assert all(row["실행·수량"] == "보류 · 수량 미산출" for row in basis[:3])
+    assert all("반올림 전" in row["기준선·산식"] for row in basis[:3])
 
 
 def test_unset_target_still_reads_unset(plan_app, monkeypatch):

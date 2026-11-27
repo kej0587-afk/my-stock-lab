@@ -210,7 +210,7 @@ def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False)
         "거래량·MFI·추정 매물대는 가격 반응의 보조 근거입니다. 손절 주문량·참가자 의도·유동성 사냥 완료는 미확인입니다."]
     axes = [dict(row, 해석=interpretation) for row, interpretation in zip(axes, interpretations)]
     if damaged or current_sell:
-        focus, thesis = "B안 · 보유 위험 우선 점검", structure
+        focus, thesis = ("B안 · 보유 위험 우선 점검" if has_pos else "B안 · 하방 위험 우선 감시"), structure
     elif (higher_up and location["available"] and location["inside"] and not location["provisional"]
           and refs["valid"] and duration_known and flow_known):
         focus, thesis = "A안 · 지지·회복 조건 관찰", "상위 상승 흐름과 완료 일봉의 채널 내부 위치는 회복 관찰 근거입니다. 반등 확정이나 진입 신호는 아닙니다."
@@ -247,9 +247,71 @@ def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False)
          "prices": "범위 미확인 시 임의 지지·저항·매수가를 만들지 않음",
          "invalidate": "A의 지지·회복 또는 B의 이탈 조건을 확인하면 해당 안을 재점검."},
     ]
-    return _attach_completed_observations({"ticker": ticker, "focus": focus, "thesis": thesis, "execution": execution,
+    model = _attach_completed_observations({"ticker": ticker, "focus": focus, "thesis": thesis, "execution": execution,
             "axes": axes, "scenarios": scenarios, "location": location, "plan": refs,
             "ready": ready, "has_pos": bool(has_pos), "duration_known": duration_known, "flow_known": flow_known}, context, ticker)
+    return _one_screen(model, plan, ticker, structure)
+
+
+def _one_screen(model, plan, ticker, structure):
+    """2026-11-27 (user request 3): one headline, one A/B/C comparison table and the entry plan's price basis,
+    all from values already computed above. No new rule, price or score."""
+    ev = _map(model.get("completed_evidence"))
+    price = lambda n: format_currency(n, ticker)
+    support, recovery = _map(ev.get("support")), _map(ev.get("recovery"))
+    s_price, r_price = _positive(support.get("price")), _positive(recovery.get("price"))
+    close = _positive(ev.get("close")) if ev.get("available") else None
+    if close is None:
+        basis, position = "완료 일봉 미확인", "경계 미확인"
+    else:
+        basis = f"{ev.get('asof')} 완료 일봉 종가 {price(close)}" + ("" if ev.get("fresh") else " (최신 완료 거래일 아님)")
+        if s_price and r_price:
+            position = (f"두 경계 안({price(s_price)}~{price(r_price)})" if s_price <= close <= r_price
+                        else f"하방 관찰선 {price(s_price)} 아래" if close < s_price else f"회복 장벽 {price(r_price)} 위")
+        elif s_price:
+            position = f"하방 관찰선 {price(s_price)} 위 · 회복 장벽 미확인"
+        elif r_price:
+            position = f"회복 장벽 {price(r_price)} 아래 · 하방 관찰선 미확인"
+        else:
+            position = "경계 미확인"
+
+    def met(flag):
+        return "미확인" if flag is None else ("충족" if flag else "미충족")
+
+    b_met = None if close is None or not s_price else close < s_price
+    a_met = None if close is None or not r_price else close > r_price
+    low = _positive(ev.get("last_low"))
+    if close is None or not s_price or low is None:
+        dip = "원안 A(하단 지지 아래 꼬리 후 빠른 회복): 완료봉·하단 미확인"
+    elif low < s_price <= close:
+        dip = f"원안 A(하단 지지 아래 꼬리 후 빠른 회복): {ev.get('asof')} 저가 {price(low)}가 {price(s_price)} 아래 후 종가 회복 관측"
+    else:
+        dip = f"원안 A(하단 지지 아래 꼬리 후 빠른 회복): {ev.get('asof')} 저가 {price(low)} · 하단 {price(s_price)} 아래 꼬리 미관측"
+    focus_key = str(model["focus"])[:2]
+    reason = {"B안": structure, "A안": model["thesis"], "C안": model["thesis"]}.get(focus_key, model["thesis"])
+    model["headline"] = {
+        "보유 여부": "보유" if model["has_pos"] else "미보유",
+        "기준 종가": basis,
+        "현재 가격 위치": position,
+        "우선 감시": f"{model['focus']} · {reason}",
+        "오늘 실행": model["execution"],
+    }
+    obs = {row.get("안"): row for row in model.get("price_rows") or []}
+    compare = []
+    for item in model["scenarios"]:
+        key = item["name"][0]
+        p = _map(obs.get(key))
+        status = {"A": f"상단 종가 회복 {met(a_met)}", "B": f"하단 종가 이탈 {met(b_met)}",
+                  "C": "범위 안" if (a_met is False and b_met is False) else "범위 밖 또는 미확인"}[key]
+        confirm = (p.get("확인 가격") or item["condition"]) + f" · 현재 {status}"
+        if key == "A":
+            confirm += f" · 현재 앱 A = 상단 회복 확인. {dip} (시점이 다른 별도 사건)"
+        compare.append({"대응안": item["name"], "우선 감시 이유·반대 근거": item["evidence"],
+                        "확인 가격과 조건": confirm, "다음 가격": p.get("다음 가격") or "관측 가격대 없음",
+                        "무효·전환 조건": p.get("실패·전환") or item["invalidate"]})
+    model["compare_rows"] = compare
+    model["entry_rows"] = list(_map(plan).get("entry_basis") or [])
+    return model
 
 
 def render_precision_scenarios(st, model):
@@ -258,6 +320,24 @@ def render_precision_scenarios(st, model):
     st.markdown(f"<p><b>{escape(model['focus'])}</b><br>{escape(model['thesis'])}<br>"
                 f"<b>현재 실행:</b> {escape(model['execution'])}</p>", unsafe_allow_html=True)
     st.caption("일봉 관리 시나리오 · 실시간 발동·승률 판정 아님 · 1시간/5분 단타 계획과 별도")
+    head = model.get("headline")
+    if head:
+        st.markdown("<p style='line-height:1.7;'>" + " · ".join(
+            f"<b>{escape(k)}</b> {escape(v)}" for k, v in head.items()) + "</p>", unsafe_allow_html=True)
+    def cards(rows, title_key):
+        # One card per row: readable at phone width without a horizontal scroll.
+        html = ""
+        for row in rows:
+            body = "".join(f"<div><b>{escape(k)}</b> {escape(str(v))}</div>" for k, v in row.items() if k != title_key)
+            html += (f"<div style='border:1px solid #334155;border-radius:6px;padding:8px;margin:6px 0;"
+                     f"overflow-wrap:anywhere;line-height:1.6;'><b>{escape(str(row.get(title_key)))}</b>{body}</div>")
+        st.markdown(html, unsafe_allow_html=True)
+    if model.get("compare_rows"):
+        st.markdown("**대응안 비교**")
+        cards(model["compare_rows"], "대응안")
+    if model.get("entry_rows"):
+        st.markdown("**신규진입 실행계획 가격과 근거** · 대응안 확인 전 가격에 도달해도 최종 실행판정이 유지됩니다")
+        cards(model["entry_rows"], "단계")
     if model.get("price_basis"):
         st.caption(model["price_basis"].replace("$", r"\$"))
     if model.get("quote_basis"):
@@ -271,6 +351,7 @@ def render_precision_scenarios(st, model):
         st.markdown("<table style='width:100%;table-layout:fixed;overflow-wrap:anywhere;line-height:1.6;'>" + rows + "</table>", unsafe_allow_html=True)
     # Open the scenario named by the summary first, without changing its analysis.
     scenarios = sorted(model["scenarios"], key=lambda row: not model["focus"].startswith(row["name"][:2]))
+    st.caption("안별 상세")
     for tab, item in zip(st.tabs([row["name"] for row in scenarios]), scenarios):
         with tab:
             if item.get("price_observations"):

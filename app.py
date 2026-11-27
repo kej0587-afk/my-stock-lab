@@ -18100,6 +18100,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     # Three different amounts, never merged: the theoretical gap to the target, what today's gate allows, and
     # what was actually recorded. This screen reads no fill ledger, so a recorded amount is never estimated.
     gate_open = plan_workflow.get("게이트상태") == GATE_EXECUTABLE
+    from stock_lab_core.precision_plan_rows import build_entry_basis_rows
     first_today = plan_buy_amt_krw * clean_float(tranche_weights[0], 0.0)
     if not gate_open:
         today_text = f"0 · 오늘 신규·추가 실행 보류({plan_workflow.get('게이트근거') or '실행 게이트 재확인 필요'})"
@@ -18122,6 +18123,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     plan = {
         "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
         "weight_source": weight_source, "amount_split": amount_split,
+        "entry_basis": build_entry_basis_rows(rows, prices, (entry1, entry2, entry3), ticker,
+                                         gate_open=gate_open, target=target, stop=stop,
+                                         target_source=target_source, stop_source=stop_source,
+                                         format_currency=format_currency),
         "rows": rows, "amount_note": amount_note, "current_price": cur,
         "target": target, "stop": stop, "target_source": target_source,
         "stop_source": stop_source, "rr_now": rr_now_text,
@@ -18736,7 +18741,8 @@ def build_leveraged_dca_timing_state(c, state):
         entry2_cond = entry3_cond = "자료 미확인 · 추가 회차 보류"
     elif dca_blocked:
         if dca_stage == "미보유 관찰":
-            entry2_cond = "목표비중 설정 후 같은 타점 기준으로 금액 재계산"
+            entry2_cond = ("목표비중 설정 후 같은 타점 기준으로 금액 재계산" if target_w <= 0
+                           else "신규 1차 진입 후 같은 타점 기준으로 재계산 · 조건부 수량 미산출")
             entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"
         elif target_w <= 0:
             entry2_cond = "목표비중이 0%라 금액 계산 제외. 타점 참고만 표시"
@@ -35689,7 +35695,7 @@ if main_page == "precision":
                 st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량 기준비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         from stock_lab_core.soxl_short_view import render_soxl_short_observation
-        render_soxl_short_observation(st, tkr, c)
+        render_soxl_short_observation(st, tkr, c, daily=df)
 
         if str(tkr).upper() != "SOXL":
             from stock_lab_core.short_trade_view import render_symbol_research
