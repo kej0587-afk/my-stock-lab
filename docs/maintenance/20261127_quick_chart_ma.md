@@ -63,9 +63,10 @@
 
 - `tests/test_intraday_chart.py` 9개 통과 (기간 입력, 120분 묶음, 마지막 봉 갱신 병합, 부족 표시, 일봉 겹침은 전일 종가까지, 진행 중 판정, 저장 실패 대체, 계정 필터).
 - AppTest로 SOXL·005930.KS 6개 간격 전환, 이동평균 입력, 일봉 겹침 실행: 예외 없음.
-- `scripts/check_refactor.py --scope all`: §6에 기록.
+- `scripts/check_refactor.py --scope all`: main과 실패 목록 동일 (§6).
 - 운영 확인: 아직 안 함 (병합 후 정밀관측소 SOXL에서 첫 표시·전환 체감 시간, 장중 갱신, 저장 동작).
 
 ## 6. 회귀 비교
 
-(아래 결과로 채움)
+base main `a880b8f` vs 이 브랜치: `check_refactor --scope all` 둘 다 2 failed / 2,495 passed, 실패 목록 동일(HANDOFF의 알려진 2건:
+`test_extracted_policies_preserve_all_original_conditions_and_literals`, `test_investment_functions_are_unchanged`). 새 테스트 9개 별도 통과.
