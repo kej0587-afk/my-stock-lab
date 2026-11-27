@@ -80,7 +80,13 @@ def observatory_fred_observations(now, *, loader=None, symbols=OBSERVATORY_FRED)
     from stock_lab_core.performance import submit_with_context
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [submit_with_context(pool, one, symbol) for symbol in symbols]
-        rows = dict(future.result() for future in futures)
+        try:
+            rows = dict(future.result() for future in futures)
+        except BaseException:
+            # Preserve Executor.map's cancellation of unconsumed queued work.
+            for future in futures:
+                future.cancel()
+            raise
     meta = {"seconds": time.perf_counter() - started, "requested": len(symbols),
             "connected": sum(1 for row in rows.values() if row.get("값") != "미연결"), "as_of": as_of}
     return rows, meta

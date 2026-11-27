@@ -69,6 +69,19 @@ def report_hash(value):
     return hashlib.sha256(str(value).encode('utf-8')).hexdigest()
 
 
+_COVERAGE_STATUSES = frozenset({
+    'unspecified', 'ok', 'released', 'pending', 'stale', 'verified_snapshot',
+    'connected', 'unavailable', 'skipped', 'fallback', 'official_result',
+    'official_filing_result', 'official', 'missing', 'scheduled',
+    'elapsed_unconfirmed', 'not_attempted', '공식 실적 발표', '공식 정기보고서 확인',
+})
+
+
+def _coverage_status(value):
+    # Do not stringify/hash arbitrary provider or caller payloads.
+    return value if type(value) is str and value in _COVERAGE_STATUSES else 'other'
+
+
 def record_official_coverage(context):
     """Aggregate coverage only; do not export company/account rows or query keys."""
     run = _run.get()
@@ -82,7 +95,7 @@ def record_official_coverage(context):
         rows = [row for row in rows if isinstance(row, dict)]
         coverage[field] = {'rows': len(rows),
             'with_actual': sum(row.get('actual') is not None for row in rows),
-            'statuses': dict(Counter(str(row.get('status', 'unspecified')) for row in rows))}
+            'statuses': dict(Counter(_coverage_status(row.get('status', 'unspecified')) for row in rows))}
     run['official_coverage'] = coverage
 
 

@@ -374,7 +374,13 @@ def _public_fallback(rows, keys, now, fetch, result):
     with ThreadPoolExecutor(max_workers=4) as executor:
         from stock_lab_core.performance import submit_with_context
         futures = [submit_with_context(executor, _cached, item[0], "", fetch, now) for item in ordered_targets]
-        responses = [future.result() for future in futures]
+        try:
+            responses = [future.result() for future in futures]
+        except BaseException:
+            # Preserve Executor.map's cancellation of unconsumed queued work.
+            for future in futures:
+                future.cancel()
+            raise
     for (url, wanted), response in zip(ordered_targets, responses):
         payload, reason, status, retrieved_at, cached = response
         public["sources"].append({"source_url": url, "reason": reason, "http_status": status,
