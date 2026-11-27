@@ -43,3 +43,19 @@
 `report_sections`에 남은 큰 덩어리는 "오늘의 시장 스토리" 사실 줄(지수·코스닥·다일 맥락·장중·지표·원인 보도, 약 80줄)이다.
 `used_story_news` 공유가 많아 한 번 더 나눠야 한다. 그 뒤 ROADMAP 표의 app.py 큰 함수(`calc_scores_and_decision` 473줄,
 `render_image_theme_flow_section` 421줄, `build_portfolio_analysis_report` 411줄, `render_entry_execution_plan` 399줄)로 넘어간다.
+
+## 7단계: "오늘의 시장 스토리" 사실 줄 (2026-11-27)
+
+`report_sections` 245줄 → 168줄. 남은 덩어리를 두 함수로 옮겼다(코드 줄 그대로).
+
+| 새 함수 | 담당 | 공유 상태 |
+| --- | --- | --- |
+| `_market_fact_lines(...)` | 지표 서사 기준·발표일 범위, 참여자 기사, 미국 장중, 보유 반도체 노출, 미국 지수, 코스닥, 한국 다일 맥락, 당일 등락 | 미국 장중 반등 기사 키를 `used_story_news`에 추가 |
+| `_story_cause_lines(...)` | 선정 지표, 보도 원인/제목 기사, 한국 맥락 기사, 다음 체크 | 인용 기사 키를 `used_story_news`에, 뉴스가 없으면 "허용 출처 핵심 뉴스"를 `missing`에 추가 |
+
+- 중간에 있던 `releases = records(context.get("economic_releases"))` 재할당은 뒤의 경제지표 표가 쓰므로 `report_sections`에 남겼다(같은 값).
+- 확인(기준 main `51c084c5`, 두 트리를 동시에 실행): check_refactor all 2 실패 / 2,495 통과(전후 같은 목록), 전체 테스트 22 실패 / 10,200 통과(같은 목록),
+  테스트 중 `report_sections` 출력 129건 모두 동일, 합성 입력 10건 바이트 동일, pyflakes 기존 경고 3개 그대로.
+- 운영 확인: (병합·재부팅 뒤 기록. 시장 스토리 아래 사실 줄과 '다음 체크'가 이전 형식인지 본다)
+
+다음: `report_sections`는 이제 블록 호출 순서와 공유 상태 전달이 대부분이라 여기서 멈춘다. 다음은 ROADMAP 표의 app.py 큰 함수 하나의 한 책임.
