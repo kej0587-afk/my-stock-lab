@@ -24,6 +24,25 @@ REPORT_STYLE = """
     word-break: keep-all;
     overflow-wrap: break-word;
 }
+@media (max-width: 640px) {
+    .st-key-market_report_reading table {
+        max-width: 100%;
+        overscroll-behavior-x: contain;
+    }
+    .st-key-market_report_reading td {
+        vertical-align: top;
+        line-height: 1.5;
+    }
+    .st-key-market_report_reading table:has(th:nth-child(3)) td:not(:first-child) {
+        min-width: 10rem;
+    }
+    .st-key-market_report_reading table:has(th:nth-child(5)) td:nth-child(2) {
+        min-width: 6rem;
+    }
+    .st-key-market_report_reading table:has(th:nth-child(5)) td:nth-child(3) {
+        min-width: 12rem;
+    }
+}
 </style>
 """
 
