@@ -160,7 +160,9 @@ def test_render_is_opt_in_soxl_only_and_preserves_decision(monkeypatch):
     ui = UI()
     view.render_soxl_short_observation(ui, "SOXL", decision)
     assert "매수 승인 아님" in " ".join(ui.text)
-    assert decision == before and not ui.session_state
+    assert decision == before
+    # Research widget preferences are persisted; investment state remains read-only.
+    assert set(ui.session_state) == {"short_evidence_v1_SOXL_cost", "short_evidence_v1_SOXL_saved_cost"}
     ui = UI(clicked=True)
     view.render_soxl_short_observation(ui, "RAM", decision)
     assert not ui.text
