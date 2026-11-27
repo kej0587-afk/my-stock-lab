@@ -1,0 +1,2 @@
+# Keep generated audit data available, but collapse large diffs in GitHub review.
+*.csv linguist-generated=true
