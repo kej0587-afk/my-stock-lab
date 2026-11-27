@@ -17704,6 +17704,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     current_w = clean_float(c.get("current_w"), 0.0)
     weight_gap = max(clean_float(c.get("weight_gap"), target_w - current_w), 0.0)
     effective_total_asset = clean_float(c.get("effective_total_asset"), 0.0)
+    weight_source = "판정 입력(선택 계좌 보유표)" if target_w > 0 else "판정 입력에 목표비중 없음"
     if buy_amt_krw <= 0 and effective_total_asset > 0 and weight_gap > 0:
         buy_amt_krw = round(effective_total_asset * weight_gap / 100.0, 0)
     if buy_amt_krw <= 0:
@@ -17718,8 +17719,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 weight_gap = sheet_gap
                 effective_total_asset = sheet_total
                 buy_amt_krw = round(sheet_total * sheet_gap / 100.0, 0)
+                weight_source = "보유표 목표비중으로 보완(판정 입력은 0%)"
         except Exception:
             pass
+    # One effective target for every reading of this plan (table, leverage timing, notes): the leverage
+    # rows used to read the raw input while the first row used the sheet-completed target (8 % vs 미설정).
+    c_plan = c
+    if (target_w, current_w) != (clean_float(c.get("target_w"), 0.0), clean_float(c.get("current_w"), 0.0)):
+        c_plan = {**c, "target_w": target_w, "current_w": current_w, "weight_gap": weight_gap}
     pct_b = clean_float(c.get("pct_b"), 0.0)
     decision_code = str(c.get("decision_code", "") or "")
     decision_label = str(c.get("dec", "") or "")
@@ -17735,8 +17742,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     is_core_dca = bucket == "core" and core_dca_rate > 0 and target_w > 0 and weight_gap > 0
     is_new_core_etf = is_core_dca and (bool(c.get("short_history")) or (np.isfinite(history_days) and history_days < 80))
     new_core_verification = build_new_core_etf_verification(name, ticker, str(c.get("asset_class", "") or ""), c) if is_new_core_etf else {}
-    leveraged_precision_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
-    leveraged_timing = build_leveraged_dca_timing_state(c, leveraged_precision_state) if leveraged_precision_state else {}
+    leveraged_precision_state = build_leveraged_precision_state(name, ticker, c_plan, has_pos, my_price)
+    leveraged_timing = build_leveraged_dca_timing_state(c_plan, leveraged_precision_state) if leveraged_precision_state else {}
 
     if not (all(finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target):
         st.info(f"{plan_title}은 유효한 손절가 < 현재가 < 목표가가 확인될 때 표시됩니다.")
@@ -17981,11 +17988,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
 
     rows = [
         {
-            "단계": "총 추가 필요",
+            "단계": "목표까지 이론상 부족분",
             "가격": format_currency(cur, ticker),
             "금액/수량": total_order_text,
             "예상 R/R": rr_now_text,
-            "조건": total_condition,
+            "조건": f"{total_condition} · 출처: {weight_source}" if target_w > 0 else total_condition,
         },
     ]
     if leveraged_timing:
@@ -18046,19 +18053,19 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
     elif is_core_dca:
         amount_note = (
-            f"총 추가 필요: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
+            f"목표까지 이론상 부족분: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
             "아래 단계별 금액은 전체 부족분이 아니라 이번 회차 적립 기준금액을 나눈 값입니다."
         )
     elif leveraged_timing and has_pos:
         amount_note = (
-            f"총 추가 필요: {total_order_text}. "
+            f"목표까지 이론상 부족분: {total_order_text}. "
             f"레버리지 회차 배율은 {leveraged_timing.get('dca_multiple', '-')}이며, "
             "전체 부족분을 자동으로 채우는 신호가 아니라 조건을 통과한 회차만 소액으로 봅니다."
         )
     elif has_pos:
-        amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
+        amount_note = f"목표까지 이론상 부족분: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
-        amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
+        amount_note = f"목표까지 이론상 부족분: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
     if (buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing
             and plan_workflow.get("게이트상태") == GATE_EXECUTABLE):
         amount_note += (
@@ -18074,8 +18081,31 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             "아래 신규/추가 매수 가격과 금액은 조건 해소 후 재검토할 계획값입니다. " + amount_note
         )
 
+    # Three different amounts, never merged: the theoretical gap to the target, what today's gate allows, and
+    # what was actually recorded. This screen reads no fill ledger, so a recorded amount is never estimated.
+    gate_open = plan_workflow.get("게이트상태") == GATE_EXECUTABLE
+    first_today = plan_buy_amt_krw * clean_float(tranche_weights[0], 0.0)
+    if not gate_open:
+        today_text = f"0 · 오늘 신규·추가 실행 보류({plan_workflow.get('게이트근거') or '실행 게이트 재확인 필요'})"
+    elif first_today > 0:
+        today_text = f"1차 {order_text(first_today, entry1)} 이내"
+    else:
+        today_text = "조건부 수량 미산출(회차 비중 0 또는 목표비중·총자산 미확인)"
+    l3_record = ((c.get("leveraged_l3") or {}).get("record") or {}) if isinstance(c.get("leveraged_l3"), dict) else {}
+    recorded = [t for t in (l3_record.get("tranches") or []) if finite_num(t.get("actual_krw"))]
+    if recorded:
+        recorded_text = f"레버리지 L3 기록 {len(recorded)}회 · {sum(float(t['actual_krw']) for t in recorded):,.0f}원"
+    else:
+        recorded_text = "미연결(이 화면은 체결 원장을 읽지 않아 추정하지 않음)"
+    amount_split = [
+        {"구분": "목표까지 이론상 부족분", "값": total_order_text if total_order_text != "-" else total_condition},
+        {"구분": "오늘 실행가능액", "값": today_text},
+        {"구분": "실제 집행기록액", "값": recorded_text},
+    ]
+
     plan = {
         "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
+        "weight_source": weight_source, "amount_split": amount_split,
         "rows": rows, "amount_note": amount_note, "current_price": cur,
         "target": target, "stop": stop, "target_source": target_source,
         "stop_source": stop_source, "rr_now": rr_now_text,
@@ -18605,6 +18635,11 @@ def build_leveraged_dca_timing_state(c, state):
         entry1_cond = (
             "목표비중 미설정 상태라 금액 계산은 제외. 타점은 회복·과열·R/R·기초축 기준으로 참고"
             if target_w <= 0
+            else (
+                f"L0 미보유: 보유 DCA 회차는 해당 없음 · 목표비중 {target_w:.2f}% 설정됨 · "
+                "신규 타점은 회복·과열·R/R·기초축 기준, 조건부 수량 미산출"
+            )
+            if dca_stage == "미보유 관찰"
             else "DCA 제외/보류 사유 해소 전까지 신규 회차를 열지 않음"
         )
     elif not allow_current:
@@ -18797,9 +18832,46 @@ def build_leveraged_l3_read(ticker, profile_key, profile, c, state, has_pos, my_
                            history_complete=not (bars[0].dd52 is not None and bars[0].dd52 <= l3.CYCLE_START_DD))
     if store_note and read.get("status") in {l3.STATUS_CANDIDATE}:
         read["reasons"] = list(read.get("reasons") or []) + [store_note]
+    read["record_note"] = store_note
     read["axis"] = axis
     read["history_start"] = first_date
     return read
+
+
+def build_leveraged_l3_observation(ticker, profile_key, profile, c, state):
+    """Display only (2026-11-27). For an L0 (not held) leveraged ETF the L3 cycle does not apply, but the
+    price-only inputs of the L3 rule can still be observed. Nothing here feeds the decision, gate or sizing;
+    it is kept apart from ``leveraged_l3`` so no L3 consumer sees a cycle that does not exist."""
+    axis = LEVERAGED_L3_AXIS.get(str(profile_key or "").upper())
+    if not axis:
+        axis = next((row[0] for row in (profile or {}).get("watch", []) if row[1] in {"기초 ETF", "기초 자산"}), "")
+    cur = clean_float(c.get("cur_p"), np.nan)
+    ma50 = clean_float(c.get("ma50"), np.nan)
+    out = {
+        "applicable": False,
+        "status": "해당 없음",
+        "reason": "L0 미보유: 보유 사이클이 없어 L2/L3 회차·예산 규칙이 적용되지 않음",
+        "axis": axis,
+        "leveraged_above_ma50": (bool(cur > ma50) if finite_num(cur) and finite_num(ma50) and ma50 > 0 else None),
+        "recovery_passed": int(state.get("recovery_passed", 0) or 0) if state else None,
+        "recovery_total": int(state.get("recovery_total", 0) or 0) if state else None,
+        "underlying_above_ma50": None, "underlying_date": "", "underlying_error": "",
+    }
+    if not axis:
+        out["underlying_error"] = "기초지수 축 미정"
+        return out
+    try:
+        axis_close = daily_close(load_price_df(axis, "5y"))
+        axis_close = pd.to_numeric(pd.Series(axis_close), errors="coerce").dropna()
+        if len(axis_close) < 50:
+            out["underlying_error"] = f"기초 이력 {len(axis_close)}거래일 < 50"
+        else:
+            out["underlying_above_ma50"] = bool(axis_close.iloc[-1] > axis_close.tail(50).mean())
+            out["underlying_date"] = str(pd.Timestamp(axis_close.index[-1]).date())
+    except Exception as exc:
+        logging.warning("Leveraged L3 observation history unavailable for %s (%s)", ticker, type(exc).__name__)
+        out["underlying_error"] = "기초 가격 이력 조회 실패"
+    return out
 
 
 LEVERAGE_DCA_ACCOUNT_MODE = "total"
@@ -18974,6 +19046,12 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
         from stock_lab_core.leverage_l3_policy import summary_text as _l3_summary_text
         out["leveraged_l3"] = l3_read
         out["leveraged_l3_summary"] = _l3_summary_text(l3_read)
+    elif not has_pos:
+        try:
+            out["leveraged_l3_observation"] = build_leveraged_l3_observation(
+                ticker, state.get("profile_key", ""), state.get("profile"), out, state)
+        except Exception as exc:
+            logging.warning("Leveraged L3 observation failed for %s (%s)", ticker, type(exc).__name__)
     reasons = (
         f"레버리지 전용 단계: {dca_stage} {dca_multiple}",
         f"회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}",
@@ -35227,9 +35305,11 @@ if main_page == "precision":
         precision_signal_basis.update(selection_basis(
             is_free=precision_decision_is_free, has_position=bool(has_p), selection_type=selected_option.get("type")))
         precision_has_pos = has_p
+        # 2026-11-27: no explicit weights here. Since C-6 step 2 explicit weights beat the account row, and the
+        # old positional 0.0/0.0/0.0 silently turned every precision decision into target 0 % (Today reads the row).
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, precision_decision_is_free,
-                                     app_mode, 0.0, 0.0, 0.0,
+                                     app_mode,
                                      live_price=display_cur_p, _live_indicator_context=precision_live_context)
         precision_review_download.update(
             decision=c, financial=fin_meta, completion="partial", stage="daily_decision",

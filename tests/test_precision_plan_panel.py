@@ -292,7 +292,7 @@ def test_exception_entry_plan_is_one_third_scout_with_trend_exit(display_app):
     plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=False)
     assert plan["status"] == "1/3 정찰 · 추세추적"
     stages = [row["단계"] for row in plan["rows"]]
-    assert stages == ["총 추가 필요", "1차 진입 (33%)", "2차 추가", "3차 예비", "추세추적 정리", "초기 손절"]
+    assert stages == ["목표까지 이론상 부족분", "1차 진입 (33%)", "2차 추가", "3차 예비", "추세추적 정리", "초기 손절"]
     first = plan["rows"][1]
     assert first["가격"] == "$100.00" and first["금액/수량"] == "$33 / 0.33주"
     assert plan["rows"][2]["금액/수량"] == plan["rows"][3]["금액/수량"] == "-"

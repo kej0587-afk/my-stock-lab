@@ -21,6 +21,15 @@ def entry_plan_display(plan, workflow):
     }
 
 
+def _amount_split_html(plan):
+    rows = plan.get("amount_split") or []
+    if not rows:
+        return ""
+    return " · ".join(
+        f"{escape_html_value(row['구분'])} {escape_html_value(row['값'])}" for row in rows
+    ) + "<br>"
+
+
 def render_entry_plan_panel(st, plan, *, workflow, status_color, target_is_projection, entry_rr):
     """Keep the raw plan intact; the gate owns the prominent execution headline."""
     display = entry_plan_display(plan, workflow)
@@ -46,6 +55,7 @@ def render_entry_plan_panel(st, plan, *, workflow, status_color, target_is_proje
         f"손절 {format_currency(plan['stop'], ticker)} <span style='color:#94a3b8;'>({escape_html_value(plan['stop_source'])})</span><br>"
         "신규·추가매수 계획 무효선 · 보유분 매도 판단은 별도<br>"
         f"기준가 {format_currency(plan['current_price'], ticker)} / {rr_label} {plan['rr_now']}<br>"
+        f"{_amount_split_html(plan)}"
         "R/R은 목표·손절 고정 시의 가격 비율이며 승률이 아닙니다. 낮은 진입가만으로 비율이 커져도 회복 근거가 늘지는 않습니다.<br>"
         "<details><summary>배분 기준·계획 주의사항</summary>"
         f"{escape_html_value(plan['amount_note'])}<br>"
