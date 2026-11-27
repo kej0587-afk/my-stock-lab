@@ -16,7 +16,7 @@ import time
 
 import pandas as pd
 
-INTERVALS = ("1분", "5분", "30분", "60분", "120분", "일봉")
+INTERVALS = ("1분", "5분", "30분", "60분", "120분", "일봉", "주봉", "월봉")
 
 # period = what one request asks Yahoo for (also the history the chart can show).
 SPEC = {
@@ -26,12 +26,15 @@ SPEC = {
     "60분": {"yahoo": "60m", "period": "730d", "minutes": 60, "visible": 280, "tail": "1d"},
     "120분": {"yahoo": "60m", "period": "730d", "minutes": 120, "visible": 240, "tail": "1d", "pair": True},
     "일봉": {"yahoo": "1d", "period": "max", "minutes": None, "visible": 250, "tail": "5d"},
+    "주봉": {"yahoo": "1wk", "period": "max", "minutes": None, "visible": 104, "tail": "1mo"},
+    "월봉": {"yahoo": "1mo", "period": "max", "minutes": None, "visible": 60, "tail": "3mo"},
 }
 
 # Requested window per interval, shown to the user as "조회 범위 한도" (what this app asks for).
 REQUEST_LIMIT_TEXT = {
     "1분": "요청당 최근 8거래일", "5분": "최근 60일", "30분": "최근 60일",
     "60분": "최근 730일", "120분": "최근 730일(60분봉 2개 묶음)", "일봉": "상장 이후 전체",
+    "주봉": "기존 장기 이력", "월봉": "기존 장기 이력",
 }
 
 DEFAULT_MA_PERIODS = (5, 20, 120, 240, 1000)
@@ -66,7 +69,7 @@ def _clean(frame: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in frame.columns]
     out = frame[cols].apply(pd.to_numeric, errors="coerce")
     out = out[~out.index.duplicated(keep="last")].sort_index()
-    out = out.loc[out["Close"].map(lambda v: isinstance(v, float) and math.isfinite(v) and v > 0)]
+    out = out.loc[out["Close"].map(lambda v: pd.notna(v) and math.isfinite(v) and v > 0)]
     if "Volume" not in out.columns:
         out["Volume"] = float("nan")
     return out
@@ -104,21 +107,47 @@ def merge_tail(history: pd.DataFrame, tail: pd.DataFrame) -> pd.DataFrame:
     return merged[~merged.index.duplicated(keep="last")]
 
 
-def pair_sixty_minute_bars(frame: pd.DataFrame) -> pd.DataFrame:
-    """120-minute bars: pair consecutive 60-minute bars inside each local session date."""
+def pair_sixty_minute_bars(frame: pd.DataFrame, market="US", *, schedule=None) -> pd.DataFrame:
+    """Anchor to exchange open, not row number; preserve short and incomplete buckets."""
     if frame is None or frame.empty:
         return frame
-    day = frame.index.normalize() if frame.index.tz is None else frame.index.tz_localize(None).normalize()
-    order = pd.Series(range(len(frame)), index=frame.index).groupby(day).cumcount().to_numpy() // 2
-    keys = pd.MultiIndex.from_arrays([day, order])
-    grouped = frame.groupby(keys, sort=True)
+    from stock_lab_core.report_eventstudy import _exchange_schedule
+    zone = "Asia/Seoul" if market == "KR" else "America/New_York"
+    local = frame.index.tz_localize(zone) if frame.index.tz is None else frame.index.tz_convert(zone)
+    if schedule is None:
+        schedule = _exchange_schedule(market, str((local[0] - pd.Timedelta(days=1)).date()),
+                                      str((local[-1] + pd.Timedelta(days=1)).date()))
+    dates = pd.DatetimeIndex(schedule.index).tz_localize(None).normalize()
+    days = local.tz_localize(None).normalize()
+    opens = pd.Series(pd.to_datetime(schedule.market_open, utc=True).to_numpy(), index=dates).reindex(days)
+    closes = pd.Series(pd.to_datetime(schedule.market_close, utc=True).to_numpy(), index=dates).reindex(days)
+    start = pd.DatetimeIndex(opens.to_numpy())
+    end = pd.DatetimeIndex(closes.to_numpy())
+    utc = local.tz_convert("UTC")
+    valid = start.notna() & (utc >= start) & (utc < end)
+    source = frame.loc[valid].copy()
+    if source.empty:
+        source.attrs["aggregation"] = {"received_60": len(frame), "generated_120": 0,
+                                       "excluded": len(frame), "incomplete": 0}
+        return source
+    elapsed = (utc[valid] - start[valid]).total_seconds() / 60
+    anchors = start[valid] + pd.to_timedelta((elapsed // 120) * 120, unit="min")
+    ends = pd.DatetimeIndex([min(a + pd.Timedelta(minutes=120), b) for a, b in zip(anchors, end[valid])])
+    source["_bucket_end"] = ends
+    grouped = source.groupby(anchors, sort=True)
     out = pd.DataFrame({
         "Open": grouped["Open"].first(), "High": grouped["High"].max(), "Low": grouped["Low"].min(),
         "Close": grouped["Close"].last(), "Volume": grouped["Volume"].sum(min_count=1),
     })
-    out.index = pd.DatetimeIndex(grouped.apply(lambda g: g.index[0]).to_numpy())
-    if frame.index.tz is not None and out.index.tz is None:
-        out.index = out.index.tz_localize("UTC").tz_convert(frame.index.tz)
+    # An absent volume or hourly source is not a zero-volume, complete candle.
+    out.loc[grouped["Volume"].count() != grouped.size(), "Volume"] = float("nan")
+    bucket_ends = pd.DatetimeIndex(grouped["_bucket_end"].first())
+    expected = ((bucket_ends - out.index).total_seconds() / 3600)
+    incomplete = int((grouped.size().to_numpy() < [math.ceil(n) for n in expected]).sum())
+    out.index = out.index.tz_convert(zone)
+    out.attrs["aggregation"] = {"received_60": len(frame), "generated_120": len(out),
+                               "excluded": int((~valid).sum()), "incomplete": incomplete,
+                               "short_buckets": int((expected < 2).sum())}
     return out
 
 
@@ -147,14 +176,14 @@ def daily_overlay(daily: pd.DataFrame, bars: pd.DataFrame, periods) -> tuple[dic
     closes = pd.Series(daily["Close"].to_numpy(), index=daily_index)
     bar_days = bars.index.tz_localize(None).normalize() if bars.index.tz is not None else bars.index.normalize()
     for period in periods:
-        if len(closes) < period + 1:
+        previous = closes.index.searchsorted(bar_days, side="left") - 1
+        if len(closes) < period or not (previous >= period - 1).any():
             status[period] = {"ok": False, "have": len(closes), "need": period}
             continue
         sma = closes.rolling(period, min_periods=period).mean()
-        # value usable on the next session: shift by one daily row
-        known_from = sma.shift(1)
-        mapped = known_from.reindex(bar_days, method="ffill")
-        lines[period] = pd.Series(mapped.to_numpy(), index=bars.index)
+        # Strictly earlier dates also work when today's daily row is not published yet.
+        mapped = [sma.iloc[i] if i >= 0 else float("nan") for i in previous]
+        lines[period] = pd.Series(mapped, index=bars.index)
         status[period] = {"ok": True, "have": len(closes), "need": period}
     return lines, status
 
@@ -180,8 +209,8 @@ def last_bar_state(frame: pd.DataFrame, label: str, now: pd.Timestamp, session: 
             "provisional": provisional, "lag_minutes": lag, "intraday": intraday}
 
 
-def build_frame(history: pd.DataFrame, tail: pd.DataFrame | None, label: str) -> pd.DataFrame:
+def build_frame(history: pd.DataFrame, tail: pd.DataFrame | None, label: str, market="US") -> pd.DataFrame:
     frame = merge_tail(history, tail)
     if SPEC[label].get("pair"):
-        frame = pair_sixty_minute_bars(frame)
+        frame = pair_sixty_minute_bars(frame, market)
     return frame
