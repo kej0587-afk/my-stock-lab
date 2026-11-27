@@ -22910,6 +22910,44 @@ def _portfolio_risk_components(portfolio_vol, portfolio_mdd, top1_weight, top3_w
     return risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component
 
 
+def _add_portfolio_risk_notes(notes, top1_weight, top3_weight, portfolio_vol, portfolio_mdd, avg_corr, leverage_summary,
+                              reserve_summary, reserve_target_weight, reserve_gap, sharpe_ratio, daily_cvar_95, risk_contrib_df):
+    """Append the threshold-based risk notes (concentration, volatility, drawdown, correlation, leverage,
+    reserve, Sharpe, CVaR, risk contribution) to ``notes`` in the original order."""
+    if top1_weight >= 35:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
+    if top3_weight >= 65:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"상위 3개 자산 비중이 {top3_weight:.1f}%입니다.", "의도한 집중 투자라면 괜찮지만, 분산 목적이면 비중을 나눠보세요.")
+    if np.isfinite(portfolio_vol) and portfolio_vol >= 28:
+        add_portfolio_risk_note(notes, "주의", "변동성", f"연환산 변동성이 {portfolio_vol:.1f}%입니다.", "매수 규모와 현금 비중을 보수적으로 점검하세요.")
+    if np.isfinite(portfolio_mdd) and portfolio_mdd <= -25:
+        add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
+    if np.isfinite(avg_corr) and avg_corr >= 0.7:
+        add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
+    if leverage_summary.get("leveraged_principal_pct", 0.0) > 0:
+        leverage_level = "주의" if leverage_summary.get("extra_exposure_pct", 0.0) >= 8 or leverage_summary.get("effective_exposure_pct", 0.0) >= 15 else "참고"
+        add_portfolio_risk_note(
+            notes,
+            leverage_level,
+            "레버리지",
+            (
+                f"레버리지 ETF 원금비중은 {leverage_summary.get('leveraged_principal_pct', 0.0):.1f}%이고 "
+                f"2배/3배 환산 노출은 {leverage_summary.get('effective_exposure_pct', 0.0):.1f}%입니다."
+            ),
+            "전체 위험도가 균형이어도 레버리지 환산 노출과 손실 속도는 별도로 확인하세요.",
+        )
+    if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
+        add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
+    if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
+        add_portfolio_risk_note(notes, "참고", "위험대비수익", f"Sharpe가 {sharpe_ratio:.2f}입니다.", "분석기간에는 변동성 대비 수익 보상이 낮았습니다.")
+    if np.isfinite(daily_cvar_95) and daily_cvar_95 <= -4:
+        add_portfolio_risk_note(notes, "주의", "꼬리위험", f"95% CVaR 기준 나쁜 날 평균 손실이 {daily_cvar_95:.1f}%입니다.", "급락일에 감내 가능한 손실 규모인지 확인하세요.")
+    if risk_contrib_df is not None and not risk_contrib_df.empty:
+        top_risk = risk_contrib_df.iloc[0]
+        if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
+            add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
+
+
 def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
     if analysis_start_date is not None:
         analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
@@ -23109,38 +23147,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         portfolio_vol, portfolio_mdd, top1_weight, top3_weight, hhi, avg_corr,
         leverage_summary, reserve_summary, reserve_target_weight)
 
-    if top1_weight >= 35:
-        add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
-    if top3_weight >= 65:
-        add_portfolio_risk_note(notes, "주의", "집중도", f"상위 3개 자산 비중이 {top3_weight:.1f}%입니다.", "의도한 집중 투자라면 괜찮지만, 분산 목적이면 비중을 나눠보세요.")
-    if np.isfinite(portfolio_vol) and portfolio_vol >= 28:
-        add_portfolio_risk_note(notes, "주의", "변동성", f"연환산 변동성이 {portfolio_vol:.1f}%입니다.", "매수 규모와 현금 비중을 보수적으로 점검하세요.")
-    if np.isfinite(portfolio_mdd) and portfolio_mdd <= -25:
-        add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
-    if np.isfinite(avg_corr) and avg_corr >= 0.7:
-        add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
-    if leverage_summary.get("leveraged_principal_pct", 0.0) > 0:
-        leverage_level = "주의" if leverage_summary.get("extra_exposure_pct", 0.0) >= 8 or leverage_summary.get("effective_exposure_pct", 0.0) >= 15 else "참고"
-        add_portfolio_risk_note(
-            notes,
-            leverage_level,
-            "레버리지",
-            (
-                f"레버리지 ETF 원금비중은 {leverage_summary.get('leveraged_principal_pct', 0.0):.1f}%이고 "
-                f"2배/3배 환산 노출은 {leverage_summary.get('effective_exposure_pct', 0.0):.1f}%입니다."
-            ),
-            "전체 위험도가 균형이어도 레버리지 환산 노출과 손실 속도는 별도로 확인하세요.",
-        )
-    if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
-        add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
-    if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
-        add_portfolio_risk_note(notes, "참고", "위험대비수익", f"Sharpe가 {sharpe_ratio:.2f}입니다.", "분석기간에는 변동성 대비 수익 보상이 낮았습니다.")
-    if np.isfinite(daily_cvar_95) and daily_cvar_95 <= -4:
-        add_portfolio_risk_note(notes, "주의", "꼬리위험", f"95% CVaR 기준 나쁜 날 평균 손실이 {daily_cvar_95:.1f}%입니다.", "급락일에 감내 가능한 손실 규모인지 확인하세요.")
-    if risk_contrib_df is not None and not risk_contrib_df.empty:
-        top_risk = risk_contrib_df.iloc[0]
-        if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
-            add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
+    _add_portfolio_risk_notes(notes, top1_weight, top3_weight, portfolio_vol, portfolio_mdd, avg_corr, leverage_summary,
+                              reserve_summary, reserve_target_weight, reserve_gap, sharpe_ratio, daily_cvar_95, risk_contrib_df)
 
     # 스트레스 테스트는 asset_df 구성 후 실행
     if not asset_df.empty:
