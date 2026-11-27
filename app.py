@@ -22854,6 +22854,62 @@ def _portfolio_asset_rows(active_df, total_asset, active_value, usdkrw, period, 
     return asset_rows, strategy_rows, price_series
 
 
+def _portfolio_risk_components(portfolio_vol, portfolio_mdd, top1_weight, top3_weight, hhi, avg_corr,
+                                leverage_summary, reserve_summary, reserve_target_weight):
+    """Portfolio risk index (0-100), grade/color and the six scored components with their reasons.
+
+    Returns (risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component).
+    """
+    vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
+    mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
+    concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
+    corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
+    leverage_component = min(max(float(leverage_summary.get("extra_exposure_pct", 0.0)), 0.0) * 0.9, 20)
+    reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
+    reserve_component = min(reserve_gap * 1.5, 15)
+    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
+    risk_grade, risk_color = classify_portfolio_risk(risk_index)
+    risk_components = [
+        {
+            "영역": "변동성",
+            "점수": vol_component,
+            "최대": 30,
+            "판단근거": f"연환산 변동성 {portfolio_vol:.1f}%" if np.isfinite(portfolio_vol) else "가격 데이터 부족",
+        },
+        {
+            "영역": "MDD",
+            "점수": mdd_component,
+            "최대": 30,
+            "판단근거": f"분석기간 MDD {portfolio_mdd:.1f}%" if np.isfinite(portfolio_mdd) else "가격 데이터 부족",
+        },
+        {
+            "영역": "집중도",
+            "점수": concentration_component,
+            "최대": 25,
+            "판단근거": f"1위 {top1_weight:.1f}%, 상위3개 {top3_weight:.1f}%",
+        },
+        {
+            "영역": "상관관계",
+            "점수": corr_component,
+            "최대": 15,
+            "판단근거": f"평균 상관계수 {avg_corr:.2f}" if np.isfinite(avg_corr) else "상관관계 산출 불가",
+        },
+        {
+            "영역": "레버리지",
+            "점수": leverage_component,
+            "최대": 20,
+            "판단근거": f"추가 환산노출 {leverage_summary.get('extra_exposure_pct', 0.0):.1f}%",
+        },
+        {
+            "영역": "대기자금",
+            "점수": reserve_component,
+            "최대": 15,
+            "판단근거": f"목표 대비 부족 {reserve_gap:.1f}%p" if reserve_gap > 0 else "목표 이상 확보",
+        },
+    ]
+    return risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component
+
+
 def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
     if analysis_start_date is not None:
         analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
@@ -23049,53 +23105,9 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     avg_corr = float(np.nanmean(upper.values)) if np.isfinite(upper.values).any() else np.nan
                     corr_df = corr_df.rename(index=asset_label_map, columns=asset_label_map)
 
-    vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
-    mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
-    concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
-    corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
-    leverage_component = min(max(float(leverage_summary.get("extra_exposure_pct", 0.0)), 0.0) * 0.9, 20)
-    reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
-    reserve_component = min(reserve_gap * 1.5, 15)
-    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
-    risk_grade, risk_color = classify_portfolio_risk(risk_index)
-    risk_components = [
-        {
-            "영역": "변동성",
-            "점수": vol_component,
-            "최대": 30,
-            "판단근거": f"연환산 변동성 {portfolio_vol:.1f}%" if np.isfinite(portfolio_vol) else "가격 데이터 부족",
-        },
-        {
-            "영역": "MDD",
-            "점수": mdd_component,
-            "최대": 30,
-            "판단근거": f"분석기간 MDD {portfolio_mdd:.1f}%" if np.isfinite(portfolio_mdd) else "가격 데이터 부족",
-        },
-        {
-            "영역": "집중도",
-            "점수": concentration_component,
-            "최대": 25,
-            "판단근거": f"1위 {top1_weight:.1f}%, 상위3개 {top3_weight:.1f}%",
-        },
-        {
-            "영역": "상관관계",
-            "점수": corr_component,
-            "최대": 15,
-            "판단근거": f"평균 상관계수 {avg_corr:.2f}" if np.isfinite(avg_corr) else "상관관계 산출 불가",
-        },
-        {
-            "영역": "레버리지",
-            "점수": leverage_component,
-            "최대": 20,
-            "판단근거": f"추가 환산노출 {leverage_summary.get('extra_exposure_pct', 0.0):.1f}%",
-        },
-        {
-            "영역": "대기자금",
-            "점수": reserve_component,
-            "최대": 15,
-            "판단근거": f"목표 대비 부족 {reserve_gap:.1f}%p" if reserve_gap > 0 else "목표 이상 확보",
-        },
-    ]
+    risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component = _portfolio_risk_components(
+        portfolio_vol, portfolio_mdd, top1_weight, top3_weight, hhi, avg_corr,
+        leverage_summary, reserve_summary, reserve_target_weight)
 
     if top1_weight >= 35:
         add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
