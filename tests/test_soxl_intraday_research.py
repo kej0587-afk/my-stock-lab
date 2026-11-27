@@ -95,14 +95,48 @@ def test_empty_result_is_unknown_not_zero_success():
 
 
 def test_replay_frozen_snapshot():
-    from research_soxl_intraday import DIRECTORY, PHASE1, PROTOCOL, sha
+    from research_soxl_intraday import DIRECTORY, PHASE1, verified_protocol, sha
     import json
     manifest = json.loads((DIRECTORY / "manifest.json").read_text(encoding="utf-8"))
-    assert sha(PROTOCOL) == manifest["protocol_sha256"]
+    assert sha(verified_protocol(DIRECTORY, manifest)) == manifest["protocol_sha256"]
     assert sha(PHASE1 / "prices.csv") == manifest["phase1_price_sha256"]
     for item in manifest["datasets"]:
         if item["rows"]:
             assert sha(DIRECTORY / f"SOXL_{item['interval']}.csv") == item["sha256"]
+
+
+def test_replay_rejects_missing_or_changed_protocol(tmp_path):
+    from research_soxl_intraday import verified_protocol, sha
+    protocol = tmp_path / 'protocol.md'
+    protocol.write_text('original\n', encoding='utf8')
+    manifest = {'protocol_sha256': sha(protocol)}
+    assert verified_protocol(tmp_path, manifest) == protocol
+    protocol.write_text('changed\n', encoding='utf8')
+    with pytest.raises(ValueError, match='hash changed'):
+        verified_protocol(tmp_path, manifest)
+    protocol.unlink()
+    with pytest.raises(ValueError, match='missing'):
+        verified_protocol(tmp_path, manifest)
+
+
+def test_fetch_freezes_protocol_before_collection_without_overwrite(tmp_path, monkeypatch):
+    import json
+    import yfinance
+    from types import SimpleNamespace
+    import research_soxl_intraday as runner
+    current = tmp_path / 'current.md'
+    current.write_text('research rules\n', encoding='utf8')
+    monkeypatch.setattr(runner, 'PROTOCOL', current)
+    monkeypatch.setattr(yfinance, 'Ticker', lambda symbol: SimpleNamespace(history=lambda **kw: pd.DataFrame()))
+    destination = tmp_path / 'snapshot'
+    runner.fetch(destination)
+    manifest = json.loads((destination / 'manifest.json').read_text(encoding='utf8'))
+    current.write_text('later operating note\n', encoding='utf8')
+    frozen = runner.verified_protocol(destination, manifest)
+    assert frozen.read_text(encoding='utf8') == 'research rules\n'
+    with pytest.raises(ValueError, match='immutable snapshot'):
+        runner.fetch(destination)
+    assert frozen.read_text(encoding='utf8') == 'research rules\n'
 
 
 def test_research_is_not_imported_by_production():

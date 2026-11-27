@@ -18,11 +18,23 @@ DIRECTORY = ROOT / "docs/research/soxl_intraday_20261127"
 PROTOCOL = ROOT / "docs/maintenance/20261127_soxl_phase2_protocol.md"
 
 
+def verified_protocol(directory, manifest):
+    """A replay belongs to its captured protocol, not the mutable work log."""
+    path = directory / "protocol.md"
+    if not path.is_file() or sha(path) != manifest["protocol_sha256"]:
+        raise ValueError("snapshot protocol missing or hash changed")
+    return path
+
+
 def fetch(directory):
     import yfinance as yf
     if (directory / "manifest.json").exists():
         raise ValueError("immutable snapshot exists; select another directory")
     directory.mkdir(parents=True, exist_ok=True)
+    frozen_protocol = directory / "protocol.md"
+    if frozen_protocol.exists():
+        raise ValueError("snapshot protocol exists; select another directory")
+    frozen_protocol.write_bytes(PROTOCOL.read_bytes())
     records = []
     for interval, period in (("1m", "8d"), ("5m", "60d"), ("60m", "730d")):
         record = dict(interval=interval, requested_period=period)
@@ -44,13 +56,14 @@ def fetch(directory):
         source_url="https://finance.yahoo.com/quote/SOXL/history/", datasets=records,
         fetched_at_utc=datetime.now(timezone.utc).isoformat(),
         price_basis="split-adjusted OHLC; NOT dividend-adjusted; auto_adjust=False",
-        protocol_sha256=sha(PROTOCOL), phase1_price_sha256=sha(PHASE1 / "prices.csv")))
+        protocol_sha256=sha(frozen_protocol), phase1_price_sha256=sha(PHASE1 / "prices.csv")))
 
 
 def replay(directory, output, archive_path=None):
     import exchange_calendars as xc
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if sha(PROTOCOL) != manifest["protocol_sha256"] or sha(PHASE1 / "prices.csv") != manifest["phase1_price_sha256"]:
+    frozen_protocol = verified_protocol(directory, manifest)
+    if sha(PHASE1 / "prices.csv") != manifest["phase1_price_sha256"]:
         raise ValueError("frozen protocol or phase-1 snapshot changed")
     five = next(r for r in manifest["datasets"] if r["interval"] == "5m")
     if five["rows"] == 0 or sha(directory / "SOXL_5m.csv") != five["sha256"]:
@@ -106,7 +119,7 @@ def replay(directory, output, archive_path=None):
                   equity=pd.concat(curves, ignore_index=True) if curves else pd.DataFrame(columns=["time", "equity", "drawdown"]))
     for key, frame in tables.items():
         frame.to_csv(output / f"{key}.csv", index=False, float_format="%.12g", lineterminator="\n")
-    dump(output / "replay.json", dict(protocol_sha256=sha(PROTOCOL),
+    dump(output / "replay.json", dict(protocol_sha256=sha(frozen_protocol),
         engine_sha256=sha(Path(__file__).with_name("soxl_intraday_engine.py")),
         runner_sha256=sha(Path(__file__)), source_sha256=five["sha256"],
         historical_guard_source=str(archive_path) if archive_path else None,
