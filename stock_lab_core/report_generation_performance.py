@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from functools import wraps
 import hashlib
 import json
+from collections import Counter
 from threading import get_ident
 
 from stock_lab_core.performance import PerformanceTrace, count_event, measure
@@ -68,6 +69,45 @@ def report_hash(value):
     return hashlib.sha256(str(value).encode('utf-8')).hexdigest()
 
 
+_COVERAGE_STATUSES = frozenset({
+    'unspecified', 'ok', 'released', 'pending', 'stale', 'verified_snapshot',
+    'connected', 'unavailable', 'skipped', 'fallback', 'official_result',
+    'official_filing_result', 'official', 'missing', 'scheduled',
+    'elapsed_unconfirmed', 'not_attempted', '공식 실적 발표', '공식 정기보고서 확인',
+})
+
+
+def _coverage_status(value):
+    # Do not stringify/hash arbitrary provider or caller payloads.
+    return value if type(value) is str and value in _COVERAGE_STATUSES else 'other'
+
+
+def record_official_coverage(context):
+    """Aggregate coverage only; do not export company/account rows or query keys."""
+    run = _run.get()
+    if run is None:
+        return
+    fields = ('economic_releases', 'calendar_events', 'calendar_sources', 'earnings_results',
+              'earnings_result_sources', 'earnings_sources', 'central_bank_results')
+    coverage = {}
+    for field in fields:
+        rows = context.get(field) or []
+        rows = [row for row in rows if isinstance(row, dict)]
+        coverage[field] = {'rows': len(rows),
+            'with_actual': sum(row.get('actual') is not None for row in rows),
+            'statuses': dict(Counter(_coverage_status(row.get('status', 'unspecified')) for row in rows))}
+    run['official_coverage'] = coverage
+
+
+def record_quote_observations(quotes, now):
+    """Exact public price fields used by the report, no account weights or HTML."""
+    run = _run.get()
+    if run is not None:
+        from stock_lab_core.report_quotes import quote_audit
+        run['quote_observations'] = {ticker: quote_audit(ticker, row, now)
+                                     for ticker, row in quotes.items()}
+
+
 @contextmanager
 def generation_measurement(state, *, options=None, entrypoint=None, script_started=None, clock=None):
     trace = PerformanceTrace(scope='auto_market_report_generation', **({'clock': clock} if clock else {}))
@@ -92,9 +132,11 @@ def generation_measurement(state, *, options=None, entrypoint=None, script_start
                       output_sha256=report_hash(output) if output and report['measurement_status'] == 'completed' else None,
                       generation_path='fallback' if run['degraded'] else 'normal',
                       degraded_reasons=sorted(run['degraded']),
+                      official_coverage=run.get('official_coverage', {}),
+                      quote_observations=run.get('quote_observations', {}),
                       options=dict(options or {}), cache_state={'policy': 'unchanged_no_clear', 'initial_warmth': 'unknown'},
                       build=get_report_build_info(entrypoint),
-                      request_count_coverage='report_http.* counts instrumented economic HTTP, Google RSS and public feed/body HTTP attempts, including redirects. Other providers may be uncounted. Existing price events include both HTTP and SDK calls: download_call is not a remote-request count. Function calls/cache lookups are not HTTP requests.',
+                      request_count_coverage='official_http.* counts explicitly instrumented macro/calendar/policy/outlook HTTP boundaries; filing counters are separately labelled. Overlapping report_http/bulletin_http counters must not be summed with these. SDK internals, implicit HTTP redirects/retries and uninstrumented providers are excluded. Cache lookup/function counts are not HTTP requests; download_call is not a remote-request count.',
                       timing_limits='Starts when generation branch is entered; includes collection through saved Markdown. App entry/render before this branch and browser paint are excluded. Diagnostic serialization/build hashing is excluded.')
         state['auto_report_last_attempt'] = report
         if report['measurement_status'] == 'completed' and report['output_sha256']:

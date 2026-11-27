@@ -1,6 +1,30 @@
 """Exit rows for the precision plan; all prices are supplied by the caller."""
 
+import math
+
 from stock_lab_core.report_build import register_loaded_source
+
+
+def build_entry_basis_rows(rows, prices, entries, ticker, *, gate_open, target, stop, target_source, stop_source,
+                           format_currency):
+    """Display only (2026-11-27): each planned entry price with the line/formula that produced it."""
+    stages = [row for row in rows if str(row.get("단계", "")).startswith(("1차 진입", "추가 1차", "2차 추가", "3차 예비"))]
+    out = []
+    for row, raw, basis in zip(stages, entries, prices.get("basis") or ()):
+        amount = str(row.get("금액/수량") or "-")
+        out.append({
+            "단계": row.get("단계"), "가격": row.get("가격"),
+            "기준선·산식": f"{basis} · 반올림 전 {raw:.4f}" if math.isfinite(float(raw)) else basis,
+            "R/R(최종 목표·손절 기준)": row.get("예상 R/R", "-"),
+            "실행·수량": (amount if gate_open and amount != "-" else
+                       "보류 · 수량 미산출" if not gate_open else "수량 미산출"),
+        })
+    out.append({"단계": "최종 목표", "가격": format_currency(target, ticker), "기준선·산식": target_source,
+                "R/R(최종 목표·손절 기준)": "-", "실행·수량": "진입 후 재산출"})
+    out.append({"단계": "계획 무효·손절", "가격": format_currency(stop, ticker),
+                "기준선·산식": f"{stop_source} · 종가 기준 · 일봉 B 경계·단기 손절과 별개",
+                "R/R(최종 목표·손절 기준)": "-", "실행·수량": "신규·추가 계획 무효선"})
+    return out
 
 register_loaded_source(__name__, __file__)
 

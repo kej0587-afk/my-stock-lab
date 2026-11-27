@@ -126,8 +126,11 @@ def test_repair_uses_short_session_and_preserves_input(existing, prior, expected
         assert result["SOXL"].attrs["quote_as_of"] == "2026-11-27T18:00:04+00:00"
 
 
-def test_short_close_does_not_invent_extended_venue_hours():
+def test_confirmed_short_close_connects_separate_extended_quote():
     row = dict(quote("2026-11-27T13:00:04-05:00"), postMarketPrice=95.,
                postMarketTime=pd.Timestamp("2026-11-27T13:19-05:00").timestamp())
     assert regular_quote_observation(row, "SOXL", "2026-11-27T13:20-05:00")
-    assert not extended_quote_observation(row, "SOXL", pd.Timestamp("2026-11-27T13:20-05:00"))
+    observed = extended_quote_observation(row, "SOXL", pd.Timestamp("2026-11-27T13:20-05:00"))
+    assert observed["kind"] == "애프터마켓"
+    assert observed["price"] == 95. and observed["previous_price"] == 90.
+    assert observed["regular_date"] == "2026-11-27"

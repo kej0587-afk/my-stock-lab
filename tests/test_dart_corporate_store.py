@@ -216,19 +216,21 @@ def test_saved_list_survives_restart_through_store_not_process_memory(tmp_path):
 
 # 4. New issuer not in the saved list --------------------------------------------
 
-def test_new_issuer_missing_from_saved_list_is_explicit_not_guessed(monkeypatch):
+@pytest.mark.parametrize("age,origin", [(timedelta(hours=6), "official_cache"),
+                                       (timedelta(days=2), "official_snapshot")])
+def test_new_issuer_missing_from_saved_list_is_explicit_not_guessed(monkeypatch, age, origin):
     from stock_lab_core import dart_corporate_codes, earnings_filing_sources as sources
     from stock_lab_core.earnings_pipeline import _source_reason
     sources.clear_cache()
     client = FakeClient()
-    snap.configure_corporate_store(stored(client, retrieved_at=datetime(2026, 11, 19, 23, tzinfo=timezone.utc)))
+    now = datetime.fromisoformat("2026-11-20T08:00:00+09:00")
+    snap.configure_corporate_store(stored(client, retrieved_at=now - age))
     monkeypatch.setattr(dart_corporate_codes, "fetch_corporate_codes", Mock(return_value=timeout()))
     get = Mock()
-    now = datetime.fromisoformat("2026-11-20T08:00:00+09:00")
     collected = sources.collect_filing_earnings(["0099A0.KS"], now, sec_user_agent="", dart_api_key="test", get=get)
     source = collected["sources"][0]
     assert collected["events"] == [] and source["reason"] == "dart_ticker_mapping_unavailable_in_snapshot"
-    assert source["mapping_source"] == "official_snapshot" and source["snapshot_origin"] == "persistent_last_success"
+    assert source["mapping_source"] == origin and source["snapshot_origin"] == "persistent_last_success"
     get.assert_not_called()  # no filing request is made under a guessed corporate code
     reason = _source_reason("0099A0.KS", dict(earnings_sources=[source]))
     assert "미등록" in reason and "신규 상장" in reason

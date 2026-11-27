@@ -70,17 +70,99 @@ def test_calendar_failure_and_stale_price_flags_are_not_current(monkeypatch):
     assert not build_company_market_reading('NVDA',data,sector=('SOXX','반도체'),now=NOW)['observations']
 
 
-def test_app_adapter_restores_only_current_company_context_change():
-    import ast
-    from pathlib import Path
-    import subprocess
-    from tests.company_market_ast_contract import before_company_market_context
-    baseline=subprocess.check_output(['git','show','9f4451ed:app.py'],encoding='utf-8-sig')
-    current=Path('app.py').read_text(encoding='utf-8-sig')
-    def functions(source, restore=False):
-        return {n.name:ast.dump(before_company_market_context(n) if restore else n)
-                for n in ast.parse(source).body if isinstance(n,ast.FunctionDef)}
-    assert functions(baseline)==functions(current,True)
+@pytest.mark.parametrize('ticker,scope,age,expected', [
+    ('NVDA', 'account-a', 0, -2),
+    ('META', 'account-a', 0, 2),
+    ('ACME', 'account-a', 0, None),  # No invented sector for an unknown company.
+    ('NVDA', 'account-b', 0, None),
+    ('NVDA', 'account-a', 31, None),
+])
+def test_app_adapter_restores_only_current_company_context_change(
+        app_module, monkeypatch, ticker, scope, age, expected):
+    """Exercise today's adapter, not equality of all app functions to 9f4451ed.
+
+    The renderer boundary records the real adapter arguments and runs the real
+    scoped selector/market reading. The AppTest below covers the full company UI.
+    """
+    from datetime import timedelta
+    import pandas as pd
+    import stock_lab_core.company_deep_dive as view
+    import stock_lab_core.portfolio_market_review as bridge
+    import stock_lab_core.report_news_selection as preferences
+    from stock_lab_core.company_market_reading import render_company_market_reading
+    from tests.test_decision_refactor_parity import run_scenario, scenarios
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(bridge, 'datetime', Clock)
+    monkeypatch.setattr(app_module, 'CURRENT_USER_EMAIL', 'market-contract')
+    monkeypatch.setattr(app_module, 'IS_PUBLIC_DEMO', False)
+    monkeypatch.setattr(app_module, 'portfolio_signal_input_context', lambda: 'account-a')
+    monkeypatch.setattr(app_module, 'get_sec_user_agent', lambda: 'synthetic-test-agent')
+    monkeypatch.setattr(app_module, 'lookup_yfinance_display_name', lambda symbol: symbol)
+    monkeypatch.setattr(app_module, 'holdings_table', pd.DataFrame())
+    monkeypatch.setattr(app_module, 'SECTOR_BENCHMARK_MAP', {
+        'NVDA': ('SOXX', '반도체'), 'META': ('XLC', '통신')})
+    # Preference restoration is unrelated to the market/company data boundary.
+    monkeypatch.setattr(preferences, 'restore_news_preferences', lambda state: None)
+    st = app_module.st
+    watchlist = [dict(ticker=s, name=s, asset_class='us_stock', is_etf=False)
+                 for s in ('NVDA', 'META', 'ACME')]
+    scores = {'NVDA': 2, 'META': 4, 'ACME': 1}
+    summary = pd.DataFrame([{'티커': ticker, '판정분류': '기존 판정'}])
+    data = market()
+    data['quote_checked_at'] = (NOW - timedelta(minutes=age)).isoformat()
+    saved = dict(scope=scope, data=data)
+    for key, value in {'watchlist': watchlist, 'fin_score_map': scores,
+                       'today_queue_summary_df': summary,
+                       'today_queue_summary_sig': 'fixed-context', EVIDENCE_KEY: saved}.items():
+        monkeypatch.setitem(st.session_state, key, deepcopy(value))
+    monkeypatch.setattr(st, 'radio', lambda *a, **kw: '기업 심층분석')
+
+    def no_collection(*args, **kwargs):
+        pytest.fail('Selecting saved company context must not collect market/SEC/DART data')
+
+    for name in ('_collect_today_report_context', 'sec_request_json', 'get_sec_cik_for_ticker',
+                 'fetch_kr_financials_auto'):
+        monkeypatch.setattr(app_module, name, no_collection)
+    monkeypatch.setattr(view, 'load_quarter_evidence', no_collection)
+    readings = company_cash_reading(packet(ticker))
+    original_readings = deepcopy(readings)
+    reviews = []
+
+    def render(ui, **kwargs):
+        assert kwargs['owner'] == 'market-contract' and not kwargs['is_demo']
+        assert kwargs['configured'] is True
+        options = view.company_options(kwargs['universe'])
+        assert set(options) == {'NVDA', 'META', 'ACME'}
+        assert options['NVDA']['sector'] == ('SOXX', '반도체')
+        assert options['META']['sector'] == ('XLC', '통신')
+        assert options['ACME']['sector'] == ()
+        context, status = kwargs['market_context']()
+        assert bool(context) is (scope == 'account-a' and age == 0)
+        result = build_company_market_reading(ticker, context, sector=options[ticker]['sector'],
+                                              readings=readings, now=NOW)
+        render_company_market_reading(ui, result, status)
+        reviews.append(result)
+
+    monkeypatch.setattr(view, 'render_company_deep_dive', render)
+    cases = scenarios()
+    before = {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases}
+    app_module.render_today_market_memo_panel()
+    assert len(reviews) == 1
+    result = reviews[0]
+    assert result['sector_excess_pp'] == (pytest.approx(expected) if expected is not None else None)
+    assert result['review_only'] is True and result['eligible_for_scoring'] is False
+    assert bool(result['observations']) is (scope == 'account-a' and age == 0)
+    assert result['financial'] and readings == original_readings
+    assert st.session_state[EVIDENCE_KEY] == saved
+    assert st.session_state['watchlist'] == watchlist and st.session_state['fin_score_map'] == scores
+    pd.testing.assert_frame_equal(st.session_state['today_queue_summary_df'], summary)
+    assert st.session_state['today_queue_summary_sig'] == 'fixed-context'
+    assert {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases} == before
 
 
 @pytest.mark.parametrize('sector', [(),('396500.KS','국내반도체'),('^GSPC','시장')])

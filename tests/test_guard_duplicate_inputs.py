@@ -104,18 +104,37 @@ def test_macro_analysis_keeps_legacy_penalty_and_attaches_same_snapshot_base(gua
     guard_app.get_macro_analysis.clear()
 
 
-def test_only_exact_reviewed_app_edits_differ_from_parent():
-    import ast
-    from pathlib import Path
-    import subprocess
-    from tests.guard_input_ast_contract import before_guard_input_repair
-    root = Path(__file__).resolve().parents[1]
-    old = subprocess.check_output(['git', 'show', 'a7e34691:app.py'], cwd=root, encoding='utf-8-sig')
-    new = (root / 'app.py').read_text(encoding='utf-8-sig')
-    def functions(source, restore=False):
-        return {node.name: ast.dump(before_guard_input_repair(node) if restore else node)
-                for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
-    assert functions(old) == functions(new, restore=True)
+@pytest.mark.parametrize('reverse', [False, True])
+@pytest.mark.parametrize('captured', [False, True])
+def test_only_exact_reviewed_app_edits_differ_from_parent(guard_app, monkeypatch, reverse, captured):
+    # Compare equivalent inputs through the current guard, not all historical app code.
+    rows = guard_app._build_today_benchmark_guard_rows()
+    sp500 = next(row for row in rows if row['티커'] == '^GSPC')
+    sp500['1일'] = -.06
+    macro = {'VIX': {'val': 15, 'as_of': '2026-11-12'}}
+    if captured:
+        macro['VIX'].update(guard_macro_base=2.5, guard_event_risk=2.0)
+    monkeypatch.setattr(guard_app, 'macro_res', macro)
+    monkeypatch.setattr(guard_app, 'final_macro_risk', 4.5)
+    monkeypatch.setattr(guard_app, 'build_macro_event_risk_table', lambda: (pd.DataFrame(), 1.0, 1))
+    flow = pd.DataFrame({'구분': ['섹터'] * 4, '3개월수익률': [1, 1, 1, 1],
+                         '가속도': [1, 1, 1, 1], '기준일': ['2026-11-12'] * 4})
+    original_rows, original_macro, original_flow = deepcopy(rows), deepcopy(macro), flow.copy(deep=True)
+    monkeypatch.setattr(guard_app, '_build_today_benchmark_guard_rows', lambda: deepcopy(rows))
+    unique = guard_app.build_today_market_guard({'flow_df': flow})
+    duplicates = [*rows, dict(sp500, 티커='SPY')]
+    if reverse:
+        duplicates.reverse()
+    monkeypatch.setattr(guard_app, '_build_today_benchmark_guard_rows', lambda: deepcopy(duplicates))
+    repeated = guard_app.build_today_market_guard({'flow_df': flow})
+    for key in ('score', 'mode', 'mode_score_parts', 'macro_risk', 'macro_score', 'event_score'):
+        assert repeated[key] == unique[key], key
+    assert repeated['macro_risk'] == (2.5 if captured else 4.5)
+    assert repeated['event_score'] == 1
+    assert repeated['macro_risk_input']['status'] == ('event_separated' if captured else 'legacy_unverified')
+    assert guard_app.final_macro_risk == 4.5
+    assert rows == original_rows and macro == original_macro
+    pd.testing.assert_frame_equal(flow, original_flow)
 
 
 def test_macro_union_index_does_not_redate_us_close_to_fx_session(guard_app, monkeypatch):

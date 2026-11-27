@@ -138,6 +138,7 @@ class UI:
         self.clicked, self.session_state, self.text, self.tables = clicked, {}, [], []
     def expander(self, *args, **kwargs): return nullcontext()
     def spinner(self, *args, **kwargs): return nullcontext()
+    def radio(self, label, options, **kwargs): return options[0]
     def button(self, *args, **kwargs): return self.clicked
     def markdown(self, text): self.text.append(text)
     def caption(self, text): self.text.append(text)
@@ -160,7 +161,9 @@ def test_render_is_opt_in_soxl_only_and_preserves_decision(monkeypatch):
     ui = UI()
     view.render_soxl_short_observation(ui, "SOXL", decision)
     assert "매수 승인 아님" in " ".join(ui.text)
-    assert decision == before and not ui.session_state
+    assert decision == before
+    # Research widget preferences are persisted; investment state remains read-only.
+    assert set(ui.session_state) == {"short_evidence_v1_SOXL_cost", "short_evidence_v1_SOXL_saved_cost"}
     ui = UI(clicked=True)
     view.render_soxl_short_observation(ui, "RAM", decision)
     assert not ui.text

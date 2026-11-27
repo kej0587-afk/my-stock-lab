@@ -1243,10 +1243,10 @@ st.markdown("<style>@media (max-width: 640px) { h1#realtime-digital-dashboard-v1
             " line-height: 1.25 !important; padding: .25rem 0 !important; } "
             "[data-testid='stMainBlockContainer'] { padding-top: 2.5rem !important; } "
             # Metric and macro-card rows: two per row instead of one tall column each.
-            "[data-testid='stHorizontalBlock']:has(.macro-panel), [data-testid='stHorizontalBlock']:has([data-testid='stMetric']) "
+            "[data-testid='stHorizontalBlock']:has(.macro-panel), [data-testid='stHorizontalBlock']:has([data-testid='stMetric']):not(:has([data-testid='stHorizontalBlock'])) "
             "{ flex-direction: row !important; flex-wrap: wrap !important; gap: .5rem !important; } "
             "[data-testid='stHorizontalBlock']:has(.macro-panel) > [data-testid='stColumn'], "
-            "[data-testid='stHorizontalBlock']:has([data-testid='stMetric']) > [data-testid='stColumn'] "
+            "[data-testid='stHorizontalBlock']:has([data-testid='stMetric']):not(:has([data-testid='stHorizontalBlock'])) > [data-testid='stColumn'] "
             "{ flex: 1 1 calc(50% - .5rem) !important; width: calc(50% - .5rem) !important; min-width: calc(50% - .5rem) !important; } "
             ".macro-panel { padding: 8px 10px !important; margin-bottom: 4px !important; font-size: .85em !important; } }</style>", unsafe_allow_html=True)
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
@@ -6911,6 +6911,10 @@ def render_precision_candlestick_chart(
     show_level_labels: bool = False,
     show_channel: bool = True,
     show_signals: bool = True,
+    timeframe_override: str | None = None,
+    provisional_override: bool | None = None,
+    display_averages: tuple | None = None,
+    render: bool = True,
 ):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
@@ -6921,17 +6925,22 @@ def render_precision_candlestick_chart(
         st.warning("차트 모듈 업데이트가 대기 중입니다. Streamlit Cloud에서 Reboot app 후 다시 확인해 주세요.")
         return {}
     from stock_lab_core.chart_structure import last_bar_is_provisional, latest_completed_chart_session
-    timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
-    provisional_bar = last_bar_is_provisional(df, ticker, timeframe)
-    structure, pattern_candidates, channel, trendline_guides = precision_chart_view.prepare_chart_layers(
-        df, show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
+    timeframe = timeframe_override or ("weekly" if "week" in key else "monthly" if "month" in key else "daily")
+    provisional_bar = (last_bar_is_provisional(df, ticker, timeframe)
+                       if provisional_override is None else provisional_override)
+    structure, pattern_candidates, channel, trendline_guides, chart_context, chart_events, snapshot = precision_chart_view.prepare_analysis(
+        df, ticker, decision_context, timeframe, provisional=provisional_bar,
+        show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
         load_structure=_cached_chart_structure, detect_patterns=detect_chart_pattern_candidates,
         build_trendlines=_build_recent_trendline_guides,
-        provisional_last=provisional_bar,
     )
+    if not render:
+        return snapshot
     # 정밀관측소 차트는 일봉/주봉/월봉 캡처가 같은 방식으로 동작하도록
     # 경량 차트가 아니라 Plotly 차트로 통일한다.
     fig = build_price_figure(df, avg_price)
+    if display_averages is not None:
+        precision_chart_view.apply_display_averages(fig, df, *display_averages)
     liquidity_profile = None
     if show_liquidity:
         liquidity_profile = _add_liquidity_thermal_overlays(fig, df, ticker)
@@ -6950,20 +6959,21 @@ def render_precision_candlestick_chart(
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
-    from stock_lab_core.execution_readiness import precision_display_context
-    chart_context = dict(precision_display_context(decision_context or {}), chart_expected_close=latest_completed_chart_session(ticker))
-    chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
-                                       provisional_last=provisional_bar) if show_signals else []
     if chart_events:
         add_event_overlays(fig, chart_events)
-    volume_signals = build_volume_signal_series(df, timeframe=timeframe)
+    volume_signals = (precision_chart_view.intraday_volume_signals(df) if timeframe == "intraday"
+                      else build_volume_signal_series(df, timeframe=timeframe))
     finish_price_figure(fig, df, volume_signals, show_level_labels=show_level_labels)
-    fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
+    if timeframe == "intraday":
+        precision_chart_view.intraday_display_axis(fig, df)
+    else:
+        fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
     legend = dict(orientation="h", xref="container", yref="container", x=0.01, y=0,
                   xanchor="left", yanchor="bottom", entrywidth=100)
     if "maxheight" in go.layout.Legend()._valid_props:
         legend["maxheight"] = 96
     fig.update_layout(legend=legend)
+    fig.update_layout(uirevision=key)
     st.plotly_chart(fig, width='stretch', key=key)
     if channel:
         st.caption(precision_chart_view.channel_caption(channel))
@@ -6973,6 +6983,9 @@ def render_precision_candlestick_chart(
         st.caption(leverage_basis_note)
     if show_signals:
         event_rows = chart_structure_rows(structure, chart_events, chart_context)
+        if timeframe == "intraday":
+            for row, event in zip(event_rows, chart_events[-6:][::-1]):
+                row["확인봉"] = pd.Timestamp(event["time"]).strftime("%Y-%m-%d %H:%M")
         if event_rows:
             st.markdown("##### 패턴 신호 · 현재 실행 제한")
             st.dataframe(pd.DataFrame(event_rows), hide_index=True, width='stretch')
@@ -6984,7 +6997,7 @@ def render_precision_candlestick_chart(
         latest_volume = volume_signals.iloc[-1]
         rvol_text = f"{latest_volume['rvol']:.2f}x" if pd.notna(latest_volume['rvol']) else "이력 부족"
         st.caption(f"거래량 {latest_volume['signal']} · RVOL {rvol_text} · MA {'10' if timeframe == 'weekly' else '50'}봉 · 장중 봉은 미확정")
-    if pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok")):
+    if timeframe != "intraday" and (pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok"))):
         st.markdown(
             build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker, chart_latest_close(df)),
             unsafe_allow_html=True,
@@ -7022,10 +7035,7 @@ def render_precision_candlestick_chart(
         caption = build_smc_overlay_caption(smc_features, ticker)
         if caption:
             st.caption(caption)
-    return {"channel": channel, "events": chart_events, "patterns": pattern_candidates,
-            "basis": structure.get("basis"), "last_bar": structure.get("last_bar"), "timeframe": timeframe,
-            "decision_asof": chart_context.get("chart_price_asof"), "expected_close": chart_context.get("chart_expected_close"),
-            "provisional_last": provisional_bar}
+    return snapshot
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -7229,8 +7239,24 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicat
     }
 
 
+def load_precision_long_daily(ticker: str, _long_price_df=None) -> pd.DataFrame:
+    """The long daily history behind 주/월봉 (and the chart's trading-day N일선). Uses the cached loader."""
+    raw_long = pd.DataFrame()
+    for period in ("10y", "max", "5y", "2y"):
+        try:
+            candidate = _long_price_df if period == "10y" and _long_price_df is not None else load_price_df(ticker, period)
+        except Exception:
+            candidate = pd.DataFrame()
+        if candidate is not None and not candidate.empty and len(candidate) > len(raw_long):
+            raw_long = candidate
+        if raw_long is not None and not raw_long.empty and len(raw_long) >= 520:
+            break
+    return raw_long
+
+
 @timed_call("indicators")
 def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None, _include_daily_snapshot=True) -> dict:
+    # Frozen by tests/test_today_mtf_snapshot.py; load_precision_long_daily repeats this loop for the chart.
     raw_long = pd.DataFrame()
     for period in ("10y", "max", "5y", "2y"):
         try:
@@ -17694,6 +17720,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     current_w = clean_float(c.get("current_w"), 0.0)
     weight_gap = max(clean_float(c.get("weight_gap"), target_w - current_w), 0.0)
     effective_total_asset = clean_float(c.get("effective_total_asset"), 0.0)
+    weight_source = "판정 입력(선택 계좌 보유표)" if target_w > 0 else "판정 입력에 목표비중 없음"
     if buy_amt_krw <= 0 and effective_total_asset > 0 and weight_gap > 0:
         buy_amt_krw = round(effective_total_asset * weight_gap / 100.0, 0)
     if buy_amt_krw <= 0:
@@ -17708,8 +17735,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 weight_gap = sheet_gap
                 effective_total_asset = sheet_total
                 buy_amt_krw = round(sheet_total * sheet_gap / 100.0, 0)
+                weight_source = "보유표 목표비중으로 보완(판정 입력은 0%)"
         except Exception:
             pass
+    # One effective target for every reading of this plan (table, leverage timing, notes): the leverage
+    # rows used to read the raw input while the first row used the sheet-completed target (8 % vs 미설정).
+    c_plan = c
+    if (target_w, current_w) != (clean_float(c.get("target_w"), 0.0), clean_float(c.get("current_w"), 0.0)):
+        c_plan = {**c, "target_w": target_w, "current_w": current_w, "weight_gap": weight_gap}
     pct_b = clean_float(c.get("pct_b"), 0.0)
     decision_code = str(c.get("decision_code", "") or "")
     decision_label = str(c.get("dec", "") or "")
@@ -17725,8 +17758,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     is_core_dca = bucket == "core" and core_dca_rate > 0 and target_w > 0 and weight_gap > 0
     is_new_core_etf = is_core_dca and (bool(c.get("short_history")) or (np.isfinite(history_days) and history_days < 80))
     new_core_verification = build_new_core_etf_verification(name, ticker, str(c.get("asset_class", "") or ""), c) if is_new_core_etf else {}
-    leveraged_precision_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
-    leveraged_timing = build_leveraged_dca_timing_state(c, leveraged_precision_state) if leveraged_precision_state else {}
+    leveraged_precision_state = build_leveraged_precision_state(name, ticker, c_plan, has_pos, my_price)
+    leveraged_timing = build_leveraged_dca_timing_state(c_plan, leveraged_precision_state) if leveraged_precision_state else {}
 
     if not (all(finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target):
         st.info(f"{plan_title}은 유효한 손절가 < 현재가 < 목표가가 확인될 때 표시됩니다.")
@@ -17971,11 +18004,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
 
     rows = [
         {
-            "단계": "총 추가 필요",
+            "단계": "목표까지 이론상 부족분",
             "가격": format_currency(cur, ticker),
             "금액/수량": total_order_text,
             "예상 R/R": rr_now_text,
-            "조건": total_condition,
+            "조건": f"{total_condition} · 출처: {weight_source}" if target_w > 0 else total_condition,
         },
     ]
     if leveraged_timing:
@@ -18036,19 +18069,19 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
     elif is_core_dca:
         amount_note = (
-            f"총 추가 필요: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
+            f"목표까지 이론상 부족분: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
             "아래 단계별 금액은 전체 부족분이 아니라 이번 회차 적립 기준금액을 나눈 값입니다."
         )
     elif leveraged_timing and has_pos:
         amount_note = (
-            f"총 추가 필요: {total_order_text}. "
+            f"목표까지 이론상 부족분: {total_order_text}. "
             f"레버리지 회차 배율은 {leveraged_timing.get('dca_multiple', '-')}이며, "
             "전체 부족분을 자동으로 채우는 신호가 아니라 조건을 통과한 회차만 소액으로 봅니다."
         )
     elif has_pos:
-        amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
+        amount_note = f"목표까지 이론상 부족분: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
-        amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
+        amount_note = f"목표까지 이론상 부족분: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
     if (buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing
             and plan_workflow.get("게이트상태") == GATE_EXECUTABLE):
         amount_note += (
@@ -18064,8 +18097,36 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             "아래 신규/추가 매수 가격과 금액은 조건 해소 후 재검토할 계획값입니다. " + amount_note
         )
 
+    # Three different amounts, never merged: the theoretical gap to the target, what today's gate allows, and
+    # what was actually recorded. This screen reads no fill ledger, so a recorded amount is never estimated.
+    gate_open = plan_workflow.get("게이트상태") == GATE_EXECUTABLE
+    from stock_lab_core.precision_plan_rows import build_entry_basis_rows
+    first_today = plan_buy_amt_krw * clean_float(tranche_weights[0], 0.0)
+    if not gate_open:
+        today_text = f"0 · 오늘 신규·추가 실행 보류({plan_workflow.get('게이트근거') or '실행 게이트 재확인 필요'})"
+    elif first_today > 0:
+        today_text = f"1차 {order_text(first_today, entry1)} 이내"
+    else:
+        today_text = "조건부 수량 미산출(회차 비중 0 또는 목표비중·총자산 미확인)"
+    l3_record = ((c.get("leveraged_l3") or {}).get("record") or {}) if isinstance(c.get("leveraged_l3"), dict) else {}
+    recorded = [t for t in (l3_record.get("tranches") or []) if finite_num(t.get("actual_krw"))]
+    if recorded:
+        recorded_text = f"레버리지 L3 기록 {len(recorded)}회 · {sum(float(t['actual_krw']) for t in recorded):,.0f}원"
+    else:
+        recorded_text = "미연결(이 화면은 체결 원장을 읽지 않아 추정하지 않음)"
+    amount_split = [
+        {"구분": "목표까지 이론상 부족분", "값": total_order_text if total_order_text != "-" else total_condition},
+        {"구분": "오늘 실행가능액", "값": today_text},
+        {"구분": "실제 집행기록액", "값": recorded_text},
+    ]
+
     plan = {
         "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
+        "weight_source": weight_source, "amount_split": amount_split,
+        "entry_basis": build_entry_basis_rows(rows, prices, (entry1, entry2, entry3), ticker,
+                                         gate_open=gate_open, target=target, stop=stop,
+                                         target_source=target_source, stop_source=stop_source,
+                                         format_currency=format_currency),
         "rows": rows, "amount_note": amount_note, "current_price": cur,
         "target": target, "stop": stop, "target_source": target_source,
         "stop_source": stop_source, "rr_now": rr_now_text,
@@ -18181,6 +18242,10 @@ LEVERAGED_ETF_PRECISION_PROFILES = {
 
 def get_leveraged_etf_precision_profile(ticker, name=""):
     symbol = clean_symbol(ticker)
+    # SOXS has no approved inverse recovery profile. Never borrow SOXL's long
+    # conditions, even when provider names are truncated or incorrectly labelled.
+    if symbol == "SOXS":
+        return "", {}
     normalized = normalize_ticker(sanitize_ticker_value(ticker))
     text = f"{symbol} {normalized} {name}".upper()
     if symbol == "418660" or ("TIGER" in text and ("NASDAQ" in text or "나스닥" in text) and ("2X" in text or "2배" in text or "레버리지" in text)):
@@ -18189,7 +18254,8 @@ def get_leveraged_etf_precision_profile(ticker, name=""):
         return symbol, LEVERAGED_ETF_PRECISION_PROFILES[symbol]
     if "ROUNDHILL T-REX" in text and "DRAM" in text:
         return "RAM", LEVERAGED_ETF_PRECISION_PROFILES["RAM"]
-    if "DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text:
+    if ("DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text
+            and not any(marker in text for marker in ("BEAR", "INVERSE", "인버스"))):
         return "SOXL", LEVERAGED_ETF_PRECISION_PROFILES["SOXL"]
     if symbol == "BITU":
         return "BITX", LEVERAGED_ETF_PRECISION_PROFILES["BITX"]
@@ -18595,6 +18661,11 @@ def build_leveraged_dca_timing_state(c, state):
         entry1_cond = (
             "목표비중 미설정 상태라 금액 계산은 제외. 타점은 회복·과열·R/R·기초축 기준으로 참고"
             if target_w <= 0
+            else (
+                f"L0 미보유: 보유 DCA 회차는 해당 없음 · 목표비중 {target_w:.2f}% 설정됨 · "
+                "신규 타점은 회복·과열·R/R·기초축 기준, 조건부 수량 미산출"
+            )
+            if dca_stage == "미보유 관찰"
             else "DCA 제외/보류 사유 해소 전까지 신규 회차를 열지 않음"
         )
     elif not allow_current:
@@ -18675,7 +18746,8 @@ def build_leveraged_dca_timing_state(c, state):
         entry2_cond = entry3_cond = "자료 미확인 · 추가 회차 보류"
     elif dca_blocked:
         if dca_stage == "미보유 관찰":
-            entry2_cond = "목표비중 설정 후 같은 타점 기준으로 금액 재계산"
+            entry2_cond = ("목표비중 설정 후 같은 타점 기준으로 금액 재계산" if target_w <= 0
+                           else "신규 1차 진입 후 같은 타점 기준으로 재계산 · 조건부 수량 미산출")
             entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"
         elif target_w <= 0:
             entry2_cond = "목표비중이 0%라 금액 계산 제외. 타점 참고만 표시"
@@ -18787,9 +18859,46 @@ def build_leveraged_l3_read(ticker, profile_key, profile, c, state, has_pos, my_
                            history_complete=not (bars[0].dd52 is not None and bars[0].dd52 <= l3.CYCLE_START_DD))
     if store_note and read.get("status") in {l3.STATUS_CANDIDATE}:
         read["reasons"] = list(read.get("reasons") or []) + [store_note]
+    read["record_note"] = store_note
     read["axis"] = axis
     read["history_start"] = first_date
     return read
+
+
+def build_leveraged_l3_observation(ticker, profile_key, profile, c, state):
+    """Display only (2026-11-27). For an L0 (not held) leveraged ETF the L3 cycle does not apply, but the
+    price-only inputs of the L3 rule can still be observed. Nothing here feeds the decision, gate or sizing;
+    it is kept apart from ``leveraged_l3`` so no L3 consumer sees a cycle that does not exist."""
+    axis = LEVERAGED_L3_AXIS.get(str(profile_key or "").upper())
+    if not axis:
+        axis = next((row[0] for row in (profile or {}).get("watch", []) if row[1] in {"기초 ETF", "기초 자산"}), "")
+    cur = clean_float(c.get("cur_p"), np.nan)
+    ma50 = clean_float(c.get("ma50"), np.nan)
+    out = {
+        "applicable": False,
+        "status": "해당 없음",
+        "reason": "L0 미보유: 보유 사이클이 없어 L2/L3 회차·예산 규칙이 적용되지 않음",
+        "axis": axis,
+        "leveraged_above_ma50": (bool(cur > ma50) if finite_num(cur) and finite_num(ma50) and ma50 > 0 else None),
+        "recovery_passed": int(state.get("recovery_passed", 0) or 0) if state else None,
+        "recovery_total": int(state.get("recovery_total", 0) or 0) if state else None,
+        "underlying_above_ma50": None, "underlying_date": "", "underlying_error": "",
+    }
+    if not axis:
+        out["underlying_error"] = "기초지수 축 미정"
+        return out
+    try:
+        axis_close = daily_close(load_price_df(axis, "5y"))
+        axis_close = pd.to_numeric(pd.Series(axis_close), errors="coerce").dropna()
+        if len(axis_close) < 50:
+            out["underlying_error"] = f"기초 이력 {len(axis_close)}거래일 < 50"
+        else:
+            out["underlying_above_ma50"] = bool(axis_close.iloc[-1] > axis_close.tail(50).mean())
+            out["underlying_date"] = str(pd.Timestamp(axis_close.index[-1]).date())
+    except Exception as exc:
+        logging.warning("Leveraged L3 observation history unavailable for %s (%s)", ticker, type(exc).__name__)
+        out["underlying_error"] = "기초 가격 이력 조회 실패"
+    return out
 
 
 LEVERAGE_DCA_ACCOUNT_MODE = "total"
@@ -18964,6 +19073,12 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
         from stock_lab_core.leverage_l3_policy import summary_text as _l3_summary_text
         out["leveraged_l3"] = l3_read
         out["leveraged_l3_summary"] = _l3_summary_text(l3_read)
+    elif not has_pos:
+        try:
+            out["leveraged_l3_observation"] = build_leveraged_l3_observation(
+                ticker, state.get("profile_key", ""), state.get("profile"), out, state)
+        except Exception as exc:
+            logging.warning("Leveraged L3 observation failed for %s (%s)", ticker, type(exc).__name__)
     reasons = (
         f"레버리지 전용 단계: {dca_stage} {dca_multiple}",
         f"회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}",
@@ -22773,34 +22888,14 @@ def render_correlation_interpretation(corr_df, avg_corr):
         st.dataframe(top_pairs, width='stretch', hide_index=True)
 
 
-def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
-    if analysis_start_date is not None:
-        analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
+def _portfolio_asset_rows(active_df, total_asset, active_value, usdkrw, period, analysis_start_date, notes):
+    """Per-holding weight/P&L/strategy rows and the price series used for portfolio risk.
 
-    total_asset = (
-        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
-    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
-
-    full_df = append_cash_rows(
-        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
-        krw_cash,
-        usd_cash,
-        usdkrw,
-        total_asset,
-    )
-    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
-    active_df = get_active_portfolio_rows(full_df)
-    blended_benchmark_spec = build_portfolio_blended_benchmark_spec(full_df)
-
+    Adds a 가격 데이터 note to ``notes`` for each holding without 20 closes (same order as before).
+    """
     asset_rows = []
     strategy_rows = []
     price_series = {}
-    notes = []
-
-    if active_df.empty:
-        add_portfolio_risk_note(notes, "참고", "분석 대상", "운용대상 보유자산이 없습니다.", "보유 종목을 등록하면 포트폴리오 분석이 표시됩니다.")
-
-    active_value = float(active_df["원화환산"].sum()) if not active_df.empty else 0.0
     for _, row in active_df.iterrows():
         ticker = str(row.get("티커", "")).strip()
         name = str(row.get("자산명", "")).strip()
@@ -22871,6 +22966,130 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
             add_portfolio_risk_note(notes, "참고", "가격 데이터", ticker, "가격 데이터가 부족해 변동성/MDD 계산에서 제외했습니다.")
 
         asset_rows.append(row_info)
+    return asset_rows, strategy_rows, price_series
+
+
+def _portfolio_risk_components(portfolio_vol, portfolio_mdd, top1_weight, top3_weight, hhi, avg_corr,
+                                leverage_summary, reserve_summary, reserve_target_weight):
+    """Portfolio risk index (0-100), grade/color and the six scored components with their reasons.
+
+    Returns (risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component).
+    """
+    vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
+    mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
+    concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
+    corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
+    leverage_component = min(max(float(leverage_summary.get("extra_exposure_pct", 0.0)), 0.0) * 0.9, 20)
+    reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
+    reserve_component = min(reserve_gap * 1.5, 15)
+    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
+    risk_grade, risk_color = classify_portfolio_risk(risk_index)
+    risk_components = [
+        {
+            "영역": "변동성",
+            "점수": vol_component,
+            "최대": 30,
+            "판단근거": f"연환산 변동성 {portfolio_vol:.1f}%" if np.isfinite(portfolio_vol) else "가격 데이터 부족",
+        },
+        {
+            "영역": "MDD",
+            "점수": mdd_component,
+            "최대": 30,
+            "판단근거": f"분석기간 MDD {portfolio_mdd:.1f}%" if np.isfinite(portfolio_mdd) else "가격 데이터 부족",
+        },
+        {
+            "영역": "집중도",
+            "점수": concentration_component,
+            "최대": 25,
+            "판단근거": f"1위 {top1_weight:.1f}%, 상위3개 {top3_weight:.1f}%",
+        },
+        {
+            "영역": "상관관계",
+            "점수": corr_component,
+            "최대": 15,
+            "판단근거": f"평균 상관계수 {avg_corr:.2f}" if np.isfinite(avg_corr) else "상관관계 산출 불가",
+        },
+        {
+            "영역": "레버리지",
+            "점수": leverage_component,
+            "최대": 20,
+            "판단근거": f"추가 환산노출 {leverage_summary.get('extra_exposure_pct', 0.0):.1f}%",
+        },
+        {
+            "영역": "대기자금",
+            "점수": reserve_component,
+            "최대": 15,
+            "판단근거": f"목표 대비 부족 {reserve_gap:.1f}%p" if reserve_gap > 0 else "목표 이상 확보",
+        },
+    ]
+    return risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component
+
+
+def _add_portfolio_risk_notes(notes, top1_weight, top3_weight, portfolio_vol, portfolio_mdd, avg_corr, leverage_summary,
+                              reserve_summary, reserve_target_weight, reserve_gap, sharpe_ratio, daily_cvar_95, risk_contrib_df):
+    """Append the threshold-based risk notes (concentration, volatility, drawdown, correlation, leverage,
+    reserve, Sharpe, CVaR, risk contribution) to ``notes`` in the original order."""
+    if top1_weight >= 35:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
+    if top3_weight >= 65:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"상위 3개 자산 비중이 {top3_weight:.1f}%입니다.", "의도한 집중 투자라면 괜찮지만, 분산 목적이면 비중을 나눠보세요.")
+    if np.isfinite(portfolio_vol) and portfolio_vol >= 28:
+        add_portfolio_risk_note(notes, "주의", "변동성", f"연환산 변동성이 {portfolio_vol:.1f}%입니다.", "매수 규모와 현금 비중을 보수적으로 점검하세요.")
+    if np.isfinite(portfolio_mdd) and portfolio_mdd <= -25:
+        add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
+    if np.isfinite(avg_corr) and avg_corr >= 0.7:
+        add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
+    if leverage_summary.get("leveraged_principal_pct", 0.0) > 0:
+        leverage_level = "주의" if leverage_summary.get("extra_exposure_pct", 0.0) >= 8 or leverage_summary.get("effective_exposure_pct", 0.0) >= 15 else "참고"
+        add_portfolio_risk_note(
+            notes,
+            leverage_level,
+            "레버리지",
+            (
+                f"레버리지 ETF 원금비중은 {leverage_summary.get('leveraged_principal_pct', 0.0):.1f}%이고 "
+                f"2배/3배 환산 노출은 {leverage_summary.get('effective_exposure_pct', 0.0):.1f}%입니다."
+            ),
+            "전체 위험도가 균형이어도 레버리지 환산 노출과 손실 속도는 별도로 확인하세요.",
+        )
+    if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
+        add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
+    if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
+        add_portfolio_risk_note(notes, "참고", "위험대비수익", f"Sharpe가 {sharpe_ratio:.2f}입니다.", "분석기간에는 변동성 대비 수익 보상이 낮았습니다.")
+    if np.isfinite(daily_cvar_95) and daily_cvar_95 <= -4:
+        add_portfolio_risk_note(notes, "주의", "꼬리위험", f"95% CVaR 기준 나쁜 날 평균 손실이 {daily_cvar_95:.1f}%입니다.", "급락일에 감내 가능한 손실 규모인지 확인하세요.")
+    if risk_contrib_df is not None and not risk_contrib_df.empty:
+        top_risk = risk_contrib_df.iloc[0]
+        if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
+            add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
+
+
+def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
+    if analysis_start_date is not None:
+        analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
+
+    total_asset = (
+        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
+    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
+
+    full_df = append_cash_rows(
+        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        total_asset,
+    )
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+    active_df = get_active_portfolio_rows(full_df)
+    blended_benchmark_spec = build_portfolio_blended_benchmark_spec(full_df)
+
+    notes = []
+
+    if active_df.empty:
+        add_portfolio_risk_note(notes, "참고", "분석 대상", "운용대상 보유자산이 없습니다.", "보유 종목을 등록하면 포트폴리오 분석이 표시됩니다.")
+
+    active_value = float(active_df["원화환산"].sum()) if not active_df.empty else 0.0
+    asset_rows, strategy_rows, price_series = _portfolio_asset_rows(
+        active_df, total_asset, active_value, usdkrw, period, analysis_start_date, notes)
 
     asset_df = pd.DataFrame(asset_rows, columns=[
         "자산명", "티커", "버킷", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "평가손익_원화", "수익률_pct", "기간수익률", "연환산변동성", "MDD", "데이터"
@@ -23039,86 +23258,12 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     avg_corr = float(np.nanmean(upper.values)) if np.isfinite(upper.values).any() else np.nan
                     corr_df = corr_df.rename(index=asset_label_map, columns=asset_label_map)
 
-    vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
-    mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
-    concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
-    corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
-    leverage_component = min(max(float(leverage_summary.get("extra_exposure_pct", 0.0)), 0.0) * 0.9, 20)
-    reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
-    reserve_component = min(reserve_gap * 1.5, 15)
-    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
-    risk_grade, risk_color = classify_portfolio_risk(risk_index)
-    risk_components = [
-        {
-            "영역": "변동성",
-            "점수": vol_component,
-            "최대": 30,
-            "판단근거": f"연환산 변동성 {portfolio_vol:.1f}%" if np.isfinite(portfolio_vol) else "가격 데이터 부족",
-        },
-        {
-            "영역": "MDD",
-            "점수": mdd_component,
-            "최대": 30,
-            "판단근거": f"분석기간 MDD {portfolio_mdd:.1f}%" if np.isfinite(portfolio_mdd) else "가격 데이터 부족",
-        },
-        {
-            "영역": "집중도",
-            "점수": concentration_component,
-            "최대": 25,
-            "판단근거": f"1위 {top1_weight:.1f}%, 상위3개 {top3_weight:.1f}%",
-        },
-        {
-            "영역": "상관관계",
-            "점수": corr_component,
-            "최대": 15,
-            "판단근거": f"평균 상관계수 {avg_corr:.2f}" if np.isfinite(avg_corr) else "상관관계 산출 불가",
-        },
-        {
-            "영역": "레버리지",
-            "점수": leverage_component,
-            "최대": 20,
-            "판단근거": f"추가 환산노출 {leverage_summary.get('extra_exposure_pct', 0.0):.1f}%",
-        },
-        {
-            "영역": "대기자금",
-            "점수": reserve_component,
-            "최대": 15,
-            "판단근거": f"목표 대비 부족 {reserve_gap:.1f}%p" if reserve_gap > 0 else "목표 이상 확보",
-        },
-    ]
+    risk_index, risk_grade, risk_color, risk_components, reserve_gap, leverage_component = _portfolio_risk_components(
+        portfolio_vol, portfolio_mdd, top1_weight, top3_weight, hhi, avg_corr,
+        leverage_summary, reserve_summary, reserve_target_weight)
 
-    if top1_weight >= 35:
-        add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
-    if top3_weight >= 65:
-        add_portfolio_risk_note(notes, "주의", "집중도", f"상위 3개 자산 비중이 {top3_weight:.1f}%입니다.", "의도한 집중 투자라면 괜찮지만, 분산 목적이면 비중을 나눠보세요.")
-    if np.isfinite(portfolio_vol) and portfolio_vol >= 28:
-        add_portfolio_risk_note(notes, "주의", "변동성", f"연환산 변동성이 {portfolio_vol:.1f}%입니다.", "매수 규모와 현금 비중을 보수적으로 점검하세요.")
-    if np.isfinite(portfolio_mdd) and portfolio_mdd <= -25:
-        add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
-    if np.isfinite(avg_corr) and avg_corr >= 0.7:
-        add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
-    if leverage_summary.get("leveraged_principal_pct", 0.0) > 0:
-        leverage_level = "주의" if leverage_summary.get("extra_exposure_pct", 0.0) >= 8 or leverage_summary.get("effective_exposure_pct", 0.0) >= 15 else "참고"
-        add_portfolio_risk_note(
-            notes,
-            leverage_level,
-            "레버리지",
-            (
-                f"레버리지 ETF 원금비중은 {leverage_summary.get('leveraged_principal_pct', 0.0):.1f}%이고 "
-                f"2배/3배 환산 노출은 {leverage_summary.get('effective_exposure_pct', 0.0):.1f}%입니다."
-            ),
-            "전체 위험도가 균형이어도 레버리지 환산 노출과 손실 속도는 별도로 확인하세요.",
-        )
-    if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
-        add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
-    if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
-        add_portfolio_risk_note(notes, "참고", "위험대비수익", f"Sharpe가 {sharpe_ratio:.2f}입니다.", "분석기간에는 변동성 대비 수익 보상이 낮았습니다.")
-    if np.isfinite(daily_cvar_95) and daily_cvar_95 <= -4:
-        add_portfolio_risk_note(notes, "주의", "꼬리위험", f"95% CVaR 기준 나쁜 날 평균 손실이 {daily_cvar_95:.1f}%입니다.", "급락일에 감내 가능한 손실 규모인지 확인하세요.")
-    if risk_contrib_df is not None and not risk_contrib_df.empty:
-        top_risk = risk_contrib_df.iloc[0]
-        if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
-            add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
+    _add_portfolio_risk_notes(notes, top1_weight, top3_weight, portfolio_vol, portfolio_mdd, avg_corr, leverage_summary,
+                              reserve_summary, reserve_target_weight, reserve_gap, sharpe_ratio, daily_cvar_95, risk_contrib_df)
 
     # 스트레스 테스트는 asset_df 구성 후 실행
     if not asset_df.empty:
@@ -29517,6 +29662,32 @@ def render_today_briefing_investor_flow(summary_df=None, watch_items=None):
         st.caption("거래량 확인: 돈흐름 상세 계산 후 거래량 증가 상위 축이 표시됩니다.")
 
 
+def _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
+    """Render non-holdings surfaces without preceding them with holdings detail."""
+    if detail == "뉴스":
+        render_today_action_news_panel(df)
+        return True
+    if detail == "키움":
+        render_kiwoom_market_evidence("today_kiwoom")
+        return True
+    if detail != "시황":
+        return False
+    from stock_lab_core import report_latest
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
+                   "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
+    report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store)
+    if kept := report_latest.keep_last_complete(st.session_state):
+        st.warning(report_latest.kept_notice(kept))
+    if notice := report_latest.restored_notice(st.session_state):
+        st.info(notice)
+    render_today_market_memo_panel(df)
+    report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store)
+    return True
+
+
 @timed_call("phase", "briefing_render")
 def render_today_unified_briefing_panel(
     summary_df=None,
@@ -29749,6 +29920,24 @@ def render_today_unified_briefing_panel(
         headline = "오늘은 보유 유지, 관심 후보 정리, 뉴스 확인이 중심입니다."
 
     st.markdown("#### 1. 오늘 브리핑 통합판")
+    # Restore the owner-bound report and view before rendering holdings-only detail.
+    from stock_lab_core import report_latest
+    latest_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+    latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
+                    if latest_owner and supabase is not None else None)
+    latest_accounts = st.session_state.get("acc_filter", [])
+    report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
+    from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
+    restore_briefing_view(st.session_state)
+    detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
+                                  on_change=save_briefing_view, args=(st.session_state,)) or "보유관리"
+    if detail != "시황" and (latest_caption := report_latest.last_report_caption(st.session_state)):
+        st.caption(latest_caption)
+    if detail in {"뉴스", "시황", "키움"}:
+        st.caption(f"시장 {mode} · {action_text}")
+    if _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
+        return
     if not df.empty:
         from stock_lab_core.today_snapshot import load_previous_today_summary
         from stock_lab_core.report_history_panel import render_history_changes
@@ -29782,45 +29971,9 @@ def render_today_unified_briefing_panel(
     from stock_lab_core.decision_workspace import render_frame_decision_brief
     render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
 
-    # Last completed market report (owner-bound): restored once per session, even before Today runs.
-    from stock_lab_core import report_latest
-    latest_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
-    latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
-                    if latest_owner and supabase is not None else None)
-    latest_accounts = st.session_state.get("acc_filter", [])
-    report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                      store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
-
-    # Keep existing sessions valid after retiring the optional manual ledger view.
-    from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
-    restore_briefing_view(st.session_state)
-    detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
-                                  on_change=save_briefing_view, args=(st.session_state,)) or "보유관리"
-    if detail != "시황" and (latest_caption := report_latest.last_report_caption(st.session_state)):
-        st.caption(latest_caption)
-    if detail == "뉴스":
-        render_today_action_news_panel(df)
-        return
-    if detail == "시황":
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            # Rebooted session: a report made now has no holdings and no company earnings (not "0 results").
-            st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
-                       "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
-        # A failed or 미계산 new report keeps the last complete one; a complete one replaces and is stored.
-        report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                          store=latest_store)
-        if kept := report_latest.keep_last_complete(st.session_state):
-            st.warning(report_latest.kept_notice(kept))
-        if notice := report_latest.restored_notice(st.session_state):
-            st.info(notice)
-        render_today_market_memo_panel(df)
-        report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                          store=latest_store)
-        return
-    if detail == "키움":
-        render_kiwoom_market_evidence("today_kiwoom")
-        return
     if detail == "시장":
+        from stock_lab_core.market_quick_view import render_market_quick_view
+        render_market_quick_view(st, key="today_market_quick", script_started=SCRIPT_RUN_STARTED)
         from stock_lab_core.market_board import render_market_board
         market_view = st.radio("시장 화면", ("시장판", "매크로 관측실"), horizontal=True, key="today_market_surface")
         if market_view == "매크로 관측실":
@@ -33462,6 +33615,7 @@ def _calculate_fresh_today_summary(mode, watch_items, raw_watch_items, flow_auto
     from stock_lab_core.report_history import tag_input_origins
     summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
     summary_df = stamp_portfolio_signal_context(summary_df)
+    st.session_state["_today_full_calculation_count"] = st.session_state.get("_today_full_calculation_count", 0) + 1
     return summary_df
 
 
@@ -34419,6 +34573,7 @@ MAIN_PAGE_OPTIONS = {
     "asset": "💼 자산 현황",
     "today": "✅ 오늘 점검",
     "macro": "시장·매크로 차트",
+    "briefing": "브리핑 보기",
     "portfolio": "📊 포트폴리오 분석",
     "dashboard": "📋 전광판",
     "precision": "🔍 정밀관측소",
@@ -35181,9 +35336,11 @@ if main_page == "precision":
         precision_signal_basis.update(selection_basis(
             is_free=precision_decision_is_free, has_position=bool(has_p), selection_type=selected_option.get("type")))
         precision_has_pos = has_p
+        # 2026-11-27: no explicit weights here. Since C-6 step 2 explicit weights beat the account row, and the
+        # old positional 0.0/0.0/0.0 silently turned every precision decision into target 0 % (Today reads the row).
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, precision_decision_is_free,
-                                     app_mode, 0.0, 0.0, 0.0,
+                                     app_mode,
                                      live_price=display_cur_p, _live_indicator_context=precision_live_context)
         precision_review_download.update(
             decision=c, financial=fin_meta, completion="partial", stage="daily_decision",
@@ -35447,13 +35604,32 @@ if main_page == "precision":
                 help="FVG, 간이 Order Block, EQH/EQL을 확인할 가격대로 표시합니다. 단독 매수 신호가 아니라 지지/저항 후보입니다.",
             )
             show_level_labels = st.checkbox("차트 안 가격대 이름", value=False, key=f"precision_level_labels_{tkr}")
-            day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
-            with day_tab:
-                c["chart_structure"]["일봉"] = render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
-            with week_tab:
-                c["chart_structure"]["주봉"] = render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
-            with month_tab:
-                c["chart_structure"]["월봉"] = render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
+            from stock_lab_core.intraday_chart_view import render_analysis_chart
+            from stock_lab_core.chart_preferences import SupabaseChartPreferenceStore
+            _chart_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+            _chart_store = (SupabaseChartPreferenceStore(supabase, owner_scope=_chart_owner)
+                            if _chart_owner and supabase is not None else None)
+            _chart_frames = {label: (mtf_pack.get(label) or {}).get("df", chart_df if label == "일봉" else pd.DataFrame())
+                             for label in ("일봉", "주봉", "월봉")}
+            _chart_options = dict(avg_price=avg_line, show_patterns=show_chart_patterns,
+                                  show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay,
+                                  ticker=tkr, decision_context=c, show_level_labels=show_level_labels,
+                                  show_channel=show_parallel_channel, show_signals=show_pattern_signals)
+            # Keep export/scenario snapshots independent of the selected display interval.
+            for _label, _timeframe in (("일봉", "daily"), ("주봉", "weekly"), ("월봉", "monthly")):
+                c["chart_structure"][_label] = render_precision_candlestick_chart(
+                    _chart_frames[_label], timeframe_override=_timeframe, render=False, **_chart_options)
+
+            def _render_analysis_frame(frame, label, ma_lines, overlay_lines, provisional):
+                return render_precision_candlestick_chart(
+                    frame, key=f"precision_analysis_{tkr}_{label}",
+                    timeframe_override={"일봉": "daily", "주봉": "weekly", "월봉": "monthly"}.get(label, "intraday"),
+                    provisional_override=provisional if label.endswith("분") else None,
+                    display_averages=(ma_lines, overlay_lines), **_chart_options)
+
+            render_analysis_chart(st, tkr, store=_chart_store, key="precision_analysis",
+                                  timeframe_frames=_chart_frames, analysis_renderer=_render_analysis_frame,
+                                  daily_long=load_precision_long_daily(tkr))
             from stock_lab_core.chart_review import render_chart_review
             render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
                                 is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")
@@ -35528,7 +35704,7 @@ if main_page == "precision":
                 st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량 기준비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         from stock_lab_core.soxl_short_view import render_soxl_short_observation
-        render_soxl_short_observation(st, tkr, c)
+        render_soxl_short_observation(st, tkr, c, daily=df)
 
         if str(tkr).upper() != "SOXL":
             from stock_lab_core.short_trade_view import render_symbol_research
@@ -36461,8 +36637,15 @@ if main_page == "scenario":
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 if main_page == "macro":
+    from stock_lab_core.market_quick_view import render_market_quick_view
     from stock_lab_core.macro_monitor import render_macro_monitor
+    render_market_quick_view(st, key="standalone_market_quick", script_started=SCRIPT_RUN_STARTED)
     render_macro_monitor(st, key="standalone_macro_monitor", explicit_refresh=True)
+
+if main_page == "briefing":
+    from stock_lab_core.market_quick_view import render_market_quick_view
+    render_market_quick_view(st, key="briefing_market_quick", script_started=SCRIPT_RUN_STARTED)
+    st.caption("시장 조회만 실행합니다. 전체 종목 판정·새 시황 생성은 오늘 점검에서 선택해 실행할 수 있습니다.")
 
 if main_page == "short":
     render_short_trend_tab(holdings_table, st.session_state.watchlist)

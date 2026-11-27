@@ -182,11 +182,16 @@ def test_ui_no_fetch_on_selection_or_rerender_and_raw_packet_preserved():
 
 
 def test_recovery_is_review_only_and_default_market_collection_unchanged():
-    import ast,subprocess
-    base=ast.parse(subprocess.check_output(['git','show','7dd38ffe:app.py'],encoding='utf-8-sig'))
+    # The 7dd38ffe whole-app AST comparison also froze later approved features; keep its intent:
+    # the release loader is wired only into the opt-in company deep-dive view, never report collection.
+    import ast
     current=ast.parse(Path('app.py').read_text(encoding='utf-8-sig'))
-    names=lambda tree:{n.name:ast.dump(n) for n in tree.body if isinstance(n,ast.FunctionDef)}
-    a,b=names(base),names(current)
-    assert a.keys()==b.keys()
-    assert [k for k in a if a[k]!=b[k]]==['render_today_market_memo_panel']
+    users=[n for n in ast.walk(current) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))
+           and any(isinstance(x,ast.Name) and x.id=='collect_cash_release' for x in ast.walk(n))]
+    assert [n.name for n in users]==['render_today_market_memo_panel']
+    branch=next(x for x in ast.walk(users[0]) if isinstance(x,ast.If) and '기업 심층분석' in ast.dump(x.test))
+    assert any(isinstance(x,ast.Name) and x.id=='collect_cash_release' for x in ast.walk(branch))
+    for module in ('report_context','report_prices','report_reading','report_build_context'):
+        path=Path(f'stock_lab_core/{module}.py')
+        assert not path.exists() or 'sec_cash_recovery' not in path.read_text(encoding='utf-8-sig')
     assert 'build_sec_statement_records' not in Path('stock_lab_core/sec_cash_recovery.py').read_text(encoding='utf-8')

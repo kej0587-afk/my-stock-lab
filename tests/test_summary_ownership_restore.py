@@ -72,7 +72,12 @@ def test_report_lists_error_ram_as_held_with_unknown_weight(replay):
     report = build_auto_market_memo(
         summary_rows=[row], now=datetime(2026, 10, 18, 18, tzinfo=KST),
         report_context={"sessions": {"KR": "2026-10-16", "US": "2026-10-16"}, "prices": {}})
-    holdings = report.split("## 내 보유 종목 영향", 1)[1].split("\n## ", 1)[0]
+    holdings = report.split("## 포트폴리오 · 교체 검토", 1)[1].split("\n## ", 1)[0]
+    ram_rows = [line for line in holdings.splitlines() if "RAM(RAM) |" in line]
+    assert ram_rows and len(ram_rows) == len(set(ram_rows))
+    reference = report.split("## 내 보유 종목 영향", 1)[1].split("\n## ", 1)[0]
+    assert "표는 위 '포트폴리오 · 교체 검토' 구역에 있습니다." in reference
+    assert "RAM(RAM) |" not in reference
     assert "RAM(RAM) |" in holdings
     assert "데이터부족" in holdings and "현재비중·일간 기여 미연결" in holdings
     assert "보유목록 미연결" not in holdings

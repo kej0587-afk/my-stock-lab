@@ -286,7 +286,9 @@ def test_explicit_collection_passes_public_snapshot_into_existing_store():
     collect = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                    and node.name == "_collect_today_report_context")
     call = next(node for node in ast.walk(collect) if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name) and node.func.id == "update_report_history")
+                and isinstance(node.func, ast.Name) and node.func.id == "component"
+                and node.args and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "update_report_history")
     keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
     assert keywords["public_market_evidence"] == "context.get('public_market_evidence')"
     assert keywords["market_evidence_checked_at"] == "context.get('market_evidence_checked_at')"

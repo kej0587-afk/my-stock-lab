@@ -1,0 +1,15 @@
+{
+  "protocol_sha256": "e171fce58f52e50679cc74268ea918a848f573ed101a32deaf70f9175890edad",
+  "engine_sha256": "3e7d5f5fe20d4ccc1abbc369fcf8c6a1d5006a5ef7fba4685eaeaf1537916a68",
+  "runner_sha256": "d5bdac891116fe5bb14b2f6adb381eda2f8e6e9b5c62d87f7f9291a9b55093ef",
+  "source_sha256": "d4ebdcdde3a640b0571baa4bc2332aa05fff07d749e7dc5e2fea2494c0c71e12",
+  "historical_guard_source": null,
+  "historical_guard_note": "No timestamped interval-valid archive supplied; unknown, not allowed",
+  "output_sha256": {
+    "coverage.csv": "3fc86f7d3d17ba855e4caad049537ad577906149db91326d50c2d33df16274ea",
+    "trades.csv": "db9be7095da13c54ac4bd9e5f262bb0d4a0f292751a920aee24c35b55d010d06",
+    "summary.csv": "8963f0ad7449e6f826308ee18e654d6cb17ab6ef23ade6e3891b6284b5244825",
+    "quality.csv": "26843ab4ceebba2bc5df899faeaa948347fd62a9ff1bceef5fd6ff2f38df692b",
+    "equity.csv": "4ff68cdac9470b77b3043515d0263825d2e4ed07633fd4307c3322575473e19d"
+  }
+}

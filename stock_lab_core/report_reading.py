@@ -1,5 +1,6 @@
 """Compact reading path over the existing report. No fetching or decision rules."""
 
+import math
 import re
 
 from stock_lab_core.performance import timed_call
@@ -276,18 +277,41 @@ def _korea_first(states):
     return kr == "intraday" or (kr == "closed" and us != "intraday")
 
 
-def _observatory_status_lines(rendered, *, country):
+def _observatory_value_symbols(markdown):
+    """Count observed values in generated tables, not ticker mentions in prose."""
+    from stock_lab_core.macro_monitor import METRICS
+
+    symbols = set()
+    aliases = {"하이일드 신용 스프레드": "BAMLH0A0HYM2", "미국 실업률": "UNRATE"}
+    for _, rows in tables(markdown):
+        for row in rows:
+            value = (re.match(r"^[+-]?(?:\d[\d,]*(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", row[1].strip())
+                     if len(row) > 1 else None)
+            if not value or not math.isfinite(float(value[0].replace(",", ""))):
+                continue
+            label = row[0]
+            symbols.update(metric.symbol for metric in METRICS if f"({metric.symbol})" in label)
+            for other, symbol in {"^VIX": "VIXCLS", "^TNX": "DGS10", "USDKRW=X": "KRW=X"}.items():
+                if f"({other})" in label:
+                    symbols.add(symbol)
+            for name, symbol in aliases.items():
+                if label == name or label.startswith(name + " "):
+                    symbols.add(symbol)
+    return symbols
+
+
+def _observatory_status_lines(rendered, *, country, evidence=""):
     """Every registered observatory item keeps a visible status instead of vanishing."""
     from stock_lab_core.macro_monitor import METRICS
-    # Same series under another provider symbol already shown in the report tables.
-    equivalent = {"VIXCLS": "^VIX", "DGS10": "^TNX", "KRW=X": "USDKRW=X"}
+    shown, detailed = _observatory_value_symbols(rendered), _observatory_value_symbols(evidence)
     groups = {}
     for metric in METRICS:
         if (metric.group == "국가 ETF") != country:
             continue
-        shown = f"({equivalent.get(metric.symbol, metric.symbol)})" in rendered
+        status = ("본문 표시" if metric.symbol in shown else
+                  "상세 근거 표시" if metric.symbol in detailed else "미연결")
         groups.setdefault(metric.group, []).append(
-            f"{metric.name}({metric.symbol}) · {'본문 표시' if shown else '미연결'}")
+            f"{metric.name}({metric.symbol}) · {status}")
     lines = []
     for group, items in groups.items():
         lines.append(f"- **{group}**: " + " / ".join(items))
@@ -421,25 +445,28 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         market_blocks[market] = lines
     order = ("KR", "US") if _korea_first(states) else ("US", "KR")
 
-    from stock_lab_core.report_dashboard import COUNTRY_ETFS, OBSERVATORY_DAILY, local_index_table_lines, observatory_table_lines
+    from stock_lab_core.report_dashboard import (COUNTRY_ETFS, OBSERVATORY_DAILY, local_index_table_lines,
+                                                 observatory_fred_table_lines, observatory_table_lines)
     collected = context.get("observatory_daily") or {}
     options = [ticker for ticker in OBSERVATORY_DAILY if ticker not in COUNTRY_ETFS]
-    # Only items with an actual observation count as shown; a 미연결 row is not.
-    rendered = "\n".join([*indices, *board, *macro_lines, *(f"({ticker})" for ticker, obs in collected.items() if obs)])
     if any(collected.get(ticker) for ticker in options):
         # Right after the 심리·변동성 group, before central-bank and news rows.
         at = 2 + len(macro)
         macro_lines[at:at] = ["**옵션 위험 · 관측실 지표**", *observatory_table_lines(context, options)]
+    macro_lines += observatory_fred_table_lines(context)
+    country_lines = observatory_table_lines(context, COUNTRY_ETFS)
+    rendered = "\n".join([*indices, *board, *macro_lines, *economy_lines, *country_lines,
+                           *market_blocks["KR"], *market_blocks["US"]])
     world = ["## 세계 시장과 국가 ETF", "",
              "미국 상장 국가 ETF의 달러 가격(완료 일봉)입니다. 환율·거래시간 차이로 현지 지수와 다를 수 있습니다.", "",
-             *observatory_table_lines(context, COUNTRY_ETFS),
+             *country_lines,
              "현지 지수는 현지 통화·현지 거래소 마감 기준이며 ETF와 기준일이 다를 수 있습니다. 서로 환산하거나 대신 쓰지 않습니다.", "",
              *local_index_table_lines(context),
              *_observatory_status_lines(rendered, country=True), ""]
     observatory = ["## 관측실 지표 연결 상태", "",
-                   "매크로 관측실 등록 지표 가운데 이 보고서 표에 들어온 항목과 아직 연결되지 않은 항목입니다. "
-                   "미연결 항목은 관측실 화면에서만 조회됩니다.", "",
-                   *_observatory_status_lines(rendered, country=False), ""]
+                   "등록 지표의 실제 값이 표시된 위치입니다. 본문과 상세 근거를 구분하며 기준일·출처는 해당 표에 남깁니다. "
+                   "미연결은 이 보고서 표에서 값을 확인하지 못했다는 뜻이며, 관측실의 조회 성공·실패는 별도 확인합니다.", "",
+                   *_observatory_status_lines(rendered, country=False, evidence=report), ""]
 
     calendar_lines = ["## 다음 일정", ""]
     calendar_start = len(calendar_lines)

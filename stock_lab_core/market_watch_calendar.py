@@ -147,7 +147,8 @@ def parse_apec_meeting(html, now):
 
 def _fetch_pdf(url, label):
     """One request, existing timeout, no redirects, at most 2 MB; no disk writes."""
-    response = calendar.requests.get(url, timeout=calendar.REQUEST_TIMEOUT, allow_redirects=False,
+    from stock_lab_core.report_io_audit import http_call, provider_label
+    response = http_call(provider_label(url), calendar.requests.get, url, timeout=calendar.REQUEST_TIMEOUT, allow_redirects=False,
         stream=True, headers={"User-Agent": "StockLab-Release-Calendar/1.0"})
     try:
         if response.status_code != 200:

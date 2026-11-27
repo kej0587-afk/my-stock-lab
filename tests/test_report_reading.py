@@ -284,6 +284,36 @@ def test_no_observatory_data_keeps_status_only():
     assert "브라질 ETF(EWZ) · 미연결" in sections["세계 시장과 국가 ETF"]
 
 
+def test_observatory_coverage_distinguishes_actual_body_and_appendix_values():
+    from stock_lab_core.report_reading import _observatory_status_lines
+
+    body = ("대상 | 수준 | 기준일\n--- | --- | ---\n"
+            "VIX(^VIX) | 26.8 pt | 2026-11-25\n"
+            "SKEW(^SKEW) | 미연결 | -\n"
+            "삼성전자(005930.KS) | 미수집 | -\n"
+            "\n본문에 BTC-USD(BTC-USD)가 언급되어도 관측값은 아니다.\n")
+    evidence = ("지표 | 관측 | 기준일\n--- | --- | ---\n"
+                "하이일드 신용 스프레드 | 3.72% · 전 관측 대비 +9.0bp | 2026-11-24\n"
+                "미국 실업률 2026-10 수준 | 4.1% | 2026-10\n"
+                "공포·탐욕(FNG) | 미연결 | -\n")
+    out = "\n".join(_observatory_status_lines(body, country=False, evidence=evidence))
+    assert "VIX(VIXCLS) · 본문 표시" in out
+    assert "하이일드 OAS(BAMLH0A0HYM2) · 상세 근거 표시" in out
+    assert "미국 실업률(UNRATE) · 상세 근거 표시" in out
+    for label in ("SKEW(^SKEW)", "삼성전자(005930.KS)", "비트코인(BTC-USD)", "공포·탐욕(FNG)"):
+        assert label + " · 미연결" in out
+    moved = "\n".join(_observatory_status_lines(body + "\n" + evidence, country=False, evidence=evidence))
+    assert "하이일드 OAS(BAMLH0A0HYM2) · 본문 표시" in moved
+
+
+def test_observatory_missing_or_nonfinite_cells_are_not_success_and_zero_is_valid():
+    from stock_lab_core.report_reading import _observatory_value_symbols
+
+    for value in ("미연결", "미제공", "—", "-", "NaN", "inf", "-inf", "None", "1e999", ""):
+        assert not _observatory_value_symbols("대상 | 값\n--- | ---\n공포·탐욕(FNG) | " + value)
+    assert _observatory_value_symbols("대상 | 값\n--- | ---\n공포·탐욕(FNG) | 0 점") == {"FNG"}
+
+
 def test_kr_flow_history_keeps_completed_period_and_excludes_today_provisional():
     from stock_lab_core.report_reading import _kr_flow_table_lines
     flow = ["시장 | 개인 | 외국인 | 기관 | 기준일", "--- | --- | --- | --- | ---",

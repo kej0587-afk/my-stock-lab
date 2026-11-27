@@ -50,6 +50,71 @@ def observatory_daily_observations(frames, now):
     return result
 
 
+# 2026-11-27 (priority 5): FRED items the observatory already loads but the report never showed.
+# Same loader and cache key (symbol, 1 year, KST date) as the observatory's default view; nothing estimated.
+OBSERVATORY_FRED = ("STLFSI4", "T10Y2Y", "M2SL", "ICSA", "WALCL", "WRESBAL", "RRPONTSYD", "WTREGEN")
+OBSERVATORY_FRED_YEARS = 1
+
+
+def observatory_fred_observations(now, *, loader=None, symbols=OBSERVATORY_FRED):
+    """Return ({symbol: observation row}, meta). meta keeps elapsed seconds and per-item status so the
+    report can say how long the reuse took; a failed item keeps its reason and stays 미연결."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    import pandas as pd
+    from stock_lab_core.macro_monitor import CATALOG, load_macro_series, observation
+    loader = loader or load_macro_series
+    clock = pd.Timestamp(now)
+    clock = clock.tz_convert("Asia/Seoul") if clock.tzinfo is not None else clock
+    as_of = str(clock.date())
+    started = time.perf_counter()
+
+    def one(symbol):
+        try:
+            series, reason = loader(symbol, OBSERVATORY_FRED_YEARS, as_of)
+        except Exception as exc:  # never fill a value; keep the reason
+            series, reason = pd.Series(dtype=float), type(exc).__name__
+        row, _ = observation(CATALOG[symbol], series, clock.tz_localize(None) if clock.tzinfo else clock, reason)
+        return symbol, row
+
+    from stock_lab_core.performance import submit_with_context
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [submit_with_context(pool, one, symbol) for symbol in symbols]
+        try:
+            rows = dict(future.result() for future in futures)
+        except BaseException:
+            # Preserve Executor.map's cancellation of unconsumed queued work.
+            for future in futures:
+                future.cancel()
+            raise
+    meta = {"seconds": time.perf_counter() - started, "requested": len(symbols),
+            "connected": sum(1 for row in rows.values() if row.get("값") != "미연결"), "as_of": as_of}
+    return rows, meta
+
+
+def observatory_fred_table_lines(context):
+    rows = context.get("observatory_fred") or {}
+    if not rows:
+        return []
+    from stock_lab_core.macro_monitor import CATALOG
+    meta = context.get("observatory_fred_meta") or {}
+    body = []
+    for symbol in OBSERVATORY_FRED:
+        row = rows.get(symbol) or {}
+        name = CATALOG[symbol].name
+        body.append(" | ".join(_cell(x) for x in (
+            f"{name}({symbol})", row.get("값", "미연결"), row.get("직전 관측 대비", "-"),
+            f"{row.get('관측일', '-')} · {row.get('주기', CATALOG[symbol].frequency)}",
+            row.get("상태", "미연결"), "FRED")))
+    note = (f"관측실과 같은 FRED 자료(1년 조회, {meta.get('as_of', '조회일 미확인')} KST 조회)를 재사용했습니다. "
+            f"연결 {meta.get('connected', 0)}/{meta.get('requested', len(OBSERVATORY_FRED))}"
+            + (f", 준비 {meta['seconds']:.2f}초" if isinstance(meta.get("seconds"), (int, float)) else "")
+            + ". 관측일은 발표일·조회시각과 다르며 미수집은 0으로 채우지 않습니다.")
+    return ["**유동성·연준 · 관측실 FRED 지표**", "",
+            "대상 | 수준 | 직전 관측 대비 | 관측일 · 주기 | 상태 | 출처", "--- | --- | --- | --- | --- | ---",
+            *body, "", note, ""]
+
+
 def _local_closed(frame, zone, close, now):
     """Completed local sessions only: earlier dates, or today after close + 30 minutes."""
     import math

@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 import requests
 
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.performance import count_event, measure, submit_with_context
+from stock_lab_core.earnings_discovery_performance import observed_get, observed_lock, coverage_event
 
 register_loaded_source(__name__, __file__)
 
@@ -118,14 +120,16 @@ class _Text(HTMLParser):
 def _check_source(spec, now):
     """One bounded HTML check per issuer; failures have a short cooldown."""
     url = spec["url"]
-    with _LOCK:
+    with observed_lock(_LOCK, "earnings_collection.ir_schedule.cache"), measure("external_data", "earnings_collection.ir_schedule.cache_lookup"):
         cached = _CACHE.get(url)
         if cached and cached[1] <= now.isoformat() and time.monotonic() - cached[0] < cached[2]:
+            count_event("earnings_collection.ir_schedule.cache." + ("hit" if cached[3]["status"] == "connected" else "failure_hit"))
             return dict(cached[3], attempted=False, from_cache=True)
+    count_event("earnings_collection.ir_schedule.cache.miss")
     check = dict(attempted=True, from_cache=False, checked_at=now.isoformat(),
                  http_status=None, status="unavailable", reason="")
     try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=False,
+        response = observed_get("ir_schedule", requests.get, url, timeout=REQUEST_TIMEOUT, allow_redirects=False,
                                 headers={"User-Agent": "StockLab-Earnings/1.0"})
         try:
             check["http_status"] = response.status_code
@@ -134,18 +138,19 @@ def _check_source(spec, now):
             elif len(response.content) > 2_000_000:
                 check["reason"] = "page_too_large"
             else:
-                text = " ".join(" ".join(_Text(response.text).parts).split()).casefold()
-                if all(fragment.casefold() in text for fragment in spec["evidence"]):
-                    check["status"] = "connected"
-                else:
-                    check["reason"] = "announcement_evidence_changed"
+                with measure("external_data", "earnings_collection.ir_schedule.transform"):
+                    text = " ".join(" ".join(_Text(response.text).parts).split()).casefold()
+                    if all(fragment.casefold() in text for fragment in spec["evidence"]):
+                        check["status"] = "connected"
+                    else:
+                        check["reason"] = "announcement_evidence_changed"
         finally:
             response.close()
     except requests.RequestException as exc:
         check["reason"] = "request_failed:" + type(exc).__name__
     except (ValueError, TypeError, AttributeError):
         check["reason"] = "invalid_response"
-    with _LOCK:
+    with observed_lock(_LOCK, "earnings_collection.ir_schedule.cache"), measure("external_data", "earnings_collection.ir_schedule.cache_store"):
         _CACHE[url] = (time.monotonic(), now.isoformat(),
                        CACHE_TTL if check["status"] == "connected" else FAILURE_TTL, dict(check))
     return check
@@ -239,13 +244,16 @@ def load_official_earnings(tickers, now=None, *, refresh=True):
             if ticker not in grouped.setdefault(canonical, []):
                 grouped[canonical].append(ticker)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        futures = [pool.submit(_issuer, ticker, requested, now, refresh) for ticker, requested in grouped.items()]
-        results = [future.result() for future in futures]
+        futures = [submit_with_context(pool, _issuer, ticker, requested, now, refresh) for ticker, requested in grouped.items()]
+        with measure("external_data", "earnings_collection.ir_schedule.ordered_join_wait"):
+            results = [future.result() for future in futures]
     events = sorted([row for rows, _ in results for row in rows], key=lambda row: (row["date"], row["ticker"]))
     sources = [source for _, source in results]
     if len(supplied) > MAX_TICKERS:
+        count_event("earnings_collection.ir_schedule.input_cap_reached")
         sources.append(dict(name="Earnings collection limit", status="unavailable", reason="ticker_limit",
                             coverage_status="not_collected", next_schedule_status="unconfirmed"))
+    coverage_event("ir_schedule", events=events, sources=sources)
     return dict(events=events, sources=sources, connected=any(s["status"] == "connected" for s in sources),
                 recent_earnings=[deepcopy(row) for row in events if row["event_status"] == "released" and
                                  (now.date() - date.fromisoformat(row["date"])).days <= 30],

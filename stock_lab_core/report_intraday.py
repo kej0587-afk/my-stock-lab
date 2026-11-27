@@ -164,9 +164,12 @@ def extended_quote_text(context, ticker, now):
         detail = f" · 직전 정규장 종가({obs.get('previous_date', '날짜 미확인')}) 대비"
     if basis.get("base_date") and basis.get("postmarket"):
         detail = f" · 기준 종가 {basis['base_date']}" + detail
+    close = number(obs.get("previous_price"))
+    close_text = f" · 직전 정규장 종가 USD {close:.2f}" if close is not None else ""
+    source = "Yahoo" if str(obs.get("source", "")).startswith("Yahoo") else "출처 미확인"
     return (f"{obs.get('kind', '시간외')} {move}"
             + (f" (USD {price:.2f})" if price is not None else "")
-            + detail + f" · {kst_time(obs['as_of'])}" + note)
+            + detail + close_text + f" · 체결 {kst_time(obs['as_of'])} · {source}" + note)
 
 
 def us_extended_summary(context, now):

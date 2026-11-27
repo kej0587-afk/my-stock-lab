@@ -37,6 +37,8 @@ import os
 import time
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
+from contextvars import ContextVar
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore
 
@@ -46,7 +48,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
-from stock_lab_core.performance import measure, submit_with_context, timed_call
+from stock_lab_core.performance import measure, submit_with_context, timed_call, count_event, count_distinct_event
 from stock_lab_core.kr_flow_history import load_kr_flow_history
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.http_body import read_response_body
@@ -54,6 +56,17 @@ from stock_lab_core.flow_symbols import flow_listing_event, resolve_flow_symbol
 
 
 _KR_FLOW_HISTORY_SLOTS = BoundedSemaphore(4)
+_FLOW_BATCH_PROBE = ContextVar("flow_batch_probe", default=None)
+
+
+@contextmanager
+def _flow_wait(lock, name):
+    with measure("prices", name):
+        lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -1479,7 +1492,9 @@ def _fetch_alpha_vantage_ohlc(ticker: str) -> pd.DataFrame:
             "&outputsize=full&datatype=json"
             f"&apikey={_AV_API_KEY}"
         )
-        resp = requests.get(url, timeout=15)
+        count_event("flow.av.http_request")
+        with measure("prices", "flow_av_http"):
+            resp = requests.get(url, timeout=15)
         raw = resp.json().get("Time Series (Daily)", {})
         if not raw:
             return pd.DataFrame()
@@ -1501,7 +1516,7 @@ def _fetch_alpha_vantage_ohlc(ticker: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 @timed_call("prices")
-@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty, trace_name="flow_fdr")
 def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
     """FinanceDataReader로 단일 티커 OHLCV 취득.
 
@@ -1539,6 +1554,7 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
             deadline = time.monotonic() + 6
             # Cached work must not emit progress UI into an external container.
             with measure("prices", "flow_overseas_fallback"):
+                count_event("flow.fallback.http_request")
                 with requests.get(
                     f"https://query2.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol, safe='')}",
                     params={"period1": int(time.mktime(pd.Timestamp(start).timetuple())),
@@ -1553,7 +1569,9 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
             df = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close",
                                     "volume": "Volume", "adjclose": "Adj Close"})
         else:
-            df = fdr.DataReader(fdr_symbol, start)
+            count_event("flow.fdr.provider_call")
+            with measure("prices", "flow_fdr_provider"):
+                df = fdr.DataReader(fdr_symbol, start)
         if df is None or df.empty:
             return pd.DataFrame()
 
@@ -1598,25 +1616,44 @@ def _money_flow_download_tickers(tickers):
 def download_money_flow_prices(tickers) -> pd.DataFrame:
     yf_tickers = _money_flow_download_tickers(tickers)
     if not yf_tickers:
+        count_event("flow.batch.no_remote_symbols")
         return pd.DataFrame()
-    return _download_money_flow_prices_cached(yf_tickers)
+    count_event("flow.batch.lookup")
+    marker = [False]
+    token = _FLOW_BATCH_PROBE.set(marker)
+    try:
+        result = _download_money_flow_prices_cached(yf_tickers)
+        if not marker[0]:
+            count_event("flow.batch.cache_reuse")
+        return result
+    finally:
+        _FLOW_BATCH_PROBE.reset(token)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 def _download_money_flow_prices_cached(tickers) -> pd.DataFrame:
     # Cache the exact provider request, not input order or repeated memberships.
-    with YAHOO_HISTORY_LOCK:
-        return yf.download(
-            list(tickers),
-            period="1y",
-            interval="1d",
-            progress=False,
-            group_by="ticker",
-            threads=min(4, max(1, len(tickers))),
-            auto_adjust=False,
-            timeout=8,
-            **yahoo_session_kwargs(),
-        )
+    marker = _FLOW_BATCH_PROBE.get()
+    if marker is not None:
+        marker[0] = True
+    count_event("flow.batch.cache_miss")
+    with _flow_wait(YAHOO_HISTORY_LOCK, "flow_batch_lock_wait"):
+        count_distinct_event("flow.batch.provider_key", tickers)
+        for ticker in tickers:
+            count_distinct_event("flow.batch.provider_symbol", ticker)
+        count_event("flow.batch.provider_call")
+        with measure("prices", "flow_batch_provider"):
+            return yf.download(
+                list(tickers),
+                period="1y",
+                interval="1d",
+                progress=False,
+                group_by="ticker",
+                threads=min(4, max(1, len(tickers))),
+                auto_adjust=False,
+                timeout=8,
+                **yahoo_session_kwargs(),
+            )
 
 
 def _clear_money_flow_price_cache(tickers=None):
@@ -1667,20 +1704,26 @@ def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     suffix = _money_flow_suffix(ticker)
     listing = flow_listing_event(ticker)
     if listing:
+        count_event("flow.ohlc.listing_excluded")
         frame = pd.DataFrame()
         frame.attrs["listing_event"] = listing
         return frame
 
     if _is_krx_money_flow_ticker(ticker):
         # FDR retries the same feed without a timeout; do not re-enter it here.
-        return load_kr_flow_history(ticker)
+        count_event("flow.ohlc.kr_cache_access")
+        with measure("prices", "flow_ohlc_kr_access"):
+            return load_kr_flow_history(ticker)
 
     if suffix == "T" and _FDR_AVAILABLE:
         out = _fetch_fdr_ohlc(ticker)
         if not out.empty:
+            count_event("flow.ohlc.fdr_result")
             return out
 
-    out = _extract_ohlc_from_yf(data, ticker)
+    with measure("prices", "flow_ohlc_batch_extract"):
+        out = _extract_ohlc_from_yf(data, ticker)
+    count_event("flow.ohlc.batch_present" if not out.empty else "flow.ohlc.batch_missing")
 
     if out.empty and _FDR_AVAILABLE:
         # .T / KRX 알파벳코드 / fdr 전용 심볼에 한해 fdr 시도
@@ -2000,7 +2043,7 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None, download_tick
     kr_tickers = [ticker for ticker in tickers if _is_krx_money_flow_ticker(ticker)]
 
     def load_kr(ticker):
-        with _KR_FLOW_HISTORY_SLOTS:
+        with _flow_wait(_KR_FLOW_HISTORY_SLOTS, "flow_kr_slot_wait"):
             return get_money_flow_ohlc(data, ticker)
 
     def collect(futures):

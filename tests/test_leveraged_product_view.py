@@ -105,18 +105,29 @@ for t in ["SOXL", "RAM", "BITX", "418660.KS"]:
     assert len(app.table) == 4 and len(app.dataframe) == 4
 
 
-def test_historical_contract_does_not_mask_calculation_changes():
-    import ast
-    from pathlib import Path
-    import subprocess
-    from tests.leveraged_view_ast_contract import before_leveraged_product_view
-    root = Path(__file__).resolve().parents[1]
-    before = ast.parse(subprocess.check_output(["git", "show", "21428d1b:app.py"], cwd=root, encoding="utf-8-sig"))
-    after = ast.parse((root / "app.py").read_text(encoding="utf-8-sig"))
-    for name in ("render_leveraged_etf_precision_panel", "render_precision_candlestick_chart"):
-        old = next(n for n in before.body if isinstance(n, ast.FunctionDef) and n.name == name)
-        new = next(n for n in after.body if isinstance(n, ast.FunctionDef) and n.name == name)
-        assert ast.dump(before_leveraged_product_view(new)) == ast.dump(old)
-        altered = deepcopy(new)
-        altered.body += ast.parse("rr = 999").body
-        assert ast.dump(before_leveraged_product_view(altered)) != ast.dump(old)
+def test_historical_contract_does_not_mask_calculation_changes(app_module, monkeypatch):
+    import socket
+    from tests.test_decision_refactor_parity import run_scenario, scenarios
+    monkeypatch.setattr(socket.socket, 'connect', lambda *a, **kw: pytest.fail('display must be offline'))
+    monkeypatch.setattr(app_module, 'lookup_yfinance_display_name', lambda ticker: ticker)
+    cases = scenarios()
+    before = {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases}
+    baskets = {
+        'SOXL': [row('SOXX', '기초 ETF'), row('SMH', '기초 ETF'), row('NVDA', '대표축')],
+        'RAM': [row('DRAM', '기초 ETF'), row('MU', '대표축')],
+        'BITX': [row('BTC-USD', '기초 자산'), row('IBIT', '기초 ETF')],
+        '418660.KS': [row('SOXX', '기초 ETF'), row('USDKRW=X', '시장 환경')],
+    }
+    original = deepcopy(baskets)
+    for ticker, rows in baskets.items():
+        ui = UI()
+        assert render_product_basis(ui, ticker)
+        render_watch_basis(ui, ticker, rows)
+        displayed = ui.tables[-1]
+        assert [r['Ticker'] for r in displayed] == [r['Ticker'] for r in rows]
+        assert [r['판정'] for r in displayed] == [r['판정'] for r in rows]
+        assert [r['5봉 기준*'] for r in displayed] == [r['1W'] for r in rows]
+        displayed[0]['판정'] = 'caller edit'
+        assert channel_basis_note(ticker)
+    assert baskets == original
+    assert {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases} == before

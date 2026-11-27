@@ -18,6 +18,8 @@ import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+from stock_lab_core.performance import measure
+from stock_lab_core.report_io_audit import http_call, lock_wait, cache_event, provider_label
 
 from stock_lab_core.earnings_sources import (
     VERIFIED_AT as EARNINGS_VERIFIED_AT, clear_earnings_source_cache, load_official_earnings,
@@ -77,7 +79,7 @@ class _InvalidCalendar(ValueError):
 
 
 def _request(url):
-    response = requests.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=False,
+    response = http_call(provider_label(url), requests.get, url, timeout=REQUEST_TIMEOUT, allow_redirects=False,
                             headers={"User-Agent": "StockLab-Release-Calendar/1.0"})
     try:
         if response.status_code != 200:
@@ -217,7 +219,7 @@ def _fomc_events(html, now):
 
 
 def _fred_dates(group, now, api_key):
-    response = requests.get(
+    response = http_call("fred_calendar", requests.get,
         FRED_DATES_URL,
         params={"release_id": _FRED_RELEASES[group], "api_key": api_key,
                 "file_type": "json", "include_release_dates_with_no_data": "true",
@@ -393,12 +395,18 @@ def _tesla_source(now):
 
 def _load_source(name, url, parser, now, *, fetch=None, cache_scope=""):
     key = (url, now.year, cache_scope)
-    with _LOCK:
+    provider = "calendar_" + provider_label(url)
+    cache_event(provider, "lookup")
+    with lock_wait(_LOCK, "calendar_cache"):
         cached = _CACHE.get(key)
         if cached and time.monotonic() - cached[0] < CACHE_TTL and cached[1] <= now.isoformat():
+            cache_event(provider, "hit")
             return deepcopy(cached[2]), {"name": name, "status": "connected", "reason": ""}
+    cache_event(provider, "miss")
     try:
-        events = parser(fetch() if fetch is not None else _request(url))
+        payload = fetch() if fetch is not None else _request(url)
+        with measure("official_transform", provider):
+            events = parser(payload)
     except _InvalidCalendar as exc:
         reason = str(exc)
     except requests.RequestException as exc:
@@ -406,7 +414,7 @@ def _load_source(name, url, parser, now, *, fetch=None, cache_scope=""):
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
         reason = "invalid_response"
     else:
-        with _LOCK:
+        with measure("official_store", provider), lock_wait(_LOCK, "calendar_cache"):
             _CACHE[key] = (time.monotonic(), now.isoformat(), deepcopy(events))
             _CACHE.move_to_end(key)
             while len(_CACHE) > 16:

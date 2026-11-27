@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from threading import Lock
 from time import monotonic
 from urllib.parse import urlsplit
@@ -10,6 +12,104 @@ from stock_lab_core.performance import count_event, measure
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
+
+# This context is carried into requests.Session.send by sec_rate's existing hook.
+# get_calls include injected transports; http.attempt counts actual send entries,
+# including redirects, after SEC admission. Neither is a count of TCP packets.
+_http_source = ContextVar("earnings_http_source", default=None)
+_SOURCES = {"sec", "dart", "dart_directory", "ir_schedule", "ir_html", "ir_pdf"}
+
+
+def _source(value):
+    return value if value in _SOURCES else "other"
+
+
+def response_event(prefix, response):
+    status = getattr(response, "status_code", None)
+    label = str(status) if type(status) is int and 100 <= status <= 599 else "unknown"
+    count_event(prefix + ".response." + label)
+
+
+def transport_response_event(response, *, prefix=None):
+    source = _http_source.get()
+    if source is not None or prefix is not None:
+        # An outer Session.send returns the final redirected response. Its first
+        # history entry is this send's response; recursive sends record their own.
+        history = getattr(response, "history", None)
+        own_response = history[0] if isinstance(history, list) and history else response
+        if source is not None:
+            response_event("earnings_collection." + source + ".http", own_response)
+        if prefix is not None:
+            response_event(prefix, own_response)
+    return response
+
+
+def observed_get(source, get, *args, **kwargs):
+    source = _source(source)
+    prefix = "earnings_collection." + source
+    count_event(prefix + ".get_calls")
+    token = _http_source.set(source)
+    try:
+        with measure("external_data", prefix + ".provider_response"):
+            response = get(*args, **kwargs)
+        response_event(prefix + ".get", response)
+        return response
+    except Exception:
+        count_event(prefix + ".get.transport_error")
+        raise
+    finally:
+        _http_source.reset(token)
+
+
+@contextmanager
+def transport_measurement():
+    """Called only at the existing Session.send boundary, after SEC admission."""
+    source = _http_source.get()
+    if source is None:
+        yield
+        return
+    prefix = "earnings_collection." + source + ".http"
+    count_event(prefix + ".attempt")
+    try:
+        with measure("external_data", prefix + ".send"):
+            yield
+    except Exception:
+        count_event(prefix + ".transport_error")
+        raise
+
+
+@contextmanager
+def observed_lock(lock, name):
+    """Time acquisition only; preserve lock lifetime and reentrancy."""
+    with measure("external_data", name + ".lock_wait"):
+        lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def dart_status_event(status):
+    allowed = {"000", "010", "011", "012", "013", "020", "021", "100", "101", "800", "900", "901"}
+    count_event("earnings_collection.dart.api_status." + (status if type(status) is str and status in allowed else "other"))
+
+
+def coverage_event(source, *, events=(), results=(), sources=()):
+    """Aggregate row coverage; no issuer identities, URLs or raw reason strings."""
+    label = source if source in {"filing", "ir_schedule", "ir_result", "merged"} else "other"
+    prefix = "earnings_collection.coverage." + label
+    for name, rows in (("events", events), ("results", results), ("sources", sources)):
+        count_event(prefix + "." + name, len(rows))
+    for status in ("connected", "unavailable", "skipped", "fallback"):
+        count_event(prefix + "." + status, sum(row.get("status") == status for row in sources))
+    for market in ("KR", "US"):
+        selected = [row for row in sources if ("KR" if str(row.get("ticker", "")).endswith((".KS", ".KQ")) else "US") == market]
+        count_event(prefix + "." + market + ".time_budget_skipped", sum(
+            row.get("reason") in {"collection_time_budget", "request_deadline"}
+            or row.get("financial_reason") == "collection_time_budget" for row in selected))
+    for status in ("reported", "missing", "deferred"):
+        count_event(prefix + ".metrics." + status, sum(
+            metric.get("status") == status for row in results for metric in row.get("metrics", {}).values()))
 
 
 class FilingProbe:
@@ -37,7 +137,8 @@ class FilingProbe:
         # uses stream=False, so its get includes body transfer. Body span is separate
         # only for the streaming requests. Keep kwargs/response identity untouched.
         with measure("external_data", "earnings_discovery.http_get." + provider):
-            return self.get(url, **kwargs)
+            source = "dart_directory" if provider == "dart" and urlsplit(url).path == "/api/corpCode.xml" else provider
+            return observed_get(source, self.get, url, **kwargs)
 
     def worker(self, queued_at, collect, ticker):
         wait_us = max(0, round((monotonic() - queued_at) * 1_000_000))

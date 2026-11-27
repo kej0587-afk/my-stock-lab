@@ -80,6 +80,13 @@ def test_download_cache_keys_exact_provider_input_and_preserves_output_and_clear
             "threads": 2, "auto_adjust": False, "timeout": 8,
         })
         assert trace.report()["functions"][0]["calls"] == 3
+        events = trace.report()['transport_events']
+        assert events['flow.batch.lookup'] == 3
+        assert events['flow.batch.cache_reuse'] == 2
+        assert events['flow.batch.cache_miss'] == events['flow.batch.provider_call'] == 1
+        assert events['flow.batch.provider_key.unique'] == 1
+        assert events['flow.batch.provider_symbol.unique'] == 2
+        assert 'AMD' not in str(trace.report())
         for result in results:
             pd.testing.assert_frame_equal(result, frame, check_exact=True)
             assert result.attrs == frame.attrs
@@ -119,3 +126,44 @@ def test_repeated_ohlc_wrappers_are_not_repeated_provider_requests(monkeypatch):
         assert sorted(provider_calls) == ["000660.KS", "005930.KS"]
     finally:
         kr_flow_history.load_kr_flow_history.clear()
+
+
+def test_batch_lock_wait_is_separate_from_provider_and_cache_reuse(monkeypatch):
+    from stock_lab_core.performance import PerformanceTrace
+    clock = [0.0]
+    class Lock:
+        def acquire(self): clock[0] += 2
+        def release(self): pass
+    def download(*args, **kwargs):
+        clock[0] += 3
+        return make_price_df()
+    monkeypatch.setattr(money_flow, 'YAHOO_HISTORY_LOCK', Lock())
+    monkeypatch.setattr(money_flow.yf, 'download', download)
+    monkeypatch.setattr(money_flow, 'yahoo_session_kwargs', lambda: {})
+    money_flow.download_money_flow_prices.clear()
+    try:
+        with PerformanceTrace(clock=lambda: clock[0]) as trace:
+            first = money_flow.download_money_flow_prices(('MSFT',))
+            second = money_flow.download_money_flow_prices(('MSFT',))
+        pd.testing.assert_frame_equal(first, second, check_exact=True)
+        rows = {r['name']:r for r in trace.report()['functions']}
+        assert rows['flow_batch_lock_wait']['total_seconds'] == 2
+        assert rows['flow_batch_provider']['total_seconds'] == 3
+        assert trace.report()['transport_events']['flow.batch.cache_reuse'] == 1
+        assert money_flow._FLOW_BATCH_PROBE.get() is None
+    finally:
+        money_flow.download_money_flow_prices.clear()
+
+
+def test_request_identity_aggregate_is_thread_safe_bounded_and_run_local():
+    from concurrent.futures import ThreadPoolExecutor
+    from stock_lab_core.performance import PerformanceTrace, count_distinct_event, submit_with_context
+    with PerformanceTrace() as trace:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            jobs = [submit_with_context(pool, count_distinct_event, 'test.requests', 'private-key') for _ in range(12)]
+            for job in jobs: job.result()
+    assert trace.report()['transport_events'] == {'test.requests.unique':1, 'test.requests.repeat':11}
+    assert 'private-key' not in str(trace.report())
+    with PerformanceTrace() as other:
+        for i in range(4097): count_distinct_event('bounded', i)
+    assert other.report()['transport_events'] == {'bounded.unique':4096, 'bounded.overflow':1}

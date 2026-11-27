@@ -187,12 +187,20 @@ def test_collection_adds_daily_only_no_live_rotation_or_macro_changes(monkeypatc
     monkeypatch.setattr(report_live, "load_us_live_frames", lambda tickers: live_calls.append(tickers) or {})
     monkeypatch.setattr(report_quotes, "load_report_quotes", lambda tickers, **kwargs: quote_calls.append(tickers) or {})
     monkeypatch.setattr(report_reference, "load_macro_reference_frame", lambda *args: pd.DataFrame())
+    # PR #122 reuses the observatory FRED loader (same cache) in the report; keep it off the network here.
+    from stock_lab_core import macro_monitor
+    fred_calls = []
+    monkeypatch.setattr(macro_monitor, "load_macro_series",
+                        lambda symbol, *args: fred_calls.append(symbol) or (pd.Series(dtype=float), "test stub"))
     before = deepcopy((market_observation.ROTATION_UNIVERSE, report_prices.MACRO_SYMBOLS))
     rows = [{"티커": "SOXX", "보유량": 1, "현재비중": 10, "게이트상태": "방어우선"}]
     original = deepcopy(rows)
     ctx = collect_report_context(rows, now=datetime.fromisoformat("2026-11-03T15:00:00-05:00"),
                                  economic_releases=[], calendar={"events": [], "sources": []})
     extra = set(REPORT_ONLY_DAILY)
+    from stock_lab_core.report_dashboard import OBSERVATORY_FRED
+    assert sorted(fred_calls) == sorted(OBSERVATORY_FRED)
+    assert ctx["observatory_fred_meta"]["connected"] == 0
     assert len(calls) == 1 and extra <= set(calls[0])
     assert live_calls and quote_calls
     assert all(not extra.intersection(call) for call in live_calls + quote_calls)

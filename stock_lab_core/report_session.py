@@ -10,6 +10,12 @@ KST = ZoneInfo("Asia/Seoul")
 NEW_YORK = ZoneInfo("America/New_York")
 MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 후", "holiday": "휴장일", "unknown": "거래일정 미확인"}
 
+# Display-only Nasdaq/NYSE Arca window; not execution hours for every venue.
+# Confirmed for this date only, never inferred from an early regular close:
+# https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2026-69
+# https://www.nyse.com/trade/hours-calendars
+_CONFIRMED_SHORT_POSTMARKET = {"2026-11-27": (time(13), time(17))}
+
 
 def kst_now(now):
     return now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
@@ -20,6 +26,7 @@ def us_extended_session(now):
     from stock_lab_core.report_exchange_clock import session_on_date
     local = kst_now(now).astimezone(NEW_YORK)
     day, minute = local.date(), local.hour * 60 + local.minute
+    confirmed = _CONFIRMED_SHORT_POSTMARKET.get(day.isoformat())
     if minute >= 1200 or minute < 240:
         target = day + timedelta(days=1) if minute >= 1200 else day
         start_day = target - timedelta(days=1)
@@ -27,6 +34,12 @@ def us_extended_session(now):
     elif minute < 570:
         target = day
         start, end, label = datetime.combine(day, time(4), NEW_YORK), datetime.combine(day, time(9, 30), NEW_YORK), "프리마켓"
+    elif confirmed and local.time() >= confirmed[0]:
+        target = day
+        start, end = (datetime.combine(day, value, NEW_YORK) for value in confirmed)
+        if local >= end:
+            return {}
+        label = "애프터마켓"
     elif minute >= 960:
         target = day
         start, end, label = datetime.combine(day, time(16), NEW_YORK), datetime.combine(day, time(20), NEW_YORK), "애프터마켓"
@@ -35,9 +48,9 @@ def us_extended_session(now):
     session = session_on_date("US", target)
     if not session["known"] or not session["trading_day"]:
         return {}
-    # A regular-session calendar does not certify extended venue hours on a
-    # shortened day. Display the known regular close, not an invented 20:00 end.
-    if label == "애프터마켓" and session["close"].tz_convert(NEW_YORK).time() != time(16):
+    # Require a matching regular close as well as the explicit venue window.
+    # Unregistered short days still cannot inherit a normal 16:00-20:00 window.
+    if label == "애프터마켓" and session["close"].tz_convert(NEW_YORK).time() != start.time():
         return {}
     return {"label": label, "date": target.isoformat(), "start": start.isoformat(), "end": end.isoformat()}
 

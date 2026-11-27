@@ -245,18 +245,19 @@ def test_year_cache_reused_across_seconds_consumers_and_tickers(monkeypatch):
     assert loader.call_count == 3
 
 
-@pytest.mark.parametrize("now,expected", [
-    ("2026-11-20T17:00-05:00", "애프터마켓"),
-    ("2026-11-27T13:01-05:00", ""),
-    ("2026-11-27T16:01-05:00", ""),
+@pytest.mark.parametrize("now,end", [
+    ("2026-11-20T17:00-05:00", "2026-11-20T20:00:00-05:00"),
+    ("2026-11-27T13:01-05:00", "2026-11-27T17:00:00-05:00"),
+    ("2026-11-27T16:01-05:00", "2026-11-27T17:00:00-05:00"),
+    ("2026-11-27T17:00-05:00", ""),
 ])
-def test_regular_close_does_not_certify_short_day_extended_venue_hours(now, expected):
+def test_confirmed_short_day_extended_window_keeps_regular_state_closed(now, end):
     now = pd.Timestamp(now).to_pydatetime()
     assert market_session_states(now)["US"]["phase"] == "closed"
     window = us_extended_session(now)
-    if expected:
-        assert window["label"] == expected
-        assert window["end"] == "2026-11-20T20:00:00-05:00"
+    if end:
+        assert window["label"] == "애프터마켓"
+        assert window["end"] == end
     else:
         assert window == {}
 

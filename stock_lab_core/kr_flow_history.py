@@ -24,6 +24,7 @@ _BODY_BUDGET_SECONDS = 6
 _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 _connections = ContextVar("kr_history_connections", default=None)
 _request_scope = ContextVar("kr_history_request_scope", default=None)
+_request_audit = ContextVar("kr_history_request_audit", default=None)
 _cache_reuse_probe = ContextVar("kr_history_cache_reuse_probe", default=None)
 _request_generation = object()
 
@@ -44,10 +45,12 @@ def reuse_kr_history_requests():
         yield
         return
     token = _request_scope.set(({}, Lock()))
+    audit_token = _request_audit.set((set(), Lock()))
     count_event("kr_history_scope.enabled_v1")
     try:
         yield
     finally:
+        _request_audit.reset(audit_token)
         _request_scope.reset(token)
 
 
@@ -117,6 +120,32 @@ def _slice(frame, start, end):
     return out
 
 
+@contextmanager
+def _wait_for_request(lock):
+    # Measure acquisition only, never the provider work while holding the lock.
+    with measure("prices", "kr_history_lock_wait"):
+        lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _record_request(code, start, end):
+    audit = _request_audit.get()
+    if audit is None:
+        count_event("kr_history.request_unscoped")
+        return
+    seen, lock = audit
+    # Run-local keys never leave the process. Only aggregate counts are exported.
+    key = (_URL, code, start.value, end.value, "day", (end-start).days+2, "0")
+    with lock:
+        repeated = key in seen
+        seen.add(key)
+    # Repeated attempts can be retries/expiry/clear, not necessarily removable.
+    count_event("kr_history.request_repeat" if repeated else "kr_history.request_unique")
+
+
 class KrFlowHistoryReader:
     def __init__(self, *, request=None, clock=time.monotonic):
         self._request = request or _request_history
@@ -178,7 +207,7 @@ class KrFlowHistoryReader:
             entry = entries[key]
         # Different keys never wait on one another. The original bounded I/O
         # and cooldown remain in _read_resolved. A failed result is not memoized.
-        with entry["lock"]:
+        with _wait_for_request(entry["lock"]):
             if (generation is _request_generation and entry["frame"] is not None
                     and 0 <= self._clock() - entry["at"] < 900):
                 count_event("kr_history_scope.reuse")
@@ -203,16 +232,20 @@ class KrFlowHistoryReader:
             # Same adjusted daily feed as pykrx, without its unbounded HTTP call.
             with measure("prices", "kr_history_http"):
                 count_event("kr_history.request")
-                response = self._request(
-                    _URL, params={"symbol": code, "timeframe": "day",
-                                  "count": (end - start).days + 2, "requestType": "0"},
-                    headers={"User-Agent": "StockLab/1.0", "Referer": "https://finance.naver.com/"},
-                    timeout=_TIMEOUT, stream=True,
-                )
+                _record_request(code, start, end)
+                with measure("prices", "kr_history_headers"):
+                    response = self._request(
+                        _URL, params={"symbol": code, "timeframe": "day",
+                                      "count": (end - start).days + 2, "requestType": "0"},
+                        headers={"User-Agent": "StockLab/1.0", "Referer": "https://finance.naver.com/"},
+                        timeout=_TIMEOUT, stream=True,
+                    )
                 response.raise_for_status()
-                body = _read_body(response, deadline, self._clock)
+                with measure("prices", "kr_history_body"):
+                    body = _read_body(response, deadline, self._clock)
                 count_event("kr_history.response")
-            frame = parse_history(body, start, end)
+            with measure("prices", "kr_history_parse"):
+                frame = parse_history(body, start, end)
         except (requests.RequestException, TransportError, OSError, ElementTree.ParseError, ValueError) as exc:
             count_event("kr_history.unavailable")
             with self._lock:

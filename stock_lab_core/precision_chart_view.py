@@ -68,6 +68,102 @@ def prepare_chart_layers(frame, *, show_patterns, show_channel, show_signals,
     return structure, patterns, channel, guides
 
 
+def prepare_analysis(frame, ticker, decision, timeframe, *, provisional, show_patterns,
+                     show_channel, show_signals, load_structure, detect_patterns, build_trendlines):
+    """Shared display/export snapshot, independent of the interval picker and plotting."""
+    from stock_lab_core.chart_structure import latest_completed_chart_session, qualify_chart_events
+    from stock_lab_core.execution_readiness import precision_display_context
+    structure, patterns, channel, guides = prepare_chart_layers(
+        frame, show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
+        load_structure=load_structure, detect_patterns=detect_patterns,
+        build_trendlines=build_trendlines, provisional_last=provisional)
+    context = dict(precision_display_context(decision or {}),
+                   chart_expected_close=latest_completed_chart_session(ticker))
+    events = qualify_chart_events(structure, context, timeframe=timeframe,
+                                  provisional_last=provisional) if show_signals else []
+    if timeframe == "intraday":
+        for event in events:
+            event.update(execution_allowed=False, execution="선택 분봉 구조 관찰 · 운영 매수 허용 아님")
+    snapshot = {"channel": channel, "events": events, "patterns": patterns,
+                "basis": structure.get("basis"), "last_bar": structure.get("last_bar"), "timeframe": timeframe,
+                "decision_asof": context.get("chart_price_asof"), "expected_close": context.get("chart_expected_close"),
+                "provisional_last": provisional}
+    return structure, patterns, channel, guides, context, events, snapshot
+
+
+def _period_key(value):
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return int(digits) if digits else 0
+
+
+def apply_display_averages(fig, frame, ma_lines, overlay_lines):
+    """Replace only plotted MAs. Never rewrite calculation-frame MA columns."""
+    colors = ("#22c55e", "#fbbf24", "#60a5fa", "#f472b6", "#94a3b8", "#a78bfa")
+    fig.data = tuple(t for t in fig.data if not str(t.name or "").startswith("MA"))
+    # A str key is already a display name with its unit (e.g. "240주선"); an int key is the bar-unit MA.
+    for i, (period, values) in enumerate(sorted(ma_lines.items(), key=lambda kv: _period_key(kv[0]))):
+        fig.add_trace(go.Scatter(x=frame.index, y=values.reindex(frame.index),
+                                name=period if isinstance(period, str) else f"MA{period}",
+                                mode="lines", line=dict(color=colors[i % len(colors)], width=1.4)))
+    for i, (period, values) in enumerate(sorted(overlay_lines.items())):
+        fig.add_trace(go.Scatter(x=frame.index, y=values.reindex(frame.index), name=f"일봉 {period}일선",
+                                mode="lines", line=dict(color=colors[i % len(colors)], width=1.2,
+                                                       dash="dash", shape="hv")))
+
+
+def intraday_volume_signals(frame):
+    """Selected-bar volume only; daily HVY/HVQ classifications do not apply."""
+    volume = pd.to_numeric(frame["Volume"], errors="coerce").where(lambda x: x >= 0)
+    mean = volume.rolling(50, min_periods=50).mean()
+    up = frame.Close.ge(frame.Open)
+    return pd.DataFrame({"volume": volume, "volume_ma": mean, "rvol": volume / mean.where(mean > 0),
+                         "signal": ["선택 봉 거래량" if pd.notna(v) else "UNAVAILABLE" for v in volume],
+                         "color": ["#22c55e" if v else "#ef4444" for v in up]}, index=frame.index)
+
+
+def intraday_display_axis(fig, frame):
+    """Ordinal bars keep overnight gaps compact without ambiguous year-less categories.
+
+    Convert every price-layer coordinate together, including shapes/anchors/events.
+    The frame is display-only; no changes to analytical prices or timestamps.
+    """
+    import numpy as np
+    times = pd.DatetimeIndex(frame.index)
+    stamps = times.as_unit("ns").asi8
+    positions = np.arange(len(times), dtype=float)
+
+    def position(value):
+        stamp = pd.Timestamp(value)
+        if times.tz is None and stamp.tz is not None:
+            stamp = stamp.tz_localize(None)
+        elif times.tz is not None and stamp.tz is None:
+            stamp = stamp.tz_localize(times.tz)
+        return float(np.interp(stamp.value, stamps, positions))
+
+    for trace in fig.data:
+        if trace.x is not None:
+            labels = [pd.Timestamp(v).strftime("%Y-%m-%d %H:%M") for v in trace.x]
+            trace.hovertext = labels
+            if trace.type == "candlestick":
+                trace.hovertext = [f"{t}<br>O {o:,.2f} H {h:,.2f} L {l:,.2f} C {c:,.2f}"
+                                   for t, o, h, l, c in zip(labels, trace.open, trace.high, trace.low, trace.close)]
+                trace.hoverinfo = "text"
+            elif trace.hovertemplate:
+                import re
+                trace.hovertemplate = re.sub(r"%\{x(?:\|[^}]+)?\}", "%{hovertext}", trace.hovertemplate)
+            trace.x = [position(v) for v in trace.x]
+    for shape in fig.layout.shapes:
+        if shape.xref not in ("paper", "x domain"):
+            shape.x0, shape.x1 = position(shape.x0), position(shape.x1)
+    for annotation in fig.layout.annotations:
+        if annotation.xref not in ("paper", "x domain"):
+            annotation.x = position(annotation.x)
+    visible = min(len(frame), 180)
+    ticks = np.linspace(max(0, len(frame) - visible), len(frame) - 1, min(6, len(frame))).astype(int)
+    fig.update_xaxes(type="linear", rangebreaks=[], range=[len(frame) - visible - .5, len(frame) - .5],
+                     tickmode="array", tickvals=ticks, ticktext=[times[i].strftime("%Y-%m-%d<br>%H:%M") for i in ticks])
+
+
 def arrange_price_level_labels(fig, frame):
     """Move only label boxes; arrows retain the original price coordinates."""
     levels = [a for a in fig.layout.annotations

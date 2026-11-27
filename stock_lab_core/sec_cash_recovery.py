@@ -106,6 +106,10 @@ def parse_cash_release(content, packet):
         return None
     verified = []
     root = _root(content)
+    # Some libxml2 builds stop at the first </html>; a table the parser never saw
+    # could be a conflicting duplicate, so an incomplete parse is held, not trusted.
+    if len(root.xpath('.//table')) != len(re.findall(rb'<table\b', content, re.I)):
+        return None
     capex_tag = anchor['provenance']['cash_capex']['facts'][0]['tag']
     for table in root.xpath('.//table')[:160]:
         if table.xpath('.//table') or 'Net cash provided' not in _text(table):

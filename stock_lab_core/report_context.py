@@ -87,6 +87,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     us_quotes = quote_data.get("US", {})
     # A response fetched after collection starts is not a future quote.
     quote_now = max(now, stamp(quote_data.get("retrieved_at")) or now)
+    from stock_lab_core.report_generation_performance import record_quote_observations
+    record_quote_observations(us_quotes, quote_now)
     if price_frames is None or quote_data.get("KR"):
         frames = repair_kr_report_closes(frames, quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
     pending_closes = [f"{ticker}: {frame.attrs['report_close_pending_date']} 한국 당일 종가 확인 대기 · "
@@ -245,6 +247,14 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"],
               "earnings_collection_scope": earnings_scope,
               "central_bank_results": central_bank_results}
+    from stock_lab_core.report_generation_performance import record_official_coverage
+    record_official_coverage(result)
+    try:
+        from stock_lab_core.report_dashboard import observatory_fred_observations
+        with measure("external_data", "observatory_fred"):
+            result["observatory_fred"], result["observatory_fred_meta"] = observatory_fred_observations(now)
+    except Exception as exc:
+        result["observatory_fred"], result["observatory_fred_meta"] = {}, {"issue": type(exc).__name__}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
     if market_watch_sources is not None:

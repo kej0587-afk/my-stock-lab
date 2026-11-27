@@ -184,7 +184,10 @@ def test_unmatched_result_cannot_reuse_previously_reconciled_values():
     first = build_earnings_pipeline(dict(calendar_events=[e], earnings_results=[actual]), now=NOW)
     second = build_earnings_pipeline(dict(calendar_events=first["events"], earnings_results=[]), now=NOW)
     assert "financial_values" not in second["events"][0]
-    assert earnings_story_lines(second) == []
+    # No reused values; the block now says why the actuals are absent instead of vanishing.
+    story = "\n".join(earnings_story_lines(second))
+    assert "분기(3개월)" not in story and "KRW" not in story
+    assert "연결 0개 · 공식값 없음·미연결 1개 — 정기보고서 확인·재무제표 수치 미수집 1개" in story
 
 
 def test_verified_announcement_and_receipt_of_same_quarter_both_survive():
@@ -219,6 +222,32 @@ def test_collector_caches_accounts_and_rendering_does_not_query(monkeypatch):
         pipeline = build_earnings_pipeline(dict(calendar_events=first["events"], earnings_results=first["results"]), now=NOW)
         earnings_calendar_lines({}, NOW, pipeline=pipeline)
     assert get.call_count == 3
+
+
+def test_persistent_directory_keeps_filing_and_financial_results_identical(monkeypatch):
+    from stock_lab_core import dart_corporate_snapshot as snapshot
+    setup_codes(monkeypatch)
+    snapshot.configure_corporate_store(None)
+    def collect():
+        get = Mock(side_effect=[Response(dart_payload()), Response(COMPANY), Response(payload())])
+        result = sources.collect_filing_earnings([TICKER], NOW, sec_user_agent="", dart_api_key="test", get=get)
+        assert get.call_count == 3  # filing list, company identity and actual accounts are still queried
+        return result
+    live = collect()
+    sources.clear_cache()
+    snapshot.configure_corporate_store(Mock(load=Mock(return_value={
+        "version": 1, "source": snapshot.SOURCE,
+        "retrieved_at": (NOW - timedelta(hours=6)).isoformat(), "codes": {"123456": CORP},
+    })))
+    try:
+        cached = collect()
+    finally:
+        snapshot.configure_corporate_store(None)
+        sources.clear_cache()
+    assert cached["events"] == live["events"] and cached["results"] == live["results"]
+    assert cached["sources"][0]["mapping_attempts"] == 0
+    assert cached["sources"][0]["mapping_source"] == "official_cache"
+    assert live["sources"][0]["mapping_attempts"] == 1
 
 
 @pytest.mark.parametrize("api_status,expected_calls,connected", [("013", 4, True), ("020", 3, False), ("010", 3, False)])
@@ -315,3 +344,22 @@ def test_receipt_keyed_accounts_survive_filing_list_refresh_for_one_day(monkeypa
     sources.collect_filing_earnings([TICKER], NOW + timedelta(hours=23, minutes=50), **args)
     assert get.call_count == 5  # still inside a day: only the filing list again
     assert sources.ACCOUNTS_TTL == 86400 and sources.CACHE_TTL == 600
+
+
+def test_absent_korean_actuals_say_why_instead_of_vanishing():
+    from stock_lab_core.report_dart_earnings import filing_actual_lines, filing_gap_line
+    base = dict(packets=[], generated_at=NOW.isoformat())
+    # Today not calculated: no issuer scope yet.
+    assert "오늘 점검 미계산" in filing_gap_line(dict(base, coverage=dict(summary_available=False, missing=[])))
+    # Time budget and mapping failures count as 일부 조회 실패; no-report as 공식값 없음.
+    missing = [dict(ticker="005930.KS", reason="공식 공시 수집 시간 한도·이번 조회 보류"),
+               dict(ticker="000660.KS", reason="공식 공시 수집 시간 한도·이번 조회 보류"),
+               dict(ticker="373220.KS", reason="조회 기간 내 DART 정기보고서 없음"),
+               dict(ticker="AAPL", reason="공식 공시 수집 시간 한도·이번 조회 보류")]
+    pipeline = dict(base, coverage=dict(summary_available=True, missing=missing))
+    line = filing_gap_line(pipeline)
+    assert line.startswith("한국 공시 실제치: 연결 0개 · 일부 조회 실패 2개 · 공식값 없음·미연결 1개")
+    assert "AAPL" not in line and "공식 공시 수집 시간 한도·이번 조회 보류 2개" in line
+    assert filing_actual_lines(pipeline)[1:3] == ["**한국 공시 실제 실적 · 발표일과 별도**", line]
+    # US-only scope after Today: nothing to say about Korean filings.
+    assert filing_actual_lines(dict(base, coverage=dict(summary_available=True, missing=missing[3:]))) == []

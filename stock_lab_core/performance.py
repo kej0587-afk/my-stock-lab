@@ -98,6 +98,7 @@ class PerformanceTrace:
         self._function_intervals = {}
         self._category_intervals = {}
         self._events = {}
+        self._event_keys = {}
         self.elapsed_seconds = 0.0
         self.status = "not_started"
         self.on_phase = on_phase
@@ -181,7 +182,10 @@ class PerformanceTrace:
             category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
             events = dict(self._events)
         for entry in entries:
-            entry["active_wall_seconds"] = _interval_seconds(function_intervals[(entry["category"], entry["name"])])
+            intervals = function_intervals[(entry["category"], entry["name"])]
+            entry["active_wall_seconds"] = _interval_seconds(intervals)
+            entry["first_started_seconds"] = min(start for start, _ in intervals) - self._started
+            entry["last_finished_seconds"] = max(end for _, end in intervals) - self._started
         entries.sort(key=lambda entry: entry["total_seconds"], reverse=True)
         categories = {}
         for entry in entries:
@@ -216,6 +220,22 @@ def count_event(name, count=1):
     trace = _trace.get()
     if trace is not None:
         trace.count_event(name, count)
+
+
+def count_distinct_event(name, key):
+    """Run-local identity counts; keys are never included in exported reports."""
+    trace = _trace.get()
+    if trace is None:
+        return
+    with trace._lock:
+        seen = trace._event_keys.setdefault(name, set())
+        suffix = "repeat" if key in seen else "unique"
+        if suffix == "unique" and len(seen) >= 4096:
+            suffix = "overflow"
+        else:
+            seen.add(key)
+        event = f"{name}.{suffix}"
+        trace._events[event] = trace._events.get(event, 0) + 1
 
 
 def queue_measurement_details(report):

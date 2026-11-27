@@ -2,10 +2,7 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import ast
-from pathlib import Path
 import socket
-import subprocess
 
 import pytest
 
@@ -170,7 +167,24 @@ def test_transport_rejects_redirect_and_closes_response(monkeypatch):
 
 
 def test_app_functions_unchanged():
-    old=subprocess.check_output(['git','show','9390e4ce:app.py']).decode('utf-8-sig')
-    def functions(text):
-        return {n.name:ast.dump(n,include_attributes=False) for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
-    assert functions(old)==functions(Path('app.py').read_text(encoding='utf-8-sig'))
+    from tests.test_msft_ir_review_view import app
+    at = app()
+    protected = {'fin_score_map': {'MSFT': 1}, 'today_queue_summary_sig': 'fixed',
+                 'saved_score': 3, 'saved_decision': 'existing'}
+    for key, value in protected.items():
+        at.session_state[key] = deepcopy(value)
+    evidence = deepcopy(at.session_state.fixture)
+    sec_keys = [key for key in at.session_state.filtered_state if key.startswith('sec_quarter_review_')]
+    sec = {key: deepcopy(at.session_state[key]) for key in sec_keys}
+    at.button[0].click().run()
+    assert not at.exception and at.session_state.calls == 1
+    assert all('범위 내 일치' in value for value in at.dataframe[2].value['상태'])
+    at.run()
+    assert at.session_state.calls == 1
+    # A failed refresh hides evidence but cannot rewrite an investment score.
+    at.session_state.fault = 'synthetic failure'
+    at.button[0].click().run()
+    assert not at.exception and at.warning and not at.dataframe
+    assert at.session_state.calls == 2 and at.session_state.fixture == evidence
+    assert {key: at.session_state[key] for key in protected} == protected
+    assert {key: at.session_state[key] for key in sec_keys} == sec

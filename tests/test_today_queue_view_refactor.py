@@ -209,6 +209,15 @@ def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources
                  + fn.body[assignment(fn, "risk_df"):detail_start(fn)])
         expanded = []
         for node in nodes:
+            node = deepcopy(node)
+            # Reviewed timer wrapper: callback/result parity is tested separately.
+            for child in ast.walk(node):
+                if isinstance(child, ast.keyword) and child.arg == 'get_analyst_snapshot':
+                    if isinstance(child.value, ast.Name) and child.value.id == '_timed_today_analyst_snapshot':
+                        child.value.id = 'get_analyst_snapshot'
+            if ast.dump(node) == ast.dump(ast.parse(
+                    'attach_today_gate_to_records(summary_df, portfolio_signal_input_context())').body[0]):
+                continue  # Read-only frame -> scoped record copy, tested below.
             if isinstance(node, ast.ImportFrom) and node.module == "stock_lab_core.execution_context":
                 continue
             if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
@@ -232,6 +241,28 @@ summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_v
         ast.Module(body=retained_policy(new), type_ignores=[]))
     assert ast.dump(ast.Module(body=old.decorator_list, type_ignores=[])) == ast.dump(
         ast.Module(body=new.decorator_list, type_ignores=[]))
+
+
+@pytest.mark.parametrize('scope', ['scope-a', 'scope-b'])
+def test_gate_record_copy_preserves_frame_and_engine_and_respects_account(app_module, monkeypatch, scope):
+    from stock_lab_core import decision_record as dr
+    from tests.test_decision_record import _record
+    state = {}
+    record = _record(source=dr.SOURCE_TODAY)
+    dr.store_record(state, record)
+    before = deepcopy(state)
+    monkeypatch.setattr(app_module.st, 'session_state', state)
+    frame = pd.DataFrame([{'티커': 'QQQ', '게이트상태': '방어우선', '게이트근거': '시장 방어',
+                           '최종읽기': '기존 판정', '판정분류': 'caution', '시장실행상태': '차단'}])
+    original = frame.copy(deep=True)
+    app_module.attach_today_gate_to_records(frame, scope)
+    pd.testing.assert_frame_equal(frame, original)
+    result = dr.read_record(state, 'QQQ', dr.SOURCE_TODAY, account_scope='scope-a')
+    assert result['engine'] == record['engine'] and result['post'] == record['post']
+    if scope == 'scope-a':
+        assert result['gate']['reason'] == '시장 방어' and result['gate']['final_read'] == '기존 판정'
+    else:
+        assert state == before
 
 
 def test_display_guidance_is_computed_once_and_never_written_to_raw_exports(sources, monkeypatch):

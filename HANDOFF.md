@@ -1,6 +1,666 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-28 KST. Read before large source files or edits.
+## 2026-11-28 미국 단축장(11-27) 시황 점검 완료
+
+- 08:30~08:45KST 운영 리포트(08:39KST 생성) 확인: 미국 지수 2026-11-27 종가(S&P500 +1.60%, 나스닥 +2.31%, SOX +4.69%,
+  다우 +1.18%)가 외부 마감 기사와 일치, 전 거래일 11-25(추수감사절 건너뜀), '휴장' 오표기·전일 재사용 없음. '단축장' 문구는 없음.
+- 수정: 선물 비교 기준이 16:00 ET 고정 → 거래소 달력 실제 마감(13:00 ET) 사용, 문구도 실제 시각. report 208 통과, 전체 실패 22건 기존과 동일.
+- 운영 확인 남음: 선물 재개(11-30 08:00KST) 후 리포트의 `미국 기준일 13:00 ET 대비` 줄. [기록](docs/maintenance/20261128_us_short_session_check.md)
+
+## 2026-11-28 SOXS/SOXL 운영 검증 완료
+
+- main cf4a89f7 일치/미커밋 없음. 08:42~08:44KST 운영 정밀관측소 확인.
+  두 완료 검토ZIP cf4a89f7/restart_required=False/stale_modules=[]로 Reboot 불필요.
+- SOXS: SOXL 회복·관리표 및 leveraged_precision/recovery/underlying/L3 필드 없음.
+  공통 원판정 CRISIS_PANIC_SELL_OFF, 인버스 분류 유지, 게이트 방어우선/레버리지 시장방어 유지.
+- SOXL: 정상 profile SOXL/회복1/6/LEVERAGED_WATCH_NO_POSITION, 관리표와 기초축 유지.
+  L3 관찰 해당없음(applicable=False): L0 미보유라 보유사이클 없음, axis SOXX.
+  기존 시장방어/방어우선 유지. L3 실제 회차 저장/보유중 운영실행은 검증하지 않음.
+- 차트 아래 A/B/C·신규진입 가격근거·최종 체크 표시 확인, SOXS 단기전략 검증 영역 표시.
+  SOXL 첫 ZIP은08:00 생성분, SOXS 새조회 후 SOXL 재전환 화면도 확인. 개인ZIP Git제외.
+- 코드 변경 없음. 기존95/decision1674 통과 재사용, 관련 잔여 실패0. 전체suite 재실행 아님.
+  [운영 근거/범위](docs/maintenance/20261128_soxs_profile_fix.md). 인계 문서 main 푸시 대상.
+- **Next Task Only:** 동일 고정입력으로 시간외 scalar overlay가 판정·차트·확인축·시황에
+  어떻게 전파되는지 비교. 현재 판정 입력은 유지하고 표시 모순/설계 의도를 먼저 구분한다.
+
+## 2026-11-28 SOXS 프로필 오연결 수정 완료
+
+- main661f8daf 대조/미커밋 없음. app.py 프로필 선택만 수정: SOXS 티커는 미등록 프로필,
+  Direxion/Semiconductor/3X 상품명 fallback은 Bear/Inverse/인버스 제외. SOXL 정상 연결 유지.
+- 잘못된 SOXL 회복표·회복조건·L3 조회를 SOXS에 연결하지 않는다. 인버스 전략 새로 만들지 않음.
+  SOXS 기존 공통 판정으로 복귀하므로 잘못 덮어쓰던 SOXL 전용 문구/필드는 사라진다.
+  시장방어·L3 규칙/예산/회차저장·월적립·점수산식·TTL 수정 없음.
+- 전후: 기존 관련76통과 → 신규 회귀는 수정 전8실패/11통과로 재현 → 수정 후 관련95통과20.12초.
+  최종 decision gate1674통과/0실패/0skip161.343초. 전체suite/운영 UI 재실행 아님.
+  SOXS 보유·미보유 모두 기초축/L3조회 없음, 좋은 기술후보라도 시장방어 후 방어우선 유지.
+- [원인·검증·의도된 변화](docs/maintenance/20261128_soxs_profile_fix.md).
+  코드/테스트/문서 main 푸시 대상. 이번 운영 화면 미검증이며 이전 애프터 결과와 구분한다.
+- **Next Task Only:** 배포된 SOXS/SOXL 정밀 화면·검토ZIP에서 오연결 해소/정상 프로필/시장방어 확인.
+  필요시 직접 Reboot. 가격 overlay 설계 문제는 그 이후 별도 고정입력 비교 대상으로 남긴다.
+
+## 2026-11-28 06시 애프터 운영 확인 완료
+
+- main99bad333 대조/미커밋 없음. 06:08KST 애프터 구간이므로 SOXS 수정 대신 운영 시세 대조 진행.
+  첫 화면 dart_corporate_store import KeyError → 직접 Cloud Reboot → 정상 기동.
+  근본 원인은 서버 전체 로그 미확보로 단정하지 않음. 완료ZIP99bad333/restart_required=False.
+- 정밀 운영 원응답/선택/UI 일치: SOXL 종가36.57/애프터35.89(−1.86%), 체결06:09:44/조회06:10:09KST;
+  GOOGL 종가274.96/애프터275.8889(+0.34%), 체결06:09:15/조회06:09:43KST. 종가체결 둘다03:00:01.
+- 두 종목 자동시황 조회범위 밖 유지. 동일 다운로드 응답의 브리핑 **재생만** 통과,
+  새 운영 전체 시황에 직접 표시됐다는 뜻 아님. 관련108통과6.83초/실패0, 전체suite 재실행 아님.
+- 원본 종가 보존 확인. 단, 기존 scalar 경로가 별도 계산복사본에 시간외값을 LiveQuoteOnly로 반영함.
+  패널 결과 자체는 입력하지 않지만 시간외값 전면 분리는 미완료. 문구/입력 정합성은 후속 후보.
+  현행 점수·판정·시장방어·월적립·L3·TTL·조회범위 변경 없음. SOXL 시장방어 유지 확인.
+- [운영/재생/설계제한 상세](docs/maintenance/20261128_aftermarket_live_audit.md).
+  원본 응답·계좌ZIP Git제외. 이번 변경은 문서만이며 커밋·main 푸시 대상, 추가 Reboot 불필요.
+- **Next Task Only:** SOXS의 상품명 fallback SOXL 프로필 오연결만 수정·회귀 검증.
+  시장방어/L3는 유지하고 SOXL 정상 연결·SOXS 기존 보류 경로를 함께 확인한다.
+
+## 2026-11-28 SOXS 운영 원인·연구 완료
+
+- 최신 main97a17e6b 대조. 01:52KST 현재 애프터 세션 전: **애프터 운영 확인 대기**.
+  SOXL/GOOGL 프리 운영·과거 애프터 재생 결과를 재사용. 이번 애프터 실시간 확인 아님.
+- 운영 SOXS 정밀관측소/검토ZIP(97a17e6b, restart_required=False): 인버스 분류 정상이나
+  전체 상품명 fallback이 SOXL 회복 프로필을 연결. 공통 레버리지 시장방어와 목표비중0도 별도 적용.
+  사용자 요청대로 원인 확인·연구까지만 진행, 프로필/차단/L3/점수/금액/TTL 변경 없음.
+- 연구 코드·합성테스트 추가. 실제 조정OHLC, 다음 시가 진입/5거래일/최초자본5%/왕복30·60bp.
+  과거 매크로 재현이 아닌 SOXX<MA20 & SPY<MA50 대용 신호이며 실제 계좌 성과가 아니다.
+- 2024~2026 USD: 현금대비 SOXS단기 −3.76%, MDD−12.19%; SOXX95% 모형 낙폭42.82→43.27%로 악화.
+  최근259세션 현재구성 가상KRW계좌: 손익−8.32→−4.60%, 낙폭22.82→19.08%. 기간/구성 의존 확인.
+  반도체 반등일도 포함. [비용·누락·기간·운영/모의 범위](docs/maintenance/20261128_soxs_research.md).
+- 최종 관련39통과7.39초, 관련 실패0. 전체 suite 재실행 아님. 시장 진입 prices667/117/17 검증 재사용.
+  시장·브리핑은 새세션 Today0회 운영 완료(캐시 있음, 앱시작→표2.14초); 판정/정책 불변.
+- 원본가격·계좌비중·ZIP·거래원장은 Git 제외. 연구 전용 변경은 재부팅 불필요.
+  연구 중 발견한 국내 휴장 달력 누락은 별도 후속 후보, 운영 달력 변경 안 함.
+- **Next Task Only:** 11/28 03~07KST SOXL/GOOGL 애프터 원응답→선택→정밀 화면 대조.
+  직전종가/시간외등락/실제체결/조회시각 분리; 두 종목 브리핑은 조회범위 밖이므로 재생만 별도 기록.
+  시간대 밖이면 대기 유지. SOXS 운영 정책 수정은 사용자 결과 검토 이후.
+
+## 2026-11-28 시장 바로 보기 · 운영 완료
+
+- main2d649cea 대조/미커밋없음. 01:30KST 애프터 세션 밖: **애프터 운영 확인 대기**.
+  완료된 프리운영/공시계측 반복안함. SOXL/GOOGL 애프터는 과거 응답 재생만 확인된 상태.
+- 원인: 독립 매크로 화면이 explicit_refresh여서 새 세션은 빈 화면. 별도 브리핑 진입 없음.
+  공통 주요시장 경량패널과 독립 브리핑 보기를 추가. 기존 공급처 TTL/점수/판정/L3 불변.
+- c64c69de 푸시/직접Reboot 후 새세션 Today0회에서 시장·브리핑 모두 정상.
+  같은 지수/ETF값·공급처수신시각 완전일치. 한국11/27확정종가, 미국장중 실제체결 연결.
+  시장조회·표시0.715초/브리핑재사용0.028초, 앱시작→시장표각2.14초(캐시있는상태).
+- 변경 전 자동조회없음, 수동조회 관측상한30.35초. 정확한paint전후비율로 해석금지.
+- [전후·운영/재생 범위](docs/maintenance/20261128_market_entry.md). prices667, 관련117, 최종AppTest포함17통과.
+  관련실패0. 휴장/단축장/시간외는재생, 이번운영은미국정규장. 정책/TTL불변.
+- **Next Task Only:** SOXS 실제 판정경로와 비용포함 소액단기/헤지 연구. 운영 차단 변경금지.
+  애프터 운영확인은03~07KST 대기. 계좌/원응답 Git제외.
+
+## 2026-11-27 미국 시간외 시세 연결 · 프리 운영 확인
+
+- 원인: GOOGL 프리 원응답은 정상이지만 정밀관측소 패널이 고정 레버리지 상품만 허용했다.
+  미국주식/ETF 선택 종목 공통 표시, 해외거래소 접미사 제외. 직전종가/시간외가격/체결시각/조회시각 분리.
+- 원응답→선택 검토JSON, 시황 진단 quote_observations 추가. 점수·판정·금액·완료일봉·TTL60/15초 불변.
+  공식확인된11/27 단축장 애프터13~17ET만 표시등록, 다른 미확인 날짜 보류 유지.
+- 코드15bb7852/b1054026 main푸시. 직접 Cloud Reboot 후 SOXL 종가32.02/프리35.63(+11.27%),
+  GOOGL273.10/280.11(+2.57%) 운영 JSON 원응답과 화면 일치. SOXL 시장방어·실행보류/금액0 유지.
+- 검증: prices667/report208/decision1674 gate통과, 최종 리뷰 보완 관련108통과. 관련 실패0.
+  전체 suite 재실행 아님. cache 1송신→재조회0송신, 동가 새 체결·지연·휴장·세션전환 테스트 통과.
+- 새 시황8df4d54c 전체121.423초, b1054026/restart_required=False. 조회9종목 원응답/선택가격·시각 일치,
+  SOXX 보고서132.75/+3.73%/직전종가127.98/체결23:25KST/Yahoo 확인. cache9miss/9성공, TTL불변.
+- 애프터는 실제 과거 응답 재생만 확인: SOXL33.19/마감후+3.65%, GOOGL274.89/+0.66%.
+  현재 프리 운영 확인과 구분. 이번 입력SOXL/GOOGL은 자동브리핑 조회범위 밖이며 범위 확대 안 함.
+  두 종목 브리핑은 실제응답 재생 검증, 운영 브리핑에 직접 표시된 것으로 기록하지 않는다.
+- [상세 감사/시각/검증 범위](docs/maintenance/20261127_extended_quote_audit.md). 원본 계좌/진단은 Git 제외.
+- **Next Task Only:** 2번 남은 실제 애프터 세션에서 SOXL/GOOGL 원응답·선택·화면 대조.
+  11/27 단축장 애프터는11/28 03~07KST. 해당 시간대 밖에서는 애프터 운영 미확인을 유지한다.
+  3번 경량 시장 진입, 4번 SOXS는 이후. 운영 차단 변경 금지.
+
+## 2026-11-27 공시·매크로 운영 계측 완료 · 최신
+
+- 원인: 변경 전 DART29요청이 모두 연결 시간초과. 계측 적용 첫 실행에는81송신 모두200,
+  연속 실행6송신 모두200. SEC141→30송신, 같은 공시 요청키 중복0. 공급처·cache 상태 차이 확인.
+- 전체124.253/80.266초(기준2회) → 120.209/49.421초(계측2회).
+  매크로·공시42.814/36.985 → 51.122/7.408초. 동일 옵션103입력이나 재시작 뒤 재계산·cache온도 차이 있어
+  속도 개선 효과로 단정 금지. **조회 정책 변경 없이 계측 보강만 완료**.
+- 국내 실제치0→26→29연결, 시간한도3→0, 식별목록 미등록1잔여. 미국 공식발표23건 유지.
+  공급처 대기/SEC rate가 크며 lock·변환·저장은 미미. 점수·판정·금액·출처·TTL·조회 한도 불변.
+- 운영: 계측본62f5ecbc 직접 Reboot 후 전체 생성2회/화면/다운로드/새 계측 확인, restart_required=False.
+  최종 리뷰 보완8da449f6(예외시 대기작업 취소·진단status 제한) 푸시·직접 Reboot, 자산현황 정상 기동 확인.
+  최종 리뷰 보완 뒤 전체 생성은 재실행하지 않았으며 위2회는62f5ecbc 운영 측정이다.
+- 검증: 관련420통과·공시566통과·리뷰119통과(중복 포함); 최종 report gate208통과54.25초.
+  **관련 잔여 실패0건**. 전체10382통과1skip은 과거 기록 재사용이며 이번 전체 suite 재실행 아님.
+- [상세 수치·요청/coverage·시간선·제한](docs/maintenance/20261127_official_macro_audit.md).
+  진단/계좌 원본 Git 제외. 프리 선행 증거는 SOXL 별도참고36.31/종가32.02, GOOGL 종가 표시까지.
+- **Next Task Only — 다음 한 건:** 2번 미국 시간외 시세. SOXL+대형주 같은 시각 원응답→선택→cache→
+  정밀/브리핑 비교, 세션 가격·체결시각/출처와 직전 종가 분리. 현재 투자판정 입력 불변.
+  3번 점검0회 시장 진입, 4번 SOXS 연구는 이후. 공시 병목에 억지 최적화를 추가하지 않는다.
+
+## 2026-11-27 돈흐름 OHLC 운영 감사 완료 · 최신
+
+- 완료: OHLC509회 = 국내 캐시 접근289 + 배치 추출212 + 일본 fallback2 + 배치 미확보6.
+  다운로드 wrapper26회 중 해외 심볼 없는12회, 실제 yf.download14회. 고유 batch14/동일 batch 반복0.
+  서로 다른 batch의 요청 종목은201고유+11회 겹침. yf.download 호출 수는 내부 HTTP 수가 아니다.
+- 대기: 국내 slot0.001초, 해외 batch lock활성1.853초/provider12.995초, 추출0.766초.
+  기존 캐시·조회 동작은 유지했다. 11종목 겹침을 무조건 합치면 자료 시각/기존 cache hit/결측/TTL이
+  달라질 수 있어 보존 검증 없이 부분 batch 재사용을 넣지 않았다. 점수·판정·TTL·병렬 수 불변.
+- 운영: `7652754d` 푸시·직접 Reboot·오늘점검 전체 완료, 진단에 새 계측 확인.
+  전체110.398→99.125초, 돈흐름21.056→20.561초. 시각/캐시/일부 호출 수 차이로 속도 효과 단정 금지.
+- 검증: 전후 기존42통과, 새 계측 포함 집중36통과, prices667통과, 최종 돈흐름/성능121통과40.18초.
+  **관련 실패0건**, 기존 전체 suite10,382통과/1skip 기록 재사용(새 전체 실행 아님).
+- [상세 근거·측정ID·제한](docs/maintenance/20261127_flow_ohlc_audit.md).
+  개인정보/진단 원본은 Git 제외. 최종 문서도 커밋·main 푸시.
+- **Next Task Only — 다음 한 건:** 공시·매크로 구간 실제 대기/시간 한도 계측.
+  최신 자동시황 전체 생성으로 기존47~55초 구간을 대조해 네트워크/공시 탐색/변환·저장을 구분한다.
+  돈흐름 부분 batch 겹침11회는 후속 후보이며 안전한 재사용이 이미 구현됐다고 주장하지 않는다.
+
+## 2026-11-27 돈흐름 OHLC 조회 계측 · 진행 중
+
+- 기존 완료 측정 `3a0f1c34…`: OHLC511회/누적62.180초/활성15.578초,
+  다운로드 wrapper28회/활성15.329초, 돈흐름 전체21.056초. 국내 재요청0 결과 재사용.
+- 해외 batch 캐시 hit/miss·공급처 호출·동일 배치/종목 반복 수, 배치 잠금과 국내 slot 대기를
+  분리하는 집계 추가. yfinance 호출 수는 내부 HTTP 수와 다름을 명시한다.
+- TTL900/실패15초, 요청 범위/파라미터/병렬 수·점수·판정 불변. 입력키는 진단에 내보내지 않는다.
+- 관련 기존42통과, 계측 후42통과, 새 계측 포함 돈흐름36통과(KR8 제외).
+  prices gate 및 운영 새 모듈 측정 대기. 아직 최적화 효과를 주장하지 않는다.
+- **Next Task Only:** 계측본 운영 전체 계산으로 실제 중복/대기 확인 후 필요한 변경만 검토·전후 검증.
+
+## 2026-11-27 국내 이력 중복·대기 운영 검증 완료 · 최신
+
+- 완료: 국내 HTTP 직접 고유/반복/범위 밖 집계와 잠금·헤더·본문·파싱 시간 분리.
+  **실제334요청 = 고유334, 같은 키 재요청0, 범위 밖0**, 실행 내 재사용93+기존 캐시13.
+  잠금 대기0.000486초. 제거할 동일 요청 중복/잠금 병목이 없어 조회·캐시 로직은 유지했다.
+- 운영: 직접 Cloud Reboot 전후 같은 계좌/후보/순서로 전체 계산. 기준84.060→110.398초,
+  국내 HTTP 활성20.864→22.027초. 새 계측4개 JSON 반영 확인, HTTP 실패0.
+  Yahoo 대기 증가/FnGuide 캐시 변동이 있어 전체 속도 개선/악화의 인과는 단정하지 않는다.
+- 검증: 전후 prices gate665→667통과, **현재 관련 실패0건**. 동일 프레임·동시 재사용·실패 재조회·
+  TTL899/900초·별칭 TTL 연장 금지·판정 전체 출력 계약 통과. 전체 suite는 직전10,382통과/1skip 기록,
+  이번에는 전체 재실행하지 않음. 점수/판정/금액/기간/TTL/timeout/시장방어/월적립/L3 유지.
+- 배포: 코드 `f42ee214` main 푸시·Reboot·운영 계산 완료. 최종 인계/ROADMAP도 커밋·푸시.
+  [전체 근거·측정ID·남은 작업](docs/maintenance/20261127_kr_history_request_audit.md).
+  개인 진단 원본은 Downloads에 두고 Git 제외. 새 Supabase 쓰기/데이터 수정 없음(앱 정상 계산 저장 제외).
+- **Next Task Only — 다음 한 건:** 돈흐름 `get_money_flow_ohlc`의 실제 캐시 미스/외부 조회 계측.
+  509회라는 과거 함수 호출 수와 HTTP를 구분하고, 국내 이력 이번 결과를 재사용한다.
+  같은 입력·기간·TTL에서 실제 중복이 확인되는 부분만 개선하고 전후 출력/시간 검증.
+
+## 2026-11-27 국내 이력 실제 요청 계측 · 진행 중
+
+- 첫 운영 전체95.642초: 조회440 = HTTP334 + 실행 범위 재사용93 + 기존 캐시13.
+  HTTP334는 고유 키334와 같고 실패0. 이미 성공한 동일 키의 재요청 근거 없음.
+- 필요한 변경만 적용: 잠금/헤더/본문/파싱 시간, 실제 동일 요청 반복·범위 밖 호출 집계 추가.
+  조회·판정 로직/기간/TTL/timeout 불변. 종목키·계좌정보는 집계에 포함하지 않는다.
+- 전후 prices gate665→667통과, 실패0. 전체 suite는 직전10,382통과 기록 재사용.
+- 운영: 기존 코드 첫 측정 완료, 재부팅 기준 실행과 배포 후 같은 순서 측정 진행 중.
+  [기록](docs/maintenance/20261127_kr_history_request_audit.md).
+- **Next Task Only:** 계측본 푸시·재시작 후 전체 계산 JSON에서 새 항목 확인하고 기준 실행과 비교.
+
+## 2026-11-27 남은 실패 정리 · 전체 합동 검증 완료 · 최신
+
+- 완료: 시작 시 남은11건(A10/E1) 모두 해결. 기능별 실제 입출력·자료/점수 보존 계약으로
+  오래된 전체 app AST 비교를 정리하고, 연구 재생의 가변 프로토콜 참조는 원본 동결 파일로 복구.
+- **실제 남은 실패0건.** 코드 고정 `62f6c1a1`, Python3.11.9/pandas2.3.3/numpy1.26.4에서
+  전체 `pytest tests -q -p no:cacheprovider --tb=line -rf`: **10,382통과 / 0실패 / 1skip**,
+  subtest18통과, 경고86건, **756.25초**. XML failures/errors 모두0.
+  skip은 기존 `test_post_close_paragraph_and_following_brief_are_separate_tables`의
+  선택 패키지 `markdown_it` 미설치이며 새 skip/xfail은 추가하지 않았다.
+- 검증 범위: DART 가져오기·중복저장·재조회, SEC/IR 성공·실패 갱신, 시장방어 중복 입력,
+  정밀관측소/오늘점검 연결 계약, 같은20입력의 계측·시세 범위별 전체 출력 불변.
+  실제 연구 오프라인 재생 CSV5개 출력 해시도 기존과 일치. golden/manifest 수정 없음.
+- 운영 범위: 이번에는 새 Cloud/UI/Supabase 확인·재부팅 없음. 기존 #121 화면 확인 기록 재사용.
+  `app.py`/`stock_lab_core` 변경 없음: 점수·판정·시장방어·월적립·L3·금액·TTL 유지.
+  테스트/연구 수정은 main에 단위별 푸시 완료; 이 결과와 ROADMAP/분류 문서도 함께 커밋·푸시.
+- 증거: `cache/resume_20261127/all_after.xml/log` 및 각 단위 로그(Git 제외).
+  [수정·검증 집계](docs/maintenance/20261127_remaining_contracts_complete.md).
+- **Next Task Only — 다음 한 건:** 국내 가격 이력 `kr_history_http` 실제 중복/대기 계측.
+  같은 조건A의 오늘점검에서 요청키·scope 재사용·실요청 수·벽시간을 구분해 먼저 측정한다.
+  이미 있는 성공값/넓은 기간 재사용과 worker 범위 전달을 확인하고, 실제 중복만 줄인다.
+  과거334회만으로 중복 단정 금지. 판정·데이터 기준·TTL 유지, 같은 입력 전후 비교.
+
+## 2026-11-27 연구 프로토콜 재생 복구 · 최신
+
+- 실제 원인: 수집 후 `a3e027a7`에서 프로토콜의 서비스 미배포 설명을 수정했으나 재생은 가변 문서를 참조.
+  `1acdeb00` 원본을 스냅샷 `protocol.md`로 복구, 기존 manifest SHA와 일치 확인. manifest/수치/원본데이터 수정 없음.
+- 연구 스크립트는 수집 시 프로토콜도 동결하고 재생 시 그 파일만 검증. 누락/변조/덮어쓰기 거부.
+- 검증: 연구13통과(1.75초), 실제 오프라인 재생 성공. 기존 coverage/trades/summary/quality/equity
+  CSV **5개 출력 해시 모두 동일**. 검증된 거래0건이라는 기존 한계도 유지. 운영 규칙/월적립/L3 변경 없음.
+- **남은 알려진 실패0건**(각 이전 실패 해결 기준; 전체 suite 합동 검증은 다음 작업).
+  운영 새 확인/재부팅 없음. main 커밋·푸시. 근거 `cache/resume_20261127/research_protocol.xml/log`,
+  `soxl_protocol_replay/`(Git 제외). 현재 유지보수 문서의 미배포 설명은 유지했다.
+- **다음 한 건:** 전체 테스트 합동 실행. 순서 의존 회귀와 지원 Python3.11 문법까지 확인 후 실패 수 확정.
+
+## 2026-11-27 시세 범위 계약 완료 · 최신
+
+- 완료: 과거4함수 AST 비교 대신20입력에서 시세 범위 밖/허용/비허용의 전체 판정 및 worker 출력 동일성.
+  보유 여부·가격 프레임 보존, 원격 요청 금지. 기존 시세 대체/범위/캐시 검사는 그대로 유지.
+- 검증: 시세 범위/오늘점검 MTF/전체 판정74통과(62.69초). **남은 알려진 실패1건(E1)**.
+- 운영 코드·점수·판정·TTL 변경/재부팅/새 운영 확인 없음. main 커밋·푸시.
+  증거 `cache/resume_20261127/quote_contract.xml/log`.
+- **다음 한 건:** 연구 프로토콜 스냅샷. 당시 원본을 복구하여 재생 가능 여부와 기존 출력 해시 비교.
+
+## 2026-11-27 오늘점검 후처리 게이트 계약 완료 · 최신
+
+- 원인: 기존 후처리 AST 비교에 계측 콜백과 승인된 판정기록 복사 호출이 미반영.
+  정확한 호출만 복원/제외하고 나머지 과거 게이트 연결·순서/데코레이터 비교는 유지.
+  추가 검증: 같은 계좌 기록 gate만 갱신, 원본 표·엔진/후처리 판정 불변, 다른 계좌는 쓰지 않음.
+- 검증: 오늘점검 UI/판정기록/실행맥락95통과(33.07초). **남은 알려진 실패2건(A1/E1)**.
+- 운영 코드/규칙 변경·운영 확인·재부팅 없음. main 커밋·푸시, `cache/resume_20261127/queue_gate_contract.xml/log`.
+- **다음 한 건:** 오늘점검 시세 범위 계약. 같은 입력의 범위 밖/안 전체 판정·worker 출력 비교.
+
+## 2026-11-27 종목 내부 계측 계약 완료 · 최신
+
+- 완료: app 전체 과거 AST 비교 대신 현재 종목 계산에서 타이머만 제거한 함수와 계측 함수의
+  전체 출력20사례 동일성 검사. 공통 고정 입력 helper는 원자료 불변·외부 조회 금지도 확인한다.
+- 검증: 계측/애널리스트 캐시25통과(36.22초). **남은 알려진 실패3건(A2/E1)**(합동 재집계 전).
+  판정 엔진 자체는 기존 golden이 담당하고, 이 검사는 고정 판정 결과를 받는 worker 계측만 검증한다.
+- 운영 코드 변경/새 운영 확인/재부팅 없음. main 커밋·푸시, `cache/resume_20261127/timing_contract.xml/log`.
+- **다음 한 건:** 오늘점검 계산 후 게이트 연결 AST 계약. 실제 변경 블록을 대조하고 좁게 복원한다.
+
+## 2026-11-27 SEC 연간·분기 검토 계약 완료 · 최신
+
+- 완료: app 전체 AST 비교2건을 실제 연간/분기 UI의 성공 조회·재실행·실패 갱신으로 교체.
+  갱신 실패 시 과거 재무표를 제거하되 재무점수·판정과 공시 원자료는 보존, 분기 provider/DB 의존 금지 유지.
+- 검증: 관련32통과(3.52초), 수정 전23통과/2실패. **남은 알려진 실패4건(A3/E1)**(합동 재집계 전).
+- 운영 코드·판정·점수·TTL 변경/운영 재확인·재부팅 없음. main 커밋·푸시.
+  증거 `cache/resume_20261127/sec_reviews_contract.xml/log`.
+- **다음 한 건:** summary_wait_diagnostics 계측 경로. 현재 종목 계산의 계측 유무 전후 출력을 비교한다.
+
+## 2026-11-27 정밀 서술 해시 계약 복구 · 최신
+
+- 원인: `35dd624d`의 등락 비교일·봉 완료상태 표시6줄이 과거 본문 해시 복원에서 빠졌다.
+  해당 블록의 AST를 정확히 확인한 뒤 그 블록만 제외하여 원래 불변 해시 검사를 유지했다.
+- 검증: 정밀 서술/관측/화면188통과(21.54초), 등락 기준19통과(5.47초). 원래 HTML golden·본문 hash 변경 없음.
+  **남은 알려진 실패6건(A5/E1)**(합동 재집계 전). 운영 코드·점수·판정 변경 없음.
+- 실제 운영 확인/재부팅 없음. main 커밋·푸시, `cache/resume_20261127/narrative_contract.xml/log`, `return_basis.log`.
+- **다음 한 건:** SEC 연간/분기 검토 화면의 읽기 전용 계약2건. 실제 점수·원자료·갱신 실패 보존을 확인한다.
+
+## 2026-11-27 MSFT IR 계약 완료 · 최신
+
+- 완료: app 전체 AST 요구를 실제 IR 화면 성공 조회→재실행→실패 갱신의 점수/SEC 근거 보존으로 교체.
+  실패 시 과거 표는 숨기고, 재무점수 map·기존 판정·분기 공시 원자료는 보존.
+- 검증: IR 파서/화면33통과(3.08초). **남은 알려진 실패7건(A6/E1)**(합동 재집계 전).
+- 운영 코드 변경/재부팅/새 운영 확인 없음. main 커밋·푸시, `cache/resume_20261127/msft_contract.xml/log`.
+- **다음 한 건:** 정밀관측소 서술의 `test_legacy_body_and_signature_stay_unchanged_with_opt_in_observations`.
+  고정 HTML 결과는 유지하고 과거 함수 본문 해시의 차이를 확인한다.
+
+## 2026-11-27 레버리지 설명 계약 완료 · 최신
+
+- 완료: 과거 차트/레버리지 패널 AST 동일 요구를4상품 설명 표시 전후 바스켓·수익률·판정
+  보존 계약으로 교체. 표시 결과 수정이 원본에 전파되지 않고, 20개 고정 판정 출력도 동일.
+- 검증: 레버리지 설명/바스켓/정밀 차트137통과(20.43초), 수정 전21통과/1실패.
+  **남은 알려진 실패8건(A7/E1)**(합동 재집계 전). 운영 코드·점수·판정·TTL 변경 없음.
+- 실제 운영 재확인/재부팅 없음. main 커밋·푸시. 증거 `cache/resume_20261127/leveraged_view_contract.xml/log`.
+- **다음 한 건:** `test_msft_ir_review::test_app_functions_unchanged`의 실제 IR 검토 상태/점수 보존 계약.
+
+## 2026-11-27 시장방어 중복 근거 계약 완료 · 최신
+
+- 완료: 지수 순서2종×매크로 분해 유무2종에서 SPY 추가 전후 위험 점수·모드·점수구성이 동일한지
+  실제 시장방어 함수로 검사. 분해 미확인 자료는 기존 위험4.5를 유지하고, 확인 자료만2.5+별도 이벤트1.
+  입력 프레임/매크로·개별주 기존 패널티 유지. 과거 app 전체 AST 검사만 교체, 운영 코드 변경 없음.
+- 검증: 시장방어 관련42통과(19.31초), 수정 전13통과/1실패.
+  **남은 알려진 실패9건(A8/E1)**(직전10건에서 해당1건 해결; 전체 재집계는 후속 합동검사).
+- 운영 확인/재부팅 없음. main 커밋·푸시 단위. 증거 `cache/resume_20261127/guard_contract.xml/log`.
+- **다음 한 건:** `test_leveraged_product_view::test_historical_contract_does_not_mask_calculation_changes`.
+  레버리지 설명 표시가 원본 바스켓·수익률·판정을 바꾸지 않는 계약을 검증한다.
+
+## 2026-11-27 DART 검토 계약 완료 · 최신
+
+- 완료: app 전체 AST 비교를 실제 DART 파서로 미리보기→확인→저장→중복 저장→재조회하는
+  AppTest로 교체. 표시 금액/기간과 저장 원자료 일치, 자동/수동/최종 점수 불변, 재실행 추가 조회 없음.
+- 검증: DART 화면/저장45통과(18.48초). 수정 전13통과/1실패. 기존 실패11건 중1건 해결,
+  **남은 알려진 실패10건(A9/E1)**; 전체/실패목록 전체 재실행은 이 단위에서 하지 않음.
+- 운영: 테스트·문서만 변경, 실제 Cloud/Supabase 재검증·재부팅 없음. 운영 파서·점수·판정·TTL 변경 없음.
+  main 커밋·푸시 단위. 증거 `cache/resume_20261127/dart_contract.xml/log`(Git 제외).
+- **다음 한 건:** `test_guard_duplicate_inputs::test_only_exact_reviewed_app_edits_differ_from_parent`.
+  중복 지수·매크로/이벤트 근거의 계산 계약으로 좁히고 현재 위험 점수 기준은 유지한다.
+
+## 2026-11-27 기업·시장·업종 연결 계약 완료 · 최신 지시
+
+- 시작 clean `058dcd6f`, fetch한 main과 동일. 완료: 과거 app 전체 AST 비교1건을 실제 앱 진입의
+  업종 연결/미등록/다른 계좌/노후자료 등5상태 계약으로 교체. 외부 재조회 금지, 원자료·재무점수·
+  오늘점검 표/서명 유지, 20개 고정 판정의 전후 전체 출력 동일. 운영 코드·점수·판정·TTL 변경 없음.
+- **실제 남은 실패11건(A10/E1)**: 기존 전체 실패16개를 재실행해12통과/11실패(50.65초).
+  현금 비교1건→4상태, 이번1건→5상태로 총23개. 새 전체 suite 실행 결과가 아니다.
+- 테스트 범위: 해당 파일18통과; 시장 연결/현금 비교/기업 AppTest/포트폴리오 시장 근거/
+  판정 golden·전체 출력 회귀 **92통과(31.83초)**. 기존 decision gate1669통과 기록은 직전 작업 기록이며
+  이번 재실행 수치가 아님. golden 재생성/skip 없음. [기록](docs/maintenance/20261127_company_market_contract.md).
+- 운영 범위: 테스트·문서만 변경하여 새 운영 확인/재부팅 없음. 기존 #121 검증 기록 유지;
+  보유 L2/L3·보유 Today 일치는 여전히 미확인. 개인 계좌 자료는 Git 제외.
+- 반영: 이 단위는 main에 직접 커밋·푸시, 운영 재부팅 불필요.
+- **다음 한 건:** `tests/test_dart_evidence_view.py::test_existing_parser_and_app_functions_preserved`.
+  DART 파서 값·미리보기·가져오기 경로의 점수 비반영은 보존/검증하고 app 전체 AST 동일 요구만
+  해당 동작 계약으로 좁힌다. 나머지 A→E→ROADMAP 실측 병목 순서 유지. 아래는 과거 기록.
+
+## 2026-11-27 기업 현금흐름 비교 계약 완료 · 최신 지시
+
+- 시작 clean `codex/resume-report-tests/e6ca8f30`, fetch한 main과 동일. 다른 PC 변경 이월 없음.
+- 완료: 과거 `08b2ac4e` app 전체 문자 일치 검사1건을 현금 근거4상태의 조회·표시 계약으로 교체.
+  원자료/점수 map/오늘점검 표·서명 불변, 외부조회 각1회, 20개 고정 판정의 전후 전체 출력 동일 확인.
+  운영 코드·점수·판정·TTL 변경 없음, golden 재생성/skip 없음.
+- **실제 남은 실패12건(A11/E1)**: 기존 전체에서 실패했던16개를 다시 실행하여7통과/12실패(50.96초).
+  교체한1건이4개 상태로 늘어 총19개. 새 전체 suite 실행은 아니며 과거 전체10313통과/16실패 기록을 대체하지 않음.
+- 검증: 해당 파일29통과, 현금 비교/해석/심층 UI/SEC 복구/전체 판정 출력140통과(26.54초).
+  `check_refactor --scope decision` **1669통과/0실패/0skip**(162.589초, `decision_s3fgo382`).
+  [변경과 검증 범위](docs/maintenance/20261127_cash_comparison_contract.md).
+- 반영: 이 단위는 main에 직접 커밋·푸시하며, 실행 코드 변경이 없어 운영 재부팅은 필요하지 않음.
+- 운영 범위: 이번 새 운영 화면 확인/재부팅 없음(테스트·문서만 변경). 기존 #121 하단 검증 기록 재사용;
+  보유 L2/L3 및 보유 Today 일치는 여전히 미확인. Git에는 개인 계좌/관심목록 자료 없음.
+- **다음 한 건:** `tests/test_company_market_reading.py::test_app_adapter_restores_only_current_company_context_change`.
+  시장·업종 맥락 연결의 입력/출력과 점수 비반영을 검사하도록 과거 app 전체 AST 비교를 좁힌다.
+  나머지 A→E→ROADMAP 실측 병목 순서 유지. 아래 이전 다음 작업은 과거 기록.
+
+## 2026-11-27 재개 완료 · 최신 작업 지시 (아래 과거 다음 작업보다 우선)
+
+- 시작: clean `claude/project-thread-a6hied/20452bea` → fetch한 main `339baf81`과102커밋 차이,
+  고유 커밋0, 열린 PR0. 기존 브랜치 보존, `codex/resume-report-tests`에서 재개. 미커밋 이월 없음.
+- 완료: B 리포트 위치3건 계약 수정, C 오프라인 국내 종가·FRED 경계 보완,
+  Windows에서도 실제 Python3.11 문법검사 실행. 앱/stock_lab_core 운영 코드·점수·판정은 변경 없음.
+- **실제 남은 실패13건(A12/E1)**: main 기준 전체10313통과/16실패/2skip(780.21초).
+  그 실패16건을 수정본에서 재실행해3통과/13실패(47.92초). C는 전체에서 통과했으나
+  단독에서 실패했던 실행순서/캐시 영향 검사로, 단독 수정 후 통과. 수정 후 전체 suite 재실행은 하지 않음.
+- 테스트 범위: B/C/3.11 문법/A-B-C·분봉194통과, 정밀차트·신규진입·단기전략22통과,
+  선택 report208통과. golden 재생성/실패 skip 없음. [기록](docs/maintenance/20261127_test_resume_bc.md).
+- 운영 범위: #121 이후18:11~18:21 기록을 재사용(일·주·월 MA, 차트 아래 A/B/C·신규진입 근거·단기 선택기).
+  이번 새 브라우저 확인/재부팅 없음(운영 코드 변경 없음). 보유 L2/L3·보유종목 Today 일치는 여전히 미확인.
+- 비공개 연구 상세표69건은 Downloads에서 확인, Git 제외. 다음 시가/신호일 공통 평가일/미진입 현금/
+  개별주·ETF 분리의 후속 방법을 연구 문서에 기록. 다른 PC `/mnt/project-files/` 원본은 접근 불가.
+- **다음 한 건:** A의 `tests/test_company_cash_comparison.py::test_app_entry_and_decision_reader_unchanged`.
+  과거 app.py 전체 동일 요구를 해당 현금흐름 표시/조회가 판정·점수에 들어가지 않는 실제 입력→출력 계약으로
+  좁힌다. 현재 app 전체를 새 golden으로 덮지 말 것. 이후 A 나머지→E→ROADMAP 병목 순서.
+
+## 2026-11-27 KST 새 우선순위 1~6 (17:37 사용자 지시) · 1~6 1차 완료 (18:55 기록)
+
+순서는 [ROADMAP 맨 위](docs/maintenance/ROADMAP.md) 1~6. 시작 시 main `a3e027a`는 16:50 기록과 같았다.
+
+**1번 결과 (코드·테스트 확인, 운영 화면은 병합 후 확인 예정)**
+- 원인: 정밀관측소가 `calc_scores_and_decision(..., app_mode, 0.0, 0.0, 0.0)`로 비중 0%를 명시 전달.
+  C-6 2단계(11-26) 이후 명시 비중이 보유표보다 우선이라 정밀관측소 판정은 모든 종목이 목표 0%였다.
+  신규진입 표 첫 행만 보유표 8%로 보완하고 레버리지 판독에는 0%를 넘겨 `8%`와 `미설정`이 함께 나왔다.
+- 회복 1/6과 정책 표 회복체크는 같은 6항목 산식. 미보유면 L3 판독이 비어 정책 표가 전부 `미확인`이었다.
+- 수정: 비중 미전달(보유표, Today와 같은 경로) · 계획 안의 유효 목표 하나를 레버리지 판독까지 전달 ·
+  첫 행 `목표까지 이론상 부족분`+출처 · 이론상 부족분/오늘 실행가능액/실제 집행기록액(원장 미연결) 구분 ·
+  L0 미보유는 기초·상품 MA50·회복체크 관측값, 회차·예산·L3는 `해당 없음` · 예산 기록 없음 `미설정` vs `조회 실패`.
+- 판정 규칙 변경 없음. 단, 정밀관측소에서 보유표에 목표비중이 있는 종목은 입력 비중이 0%→실제값으로 돌아와
+  비중초과·목표충족·부족분 금액이 Today와 같은 입력으로 계산된다(11-26 이전 동작). 상세:
+  [기록](docs/maintenance/20261127_soxl_plan_leverage_consistency.md).
+- 검증: 새 테스트 7개 + 관련 97개 통과. `check_refactor --scope decision` 수정 전 1,669/0, 수정 후 1,669/0
+  (python 3.12 + pandas 2.3.3/numpy 1.26.4 venv, 같은 조건).
+- **운영 확인 17:52~17:58 KST (#118 병합·재부팅 후 SOXL):** 첫 행 출처 `판정 입력(선택 계좌 보유표)` 목표 8%,
+  레버리지 행 `비중 0.0/8.0% · 회복 1/6`, 정책 표 관측값(SOXX 11-25 종가 MA50 아래, 상품 MA50 아래, 1/6)과
+  회차·예산·L3 `해당 없음 · L0 미보유`, `오늘 실행가능액 0 · 시장방어 보류`, 집행기록 `미연결`.
+- 운영 미확인: 보유 레버리지(L2/L3) 사례, 보유 일반 종목의 정밀관측소 판정이 Today와 같아졌는지.
+
+**2번 결과 (코드·테스트·실데이터 대조, 운영 화면은 병합 후):** 일봉 차트가 1년치 프레임으로만 MA를 계산해
+1000일선이 항상 불가였고, 주·월봉 `MA240`은 단위 없는 240주/240개월이었다. 장기 일봉으로 N거래일 평균을 먼저
+계산해 일·주·월 각 봉의 마지막 거래일에 대응, 봉 단위 모드는 `N주선/N개월선`. 선마다 마지막 값·기준일·확보 거래일,
+부족 시 확보/필요 거래일. SOXL 10년 일봉으로 240일선 111.5846/1000일선 48.0255가 원본 평균과 세 화면 모두 일치.
+[기록](docs/maintenance/20261127_chart_daily_basis_ma.md).
+
+**3·4번 결과 (코드·테스트):** 일봉 A/B/C 위에 첫 줄 요약·대응안 비교 카드·신규 1·2·3차 가격의 기준선/산식 카드.
+원안 A(하단 아래 꼬리 후 회복)와 앱 A(상단 회복)를 따로 표시. SOXL 단기 화면은 세 전략을 하나씩 선택,
+각 전략의 조건·다음 확인·보류 이유가 먼저, 가정 가격은 전략 안 접힌 상세. −20% 연구 2차 승률 `미산출` 유지.
+[기록](docs/maintenance/20261127_scenario_one_screen_and_soxl_strategies.md).
+
+**운영 오류와 2~4번 운영 확인 (18:11~18:21 KST):**
+- #119 병합 뒤 운영 정밀관측소가 `intraday_chart_view` import에서 SyntaxError로 멈췄다.
+  원인: 같은 따옴표를 중첩한 f-string은 Python 3.12 전용인데 운영은 그보다 낮다. 대략 18:0x~18:12 동안 차트 구역 아래가 보이지 않았다.
+- #121로 수정했고 `tests/test_python311_syntax.py`(python3.11로 app.py·stock_lab_core 전체 파싱)를 추가했다.
+  **로컬 venv는 3.12라 이 테스트가 없으면 같은 실수를 못 잡는다.**
+- 수정 후 SOXL 확인:
+  - 일·주·월 240일선 111.65 / 1000일선 48.29 (일봉 11-25, 2,513거래일). Yahoo 비조정 종가와 일치.
+  - 월봉 봉 단위 모드: `240개월선 계산 불가 (121 < 240)`.
+  - A/B/C 첫 줄·비교 카드·원안 A 별도 표시, 신규 1·2·3차 근거 카드, 세 전략 라디오(접힌 expander 안).
+- 운영 미확인: −20%/거래량 전략 선택 화면, 보유 종목의 A/B/C 첫 줄, 보유 레버리지 L2/L3, 보유 종목 판정의 Today 일치.
+
+**5번 결과:**
+- FRED 재사용 #122. 18:31 리포트 매크로 구역에 표 `유동성·연준 · 관측실 FRED 지표` 8/8 연결, 준비 1.00초(18:49 회차 0.25초).
+  [기록](docs/maintenance/20261127_report_observatory_fred.md).
+- 같은 조건 3회: 오늘 점검 94.1 / 108.1 / 93.0초, 시황 127.2 / 123.4 / 115.8초. 병목 순서는 세 번 같다.
+  - 오늘 점검: `_compute_summary_item`, `kr_history_http` 334회, `get_money_flow_ohlc` 509회.
+  - 시황: 매크로·공시·수급 47~55초.
+  - [기록](docs/maintenance/20261127_perf_same_condition_rounds.md).
+- 전체 tests(ded72c8b): 10,310 통과 / 20 실패.
+  - 시작 시점 a3e027a 기준으로 19건이 원래 실패했다(**16건은 낡은 숫자**).
+  - 새 1건은 FRED 조회가 네트워크 금지 테스트에 걸린 것이라 테스트에서 로더를 대체했다.
+  - #118 이후 MSFT 계획 기준 테스트 4건도 승인된 첫 행 이름·새 키를 반영했다.
+  - 19건 분류(A 구조해시 12, B 리포트 위치 3, C 오프라인 1, D SEC 현금 2, E 연구 스냅샷 1)와 정리 순서:
+    [기록](docs/maintenance/20261127_remaining_test_failures_triage.md).
+
+**6번 결과 (연구, 운영 규칙 변경 없음):**
+- 오늘 미보유 core 91개 분류: ① 0, ② 1, ③ 90.
+- 재현 게이트(지역 점수+돈흐름)는 11-27 운영값(한국 3·미국 6·돈흐름 3=9, 닫힘)과 같다.
+- 2018-12~2026-11 사건 69건:
+  - 기다린 거래일 중앙값 2
+  - 진입가 차이 +0.8%
+  - 먼저 산 뒤 최대 추가하락 −1.3%
+  - 같은 종료일 평가액 차이 +0.7%p (A가 나은 비율 57%, 실패 반등에서는 41%)
+- 매크로·이벤트 점수는 재현하지 못했다(미확인). [기록](docs/maintenance/20261127_core_first_buy_simulation.md).
+  종목별 표는 프로젝트 파일 `stock-lab/20261127_core_first_buy_events.md`에 있다(Git 밖).
+
+**D 결과 (19:0x KST):**
+- SEC 현금 원문 대조 파서가 첫 `</html>` 뒤의 충돌 표를 못 보고 앞 표 값으로 확인을 내던 결함을 고쳤다.
+  파싱된 표 수가 원문과 다르면 보류한다. 구조 비교 테스트 1건은 의도(심층분석 전용·리포트 수집 미사용)만 남겼다.
+- 남은 실패 17건. [기록](docs/maintenance/20261127_remaining_test_failures_triage.md).
+- 긴 실행은 집 PC가 연결되기 전까지 클라우드에서 바로 돌린다(11-27 코디네이터 전달).
+
+**다음 한 건:** 실패 테스트 B(리포트 위치 3건: bok_report_calendar, report_evidence front order, summary_ownership RAM).
+그 뒤 C → A → E, 그리고 `kr_history_http` 중복 요청 축소를 같은 조건 전후로 비교한다.
+
+
+## 2026-11-27 16:50 KST 최종 인계: 통합 차트·연구·운영 확인
+
+**이번에 끝낸 일**
+- #108 연구 전용 범위를 확인해 병합. #109 기존 분석 차트에 8개 봉 간격/MA/저장 설정 통합,
+  연도 중복 축으로 120분 차트가 비던 오류와 개장 기준 집계 수정.
+- #110 SOXL 분봉 2차 재생/원자료/프로토콜, #111 읽기 전용 일곱 항목 시안,
+  #112 테스트 실패 분류, #113 DART 기업코드 재부팅 캐시 보강을 각각 병합.
+- #115 시황 진입 동선, #116 모바일 표 폭, #117 본문/상세 근거 연결 상태 표시까지 병합.
+  다른 작업에서 들어온 #114 민감도 연구도 보존했다. 이 PC에 없는 `/mnt/project-files/` 결과 원본은 확인 불가.
+- 운영 투자판정·월적립·L3 변경, 연구 규칙 운영 적용, 다른 종목 운영 신호, 자동 주문, 유료 계약 없음.
+
+**운영에서 확인한 일**
+- SOXL `60→120→5→120`, 60분 수신 5,055 → 120분 생성 2,892, 캔들/거래량 각 1,500.
+  가격 차트 1개, 상단 빠른 차트 없음. 16:49 재확인에서도 120분 선택 활성/같은 봉 수.
+  별도 31봉 거래량 매물대 분포는 가격 차트 중복이 아니다.
+- 일봉 복귀 시 패턴·채널·매물대·SMC, MA 5/20/120 표시 및 5/20/120/240/1000 기간 복원.
+  같은 계정 저장/재접속 복원 확인. SQL 직접 재조회는 하지 않았고 #107 적용 기록/실제 저장 동작을 대조.
+- 412x915 브라우저: 가격 차트 폭 370px. 시황 선택기 y=2,568→1,420px, 제목 y=2,700→1,790px.
+  보유관리로 복귀해 카운터/안내 복원 확인. 다열 표 설명 192px/기준일 160px, 페이지 가로 넘침 없음.
+- 재부팅 후 DART 준비 10.546→0.426초/실제치 14→24/시간 한도 미조회 12→3.
+  범위 29→30으로 달라 동일조건 평균 아님. 전체 시황 122.100→127.889초로 전체 속도 개선 주장은 안 함.
+- 최종 재부팅 후 전체 계산 110.7초, 16:47 새 시황 생성. 하이일드/실업률은 상세 근거 표시,
+  실제 없는 지표는 미연결 유지. 이 전체 계산 시간과 리포트 생성시간을 혼동하지 않는다.
+
+**대기 사유 / 완료 아님**
+- 미국 정규장 전: 마지막 봉 가격·거래량 변화, 30초 갱신/원천 시세 지연 미확인. 갤럭시 실기기 미접근.
+- 2차 연구: 332진입 중 분봉 범위 중첩 16건, 가격 불일치 12/결측 4로 확정 재생 0건.
+  승률 0%가 아니라 미확인. 당시 시장방어 원본은 로컬 미확보, 서버 과거 전 기록 미확인.
+  독립 모의 규칙은 고정됐지만 새 표본 0건, 연속 기록 실행기/자동 수집 서비스는 아직 가동하지 않았다.
+- 테스트 188건은 지원 의존성에서 해소, 옛 계약 3개 수정. 남은 16건을 감추지 않았고 전체 suite 통과 아님.
+  최종 report 208통과(47.511초), 표시 관련49통과, decision 1,669통과, 연구32통과는 각 기록 참조.
+- 시황 FRED 미연결의 신규 수집, 나머지 공식자료/가격/저장 병목, 남은 큰 함수는 아직 완료하지 않았다.
+
+**다음 한 건 (Next Task Only)**
+관측실의 기존 FRED 관측값을 시황에서 재사용하는 경로 한 묶음부터 검토한다.
+표시 위치 오류(#117)와 실제 미수집을 구분하고, 원래 기준일/출처/TTL을 보존한다.
+추가 네트워크 요청·지연을 먼저 측정하고, 없는 값은 추정하지 않는다.
+그다음 실제 요청 병목의 동일 입력 2~3회 비교 → 남은 16개 테스트 계약/큰 함수 순서.
+장중·실기기·새 독립 표본 대기로 이 작업을 막지 않는다. 승인된 테스트/문서화/수정은 재승인 불필요.
+
+[차트 검증](docs/maintenance/20261127_unified_analysis_chart.md) ·
+[2차 연구](docs/maintenance/20261127_soxl_phase2_report.md) ·
+[시안](docs/maintenance/20261127_soxl_observation_prototype.md) ·
+[모바일](docs/maintenance/20261127_mobile_briefing_entry.md) ·
+[미연결 분류](docs/maintenance/20261127_report_coverage_audit.md)
+
+아래는 과거 경과이며 위 기록이 우선한다.
+
+## 2026-11-27 DART 운영 확인 / 모바일 진입 정리
+
+**이번에 끝낸 일:** #113 기업코드 1일 캐시 보강 병합. 브리핑 화면 분기를 분리하고 시황 선택기를
+보유관리 상세보다 앞으로 옮겼다. 가격·판정·금액은 변경하지 않았다.
+
+**운영에서 확인한 일:** 재부팅 후 새 시황(16:18), 기업코드 원래 저장/만료시각과 캐시 사용 확인.
+코드 준비 10.546→0.426초, 실제치 14→24개, 시간 한도 미조회 12→3개. 범위 29→30개로 달라
+동일조건 평균 성능 주장은 안 한다. 전체 시황 122.100→127.889초로 전체 속도 개선도 주장하지 않는다.
+모바일 선택기 y=2,568→1,420px/제목 y=2,700→1,790px(412 x 915 브라우저), #115 운영 확인.
+저장 시황 복원·보유관리 복귀도 확인. 후속 다열 표 최소 폭 CSS만 보강, 배포 검증 예정.
+
+**대기 사유:** 장중 30초 갱신·시세 지연, 갤럭시 실기기, 독립 연구 표본 대기. 남은 테스트 계약 16개,
+다열 표/미연결 자료/다른 실제 요청 병목은 아직 전체 완료 아님.
+
+**다음 한 건:** #116 다열 표와 관측실 표시 위치 수정의 운영 확인.
+미연결 원인 분류에서 하이일드/실업률의 상세 근거를 놓친 표시 오류를 확인해 수정했다.
+없는 자료를 추가 추정하지 않았다. [분류](docs/maintenance/20261127_report_coverage_audit.md).
+장기판정·월적립·L3·다른 종목 운영 신호·유료 계약 변경 금지.
+[DART 검증](docs/maintenance/20261127_dart_directory_cache.md),
+[모바일 변경](docs/maintenance/20261127_mobile_briefing_entry.md).
+
+다른 작업의 #114 보완 연구도 병합된 최신 main에서 보존했다. 이 연구는 #108과 조건이 달라
+표를 합치지 않는다. 외부 `/mnt/project-files/` 결과 원본은 이 PC에서 확인 불가.
+다른 상품의 운영 신호로 확대하지 않으며, 아래 연구 작업의 다음 단계와 현재 UI 작업을 구분한다.
+
+## 2026-11-27 SOXL −20% 보완 연구 (보유기한·손절 민감도, 작업 중단 지점)
+
+사용자 요청으로 토큰 절약을 위해 여기서 멈춤. [보완 보고서](docs/maintenance/20261127_short_term_soxl_drop_rebound.md),
+스크립트 `scripts/research_drop_rebound.py`(앱 미사용, 연구 전용), 결과 JSON `/mnt/project-files/reports/short_term_study/`.
+PR #108과 같은 SOXL 일봉(2010-03-11~2026-11-25)에 기준가 5종(20/60/252일 고점, 5일·1일 하락) × 보유 10/20/60일·무기한 ×
+손절 없음/−10%/−20% × 비용 3단계를 재생. 결론: +10/+20 차이보다 손절·보유기한이 결과를 좌우(손절 −10%면 기대값 0 근처,
+손절 없이 60일이면 +3~7%지만 최악 −63%). 2026-10-13 진입분은 11-25 기준 −73% 미청산. 앱·판정·장기·월적립·L3 변경 없음.
+**다음 구체 단계:** 사용자 결정 (a) −20% 기준가 정의 (b) +10/+20/분할 청산 (c) 손절 폭 (d) 최대 보유기한 →
+같은 스크립트로 TQQQ·국내외 개별주·일반 ETF 확장 → 단기 화면(진입·손절·익절·최대보유·보류 사유) 설계.
+
+## 2026-11-27 DART 기업코드 재부팅 캐시
+
+**이번에 끝낸 일:** #112 테스트 계약/운영 검증 기록까지 병합. DART 기업코드 준비를 분리하고,
+기존 1일 수명 안의 정상 저장 목록을 재부팅 후 재사용하도록 보강했다. 공시·실적 기준과
+운영 투자판정·월적립·L3는 그대로. 관련 139개, report 회귀 208개 통과.
+[기록](docs/maintenance/20261127_dart_directory_cache.md).
+
+**운영에서 확인한 일:** 차트/시안은 아래 최종 운영 확인과 동일. DART 변경은 배포 후 확인 예정.
+
+**대기 사유:** 미국 장중 30초·공급 지연, 갤럭시 실기기, 새 연구 표본은 계속 대기.
+전체 테스트 남은 16개 계약은 아직 미정리. 전체 backlog 완료 아님.
+
+**다음 한 건:** DART 새 캐시의 재부팅 후 실제 출처·요청 수·연결 수를 확인하고,
+모바일 시황 접근 거리/넓은 표를 점검한다. 동일조건 2~3회 평균이 없으면 전체 속도 개선율을 주장하지 않는다.
+
+## 2026-11-27 최종 운영 확인 / 다음 한 건
+
+**이번에 끝낸 일:** #108 연구 병합, #109 기존 차트 통합, #110 SOXL 2차 분봉 연구,
+#111 SOXL 읽기 전용 관찰 시안·모바일 폭 수정까지 병합/배포.
+1/5/30/60/120분·일/주/월 전환은 기존 분석 차트 한 곳에 통합했다.
+120분 빈 화면의 연도 중복 category 축과 개장 기준 집계를 수정했다.
+연구는 자료 품질 검사까지 완료했으나 검증 가능한 중첩 거래 0건으로 승률은 미확인이다.
+운영 투자판정·월적립·L3에는 연구 규칙을 적용하지 않았다.
+
+**운영에서 확인한 일:** 60→120→5→120, 120 선택 활성 + 캔들/거래량 각 1,500개.
+원본 60분 5,055개 → 120분 2,892개(전체/표시 범위 구분).
+일봉 복귀 시 패턴·추세선·매물대와 MA 5/20/120/240/1000 설정 복원.
+계정 저장 후 재접속 복원 확인. SQL 직접 재조회는 하지 않았고 #107 실행 성공 기록과
+이번 저장/복원을 대조했다. 412px 브라우저에서 가격 차트 폭 370px 확인(실제 갤럭시 아님).
+SOXL 일곱 항목 시안에서 기준시각/진입/손절/익절/보류 사유가 보이고 기존 시장방어 유지.
+실제 장 전 화면: 11/25 16:00 ET 참고 진입 32.02/손절 30.41/1R 33.63 USD,
+채널 이탈·정규장 외·시장방어 보류. 현시점 매수 제안이나 새 -20% 연구 결과가 아니다.
+
+**대기 사유:** 미국 정규장 전이어서 마지막 봉 가격·거래량 변화, 30초 갱신/원천 시세 지연 미확인.
+갤럭시 첫 캔들/전환 시간은 실기기 미접근. 연구는 일봉/분봉 가격 불일치·결측과
+당시 시장방어 유효기간 원본 부족. 새 독립 표본 0건, 자동 수집 서비스 미가동.
+다른 PC 전용 파일은 확인 불가. 전체 backlog 완료라는 뜻이 아니다.
+
+**검증:** decision 1,669 통과, 차트/시안 34 통과, 수정한 기존 계약 관련 74 통과.
+전체 baseline 10,070 통과/207 실패/4 skip. 188개는 지원 pandas/numpy 재실행에서 통과,
+남은 19개 중 오래된 계약 3개를 수정해 통과. 아직 16개는 과거 AST/출력 위치 계약 대조 필요.
+[테스트 분류](docs/maintenance/20261127_test_baseline_audit.md),
+[DART 측정](docs/maintenance/20261127_dart_cold_audit.md).
+
+**다음 한 건:** DART 기업코드 cold 준비 10.546초를 기존 1일 캐시 의미를 유지한
+재부팅 후 재사용으로 줄일 수 있는지 검증. 인증 오류를 가리거나 공시/재무 기준일을
+늘리지 않고, 동일 입력 cold/warm 2~3회에서 연결 수·시간 한도 건수와 함께 비교한다.
+이후 모바일 시황 접근/넓은 표 → 미연결 자료 → 실제 외부요청 병목 → 남은 16개 계약 정리.
+장중/실기기/새 연구 표본 대기 때문에 위 다음 작업을 막지 않는다.
+운영 허용·장기판정·월적립·L3 변경, 다른 종목 운영 신호, 유료 계약만 사용자 결정 대상.
+아래 항목은 과거 경과이며 이 맨 위 기록이 우선한다.
+
+## 2026-11-27 SOXL 관찰 시안 / DART cold 측정
+
+**이번에 끝낸 일:** #108 연구, #109 통합 차트, #110 분봉 2차 연구 병합 완료.
+SOXL 기존 1시간 계획을 일곱 항목 읽기 전용 요약으로 연결하고 중복 가격 표를 제거.
+모바일 metric 2열 CSS가 정밀관측소의 큰 차트 열까지 좁히던 선택자를 제한.
+새 -20%/+10·20% 연구는 운영 신호/승률로 연결하지 않았다.
+
+**운영에서 확인한 일:** 통합 차트 120분 캔들·거래량/일봉·설정 복원은 #109에서 확인.
+재부팅 후 첫 전체 계산 114.302초(101종목), 별도 첫 시황 122.100초.
+DART 회사코드 준비 10.546초, 공시 수집 전체 23.423초, 한국 실제치 연결 14개 /
+시간 한도 12개. 이번 시안과 모바일 CSS의 운영 화면은 배포 후 확인 예정.
+
+**대기 사유:** 미국 정규장 전/갤럭시 실기기 미접근. 분봉 가격 대조와 과거 시장방어 기록 미확보,
+독립 모의 표본 0건. 전체 tests baseline 10,070 통과/207 실패/4 skip(720.97초),
+177개는 pandas 3 환경의 동일 read-only mask 오류. 운영 범위 pandas 2.3.3/numpy 1.26.4로
+재검증해 177개 모두 통과(40.65초). 남은 30개는 별도 분류 중. 성공 기준 재생성 금지.
+
+**다음 한 건:** 시안·모바일 운영 화면 확인 후 DART 회사코드 cold 준비와 시간 예산 처리 보강.
+장기판정·월적립·L3/운영 신호·유료 계약은 변경하지 않는다.
+[시안](docs/maintenance/20261127_soxl_observation_prototype.md).
+
+
+## 2026-11-27 차트 운영 확인 및 SOXL 2차 자료 검증
+
+**이번에 끝낸 일:** #108 연구 병합, #109 차트 통합 별도 병합(`d9cbac8a`).
+2차 연구 규칙 사전 고정(`1acdeb00`), 1/5/60분 원자료·해시·재생 코드·품질 대조 보존.
+332진입 중 16건 기간 중첩이나 12건 일봉/분봉 가격 불일치·4건 결측 포함으로 확정 성과 0건.
+승률 0%가 아니라 미확인. [2차 기록](docs/maintenance/20261127_soxl_phase2_report.md).
+
+**운영에서 확인한 일:** SOXL 60→120→5→120 전환, 가격 캔들 차트 1개,
+120분 선택 상태 및 실제 캔들/거래량 각 1,500개, 일봉 레이어와 계정 MA 설정 재접속 복원.
+
+**대기 사유:** 실제 갤럭시 기기 미접근, 미국 정규장 전이라 30초/원천 지연/마지막 봉 변화 대기.
+당시 시장방어 유효기간 원본·가격 대조가 통과되는 분봉 자료 미확보. 독립 모의 표본 0건,
+규칙은 고정했으나 자동 수집 서비스는 가동 안 함. 다른 PC 전용 자료는 확인 불가.
+
+**다음 한 건:** SOXL 전용 읽기 전용 단기 관찰 시안과 재사용 구성 정리.
+이후 DART cold 시간 측정, 모바일 2열 차트 폭, 남은 성능/현행 테스트 실패 순으로 진행.
+운영 매수 허용·장기/월적립/L3·다른 종목 운영 신호·유료 계약은 사용자 결정 전 변경 금지.
+아래 과거 미병합/운영 대기 기록은 이 항목으로 대체한다.
+
+## 2026-11-27 기존 차트 통합 (최우선 인계)
+
+**이번에 끝낸 일:** PR #108 범위 확인 후 연구 기록으로 병합(`b3a78694`). 별도 차트 브랜치에서
+상단 빠른 차트 제거, 기존 분석 차트의 8개 봉 간격·MA 설정 통합, 연도 중복으로 비던 120분 축 수정,
+거래소 개장 기준 집계와 전일 MA 겹침 수정. [상세](docs/maintenance/20261127_unified_analysis_chart.md).
+연구 결과는 모의검증 후보이며 장기판정·월적립·L3는 변경하지 않았다.
+
+**운영에서 확인한 일:** SOXL 60→120→5→120 순서에서 120 버튼 선택·자료 수신은 정상이나
+가격·거래량이 비는 현상을 재현. SQL 적용·계정 복원은 PR #107 기록을 유지한다.
+
+**대기 사유:** 수정본 운영 배포/화면 확인 진행 중. 미국 정규장 미개장으로 장중 마지막 봉 변화·
+30초 재조회/원천 지연은 대기. 실제 갤럭시 기기에 접근하지 못해 기기 시간은 미측정.
+
+**다음 한 건:** 기존 차트 통합 및 120분봉 운영 확인을 완료하고, 분봉 중첩 표본의 SOXL 2차 검증으로 이동.
+이 아래 과거 '미병합/사용자 승인 대기' 지시는 대체한다. 후속 연구·시안·DART 측정은 승인됨.
+운영 매수 허용·장기/월적립/L3 변경·다른 종목 운영 신호·유료 데이터 계약은 별도 사용자 결정.
+
+## 2026-11-27 SOXL Research Handoff (read this first)
+
+**확인한 중단 지점:** 원격 main `ad5f6f1f` / PR #107까지 반영, 시작 시 주 작업 트리 clean,
+열린 PR 없음. PR #106 빠른 차트 구현, #107 SQL 적용·재접속 복원 검증은 완료 상태였다.
+기존 11/13 SOXX 1시간봉 연구는 있지만 새 SOXL -20% 기준가/+10·+20% 비교 결과는 없었다.
+다른 Claude 작업 트리의 월적립 `app.py` 수정과 11/16 임시 baseline 삭제 상태는 건드리지 않았다.
+
+**이번에 끝낸 일:** [SOXL 비교 보고서](docs/maintenance/20261127_soxl_drawdown_report.md).
+전일 종가/직전 20일 최고 종가 × 종가 확인/장중 도달 × +10/+20 목표 8개 안을
+같은 진입 날짜·가격·금액으로 비교했다. 결과 수집 전 프로토콜 커밋 `5ada8a50`.
+공개 일봉 4,205개(2010-03-11~2026-11-25), 신호·거래·일별 계좌곡선·해시·재실행 코드 보존.
+전일 종가 -20%는 두 목표 모두 평균손익 음수. 20일 최고 종가 -20%는 평균 양수지만
+기간별 불안정·갭 손실이 있어 운영 채택 근거로 단정하지 않는다. 장기판정·월적립·L3·앱 코드는 변경 없음.
+새 연구 21개와 빠른 차트 9개 테스트 통과. SOXL 포함 선택 회귀는 기존 실패 1건을 수정 전 커밋에서 재현했다.
+운영 14:22~14:24 KST: MA 복원·일봉/5분 표시 확인, 캐시 재조회 첫 차트 데이터 표시 약 3.9초(서버 0.11초).
+연구 브랜치 `research/soxl-drawdown-paired-exits-20261127`; PR 검토용이며 main 병합·운영 재부팅은 하지 않는다.
+[PR #108](https://github.com/kej0587-afk/my-stock-lab/pull/108) 생성·푸시 완료. 연구 커밋 `5ec914a5`, 사전 조건 `5ada8a50`.
+
+**아직 확인하지 못한 일:** 다른 PC와 `/mnt/project-files/` 전용 자료는 확인 불가.
+미국 정규장이 닫혀 있어 SOXL 장중 30초 마지막 봉 갱신·실제 시세 지연은 운영 확인 대기.
+과거 분봉 순서, 당시 실제 체결, 독립 기간 외 성과, 과거 시장방어 통과 여부는 이번 일봉 연구로 검증하지 않았다.
+SQL은 #107 적용 기록과 운영 설정 복원으로 확인했으며 이번에 DB DDL/RLS를 재조회·수정하지 않았다.
+
+**다음 한 건:** 미국 정규장에 SOXL 30초 마지막 봉 갱신과 공급 시세 지연만 실측한다
+(11/27 단축장 23:30 KST~11/28 03:00 KST). 단기매매 화면 반영·다른 상품 확대는 보고서 검토 후 사용자 결정.
+아래 누적 작업 지시보다 이 인계가 우선한다.
+
+Updated: 2026-11-27 KST. Read before large source files or edits.
 This is the current work order. Historical next-task instructions are superseded.
 
 ## Resume Safely
@@ -570,6 +1230,12 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
+**Current (2026-11-27):** SOXL -20% paired-exit research is finished; see the four-part handoff at the top
+and [report](docs/maintenance/20261127_soxl_drawdown_report.md). One next task: measure the remaining
+SOXL live last-bar refresh/quote delay during a US regular session. Do not deploy the research rules.
+
+### Historical work orders (superseded by the current handoff above)
+
 **Current work order (user, 2026-11-26 21:18 KST; replaces the order below; status table §4):** errors and speed before new features.
 (1) prod-check records up to date (done: status table v3). (2) incomplete results visible to the user: report made right after a reboot
 before Today shows 0 companies → now labelled `오늘 점검 미계산` with counts for 확인 결과 0개 / 일부 조회 실패 / 공식값 없음 and a
@@ -611,6 +1277,8 @@ report and a 390 px check: index table now shown once (빠른 요약), 빠른 �
 DART actuals read as 조/억원 (exact won in 상세 근거), 주요 기업과 사건 keeps 10 rows (body-confirmed first), rest in 상세 근거; phone-only
 smaller title. **Merged PR #94, prod-checked 11:13 KST** (all four visible; 390 px title 440→62 px, holdings impact 7,070→4,410 px). Session order, 외국인 units and title/body labels were already right. Round 2: top-of-자산 현황 line '이번 달 월적립' (월계획액·누적 집행기록액·남은 계획액·오늘 추가 가능액, 미확인 never summed) and 2-per-row metric/macro cards on phones. Merged PR #95-#97, prod-checked 11:28/11:45 KST (monthly line at 591 px, was ~5,150 px; cause text names 기술적 타점계산, which fills the monthly signals). Next: 오늘 점검 → 시황 still ~2,400 px on phones, 34 wide tables.
 
+**Staged refactoring (work-order step 4, after report quality; doc `docs/maintenance/20261127_refactor_report_sections_tables.md`):** #19 steps 3–6 moved the four remaining tables out of `report_evidence.report_sections` (452 → 245 lines) unchanged: `_background_candidate_lines`, `_economic_release_lines`, `_sector_why_lines`, `_watch_candidate_lines`. Base main `a349e4af`: check_refactor all 2 known failures / 2,495 pass both; full suite the same 22 known failures / 10,200 pass both; all 129 `report_sections` outputs recorded during the full suite identical (25 market_memo ones print the current minute, re-run in the same minute = identical); 10 synthetic inputs byte-identical. Tools: `scripts/report_sections_parity/`. Cloud clone is shallow: run `git fetch --unshallow origin` first or ~600 snapshot tests error. Prod-checked 12:07 KST report (reboot 11:55:58, office PC): the four blocks match the 11:13 KST pre-#98 report line by line apart from live data. Open question: both reports show no 관심 후보 table rows (pre-existing; check whether no non-held rows existed). Step 7 (same doc): 시장 스토리 fact lines → `_market_fact_lines` / `_story_cause_lines`, `report_sections` 245 → 168 lines, same checks all identical (base `51c084c5`); Merged PR #99, prod-checked 12:18 KST report (13 fact lines identical to the 12:07 report with numbers masked). Empty-looking 관심 후보 block: the table had moved to 포트폴리오 · 교체 검토; `additional_evidence` now adds "표는 위 '…' 구역에 있습니다." when only the explanation is left (PR #100, prod-checked 12:36 KST; also added to 지수·매크로 한눈에, 내 보유 종목 영향, 중앙은행 공식 결과, 시장 안전장치). **Data follow-up seen in that report (not caused by #100, cause not traced):** the KR filing actuals table (15 companies) was missing in the 12:07 and 12:36 reports but present at 12:18; the 12:36 report says DART live corp-code lookup failed and the stored list was used. Fixed display (doc `docs/maintenance/20261127_kr_filing_actuals_gap.md`): when Korean actuals are absent the block now states 미계산 / 일부 조회 실패 / 공식값 없음·미연결 / 확인 결과 0개 with reasons and counts from `pipeline.coverage.missing`; prod-checked 12:55/12:57 KST: first report after reboot 14 connected / 13 time budget / 2 absent of 29, second report 28 connected / 1 absent. **Open speed item:** first-report KR filing collection hits the 24 s budget for ~13 of 29 issuers (all of them when the DART corp-code live fetch also fails); options need measurement + user choice. app.py step 1 (doc `docs/maintenance/20261127_refactor_portfolio_asset_rows.md`): `build_portfolio_analysis_report` per-holding loop → `_portfolio_asset_rows` (411 → 340 lines); full suite / gate failure lists identical, 5 synthetic portfolios' full return values identical (`scripts/portfolio_analysis_parity.py`). Prod-checked 13:03 KST (risk 86/100, asset table, notes same; pre-value run may already have been new code). Step 2: risk-index components → `_portfolio_risk_components` (340 → 296 lines), same checks identical. Prod-checked 13:11 KST (identical). Step 3: risk notes → `_add_portfolio_risk_notes` (296 → 266 lines), same checks identical; prod baseline recorded before merge (13:12:39, old code) and after reboot 13:20 KST byte-identical (PR #104). Batch #98–#104 all prod-checked. **Rule from now on:** ask the office-PC thread to record the old-code values before merging (Streamlit redeploys on merge). **Next refactor step:** portfolio return metrics block of the same function, or another ROADMAP function. After refactoring: intraday charts/MAs (SOXL first) → short-term criteria.
+
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
 update of the last bar's price/volume during the session; measure first-chart and bar-switch time on SOXL; show realtime support,
@@ -620,6 +1288,18 @@ settings; default computed on the chart's own bars; review daily MAs over intrad
 first, replay +10% vs +20% exits on the same entries (win rate, avg P/L after costs, max loss, holding days). Long-term decisions,
 monthly DCA and L3 stay. When errors/speed are done: one summary split into existing implementation / new development / needed price
 data and cost for these three items.
+
+**Quick chart (follow-ups (a)+(b), 2026-11-27; doc `docs/maintenance/20261127_quick_chart_ma.md`):** 정밀관측소 now opens with a
+fragment chart (1/5/30/60/120-minute + daily, Yahoo regular session; 120m = two 60m bars per session; 30 s refresh of the in-progress
+bar during the session; shows last bar, measured lag, received range, MA shortage). MAs: typed periods (default 5/20/120/240/1000),
+per-line toggle, daily-MA overlay on intraday bars (through the previous close), "데이터 부족" when bars < period, saved per login in
+Supabase `chart_preferences` (SQL `docs/20261127_chart_preferences.sql`, NOT applied yet; until then session-only with a caption).
+Files: `stock_lab_core/{intraday_chart,intraday_chart_view,chart_preferences}.py`, app.py (7 lines), tests/test_intraday_chart.py.
+SOXL server time (cloud, 3-run median): first 0.43 s, switches 0.20–0.25 s, cached 0.10–0.12 s; browser payload ~245 KB.
+KR Yahoo 1m measured ~20 min behind (13:26 KST); Naver blocked from the cloud, KR realtime not connected. US live lag not measured yet.
+**Merged PR #106 13:37 KST; table created 13:50 KST (user OK 13:49); prod-checked 13:51–13:58 KST (doc §7):** SOXL first chart 5.4 s wall
+(server 0.40), switches 0.6–3.7 s; 005930 4.4 s, switches 0.4–0.9 s, lag 20–21 min (1m/5m); MA shortage line, daily overlay, save + reload restore OK.
+**Next:** US-session SOXL live lag/refresh check, then follow-up (c) short-term criteria (define the −20% reference first).
 
 **Work order after C-6/C-11 (2026-11-26 14:40 KST, full status table `/mnt/project-files/status/20261126_stock_lab_status_v3.md`):**
 (1)–(3) C-8/C-9/C-12/C-13 **decided 2026-11-26 15:03 KST (C-8 one-tranche-per-day rule 15:13) and applied** (doc `docs/maintenance/20261126_c8_c9_c12_c13_apply.md`): C-12 monthly 0x for the 3 codes when the profit condition holds; C-9 screen text '100% = 1x of the ticker's normal monthly share'; C-13 macro missing/recovery log + monthly caption; C-8 crisis fund (time split 6, guard respect, 1 tranche per ticker per day, per-ticker fund + account cash check, candidate without a saved fund). Tables created 15:53 KST, PR #69/#70 rebooted 15:54, monthly panel and precision hold panels checked 15:56–16:00 KST. Supabase tables `crisis_fund_plans`/`crisis_fund_executions`/`macro_status_events` (SQL in `db_schema.get_crisis_macro_log_create_sql`). (4) C-7 hold panel: **comparison done 2026-11-26 (doc `docs/maintenance/20261126_c7_hold_panel_compare.md`), **user chose (c) 2026-11-26 and applied** (§8 of that doc): single verdict from hold_judgement, lower panel = evidence (fin trend, macro), '현재 보유분 관리' and '오늘 추가매수' shown separately (gate only), loss emergency exit needs MA 역배열 (445 states moved to 🚨/📉/⚠️, table §8.2; fin 0/1 boundary tests §8.3), fin ≤0 exit kept; verdict shown once (upper panel), lower panel evidence only (PR #72, rebooted 16:24, checked 16:27 KST). (5) C-10 YELLOW scout + D12b: **comparison done 2026-11-26 (doc `docs/maintenance/20261126_c10_d12b_yellow_leader_compare.md`), **user kept both as is (2026-11-26, comparison done · 현행 유지)**: YELLOW new entry stays 1/3 first scout, holding adds keep shortfall/monthly formula, leader overweight block stays. (6) long-term stock monthly execution rate: **analysis done 2026-11-26** (doc `docs/maintenance/20261126_long_term_stock_execution_rate.md`, mock account, C1 as is): planned stock-months executable at least once 14.6% (149/1,019), replay executable rate by amount 14.6%; months with no executable day mostly blocked first by stock timing (MTF trend damage 382, R/R/overheat/condition 448), market defense 39; timing-only full-month blocks 89. App records (16:43 KST): plans and executions tables empty. Monthly screen now uses the standard names (PR #74, rebooted 16:51, checked 16:52–16:53 KST) (월계획액 · 누적 집행기록액 · 남은 계획액 · 오늘 추가 가능액 · 현재 대기액 · 계획 초과 집행액 · 앱 기록 기준 실제 집행률; 0원 vs 미확인), `monthly_execution.standard_amounts`; gate and amounts unchanged. User 2026-11-26 17:10 KST: keep C1; 870 never-executable months replayed under 6 options (doc §5): single relaxations R/R 108, overheat 0, condition wait 153, MTF 80 months; all four together 635 months (73.0%), Δ 29,325,000 of 40,200,000 (72.9%); status 'analysis done · C1 kept'. Report overhaul started: earnings profit rows split into 영업이익/순이익/GAAP EPS/조정 EPS (unlabelled EPS separate), '오늘 달라진 점' always shown, closing section '마무리 · 보유 종목 영향과 다음 확인 사항' (doc `docs/maintenance/20261126_report_overhaul_earnings_closing.md`). PR #76 rebooted 17:29 KST; PR #78 (sector leader change, completed official results) merged 19:41. **Rebooted 20:33 KST (main e079af9e) and prod-checked 20:36–20:43 KST** (doc §6): profit rows (SK hynix/PANW/NVDA/INTC), sector-leader lines in '오늘 달라진 점' (KR 4, US 12), closing section (holdings rows copied from the portfolio table, 5 next items), monthly columns (남은 = 오늘 추가 가능액 + 현재 대기액 for all 7 rows). Not seen in prod: a '발표 완료' line (no official result on the 11-26 KR / 11-25 US sessions; BOK MPC 11-26 still 예정 in the report). Follow-up: PANW EPS from the net income sentence fixed by PR #80 (rebooted 20:56 KST, checked 21:03 report: GAAP EPS $0.57 and 조정 EPS $1.05 rows filled, doc §7). BOK MPC official result not collected yet: page structure recorded in `docs/maintenance/20261126_bok_mpc_source_structure.md` (latest decision via main-page link `통화정책방향 (date)` → P0000559 view `div.dbdata`; press list pages show "준비중"; meeting table decision cell empty on the day). Collector built (PR #82) and fixed against the live page (PR #83: main-page link query normalized, body heading skipped). **Prod-checked after reboot 21:56 KST (dd6835e5, PR #83–#85)** in `docs/maintenance/20261126_prod_check_bok_today_gate_perf.md`: BOK row in the central-bank table, '발표 완료' daily-change line, schedule row '공식 결과 확인' (3.00% → 3.25%); Today-not-calculated warning and report labels (PR #84); no '거래소 달력 조회불가' rows (PR #85); condition A run 1 Today 87.8 s / report 125.0 s, run 2 75.3 s / 63.7 s, refresh 26.4 s. Note: merging to main during a prod check auto-updates the app and cuts running work (21:31 and 21:52 reports lost). Speed round 1 (PR #87, e1193866) re-measured after 23:35 reboot (`docs/maintenance/20261126_perf_round1_remeasure.md`): Today 108.0 s (kr_history requests 384→328, slice_reuse 85, but a new 42.7 s Yahoo metadata lock wait), report 130.0 s; run 2 73.6 s / 72.2 s (SEC requests 94→61, sec_archive hit 33; assembly +12 s unexplained); refresh 13.7 s. Earnings line, 2 data-check rows, monthly 오늘 추가 가능액 distribution unchanged; decision codes identical between runs 1 and 2 (21:56 codes were not saved). (7) report: #7
