@@ -176,5 +176,18 @@ def test_plan_amounts_prices_and_status_match_baseline_except_unset_weight_text(
     # Keep every other cell, amount, price and status under full equality.
     first_exit = next(row for row in expected["rows"] if row["단계"] == "1차 익절")
     first_exit["조건"] += " · 1차 계획 진입가 $522.65 기준(실제 체결·추가 진입 후 재산출)"
+    # Approved PR #118 (SOXL plan consistency): first row renamed and its weight source named;
+    # amount split and weight source added. Approved PR #120: entry price basis rows added.
+    expected["rows"][0]["단계"] = "목표까지 이론상 부족분"
+    source = "판정 입력(선택 계좌 보유표)" if target else "판정 입력에 목표비중 없음"
+    if target:
+        expected["rows"][0]["조건"] += f" · 출처: {source}"
+    if "amount_note" in expected:
+        expected["amount_note"] = expected["amount_note"].replace("총 추가 필요", "목표까지 이론상 부족분")
+    assert actual["weight_source"] == source
+    assert [row["구분"] for row in actual["amount_split"]] == ["목표까지 이론상 부족분", "오늘 실행가능액", "실제 집행기록액"]
+    assert [row["단계"] for row in actual["entry_basis"]][:3] == ["1차 진입 (30%)", "2차 추가", "3차 예비"]
+    for key in ("weight_source", "amount_split", "entry_basis"):
+        expected[key] = actual[key]
     assert actual == expected
     assert decision == original
