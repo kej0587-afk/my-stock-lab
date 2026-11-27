@@ -77,8 +77,10 @@ def observatory_fred_observations(now, *, loader=None, symbols=OBSERVATORY_FRED)
         row, _ = observation(CATALOG[symbol], series, clock.tz_localize(None) if clock.tzinfo else clock, reason)
         return symbol, row
 
+    from stock_lab_core.performance import submit_with_context
     with ThreadPoolExecutor(max_workers=4) as pool:
-        rows = dict(pool.map(one, symbols))
+        futures = [submit_with_context(pool, one, symbol) for symbol in symbols]
+        rows = dict(future.result() for future in futures)
     meta = {"seconds": time.perf_counter() - started, "requested": len(symbols),
             "connected": sum(1 for row in rows.values() if row.get("값") != "미연결"), "as_of": as_of}
     return rows, meta

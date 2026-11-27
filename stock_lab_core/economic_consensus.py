@@ -257,6 +257,7 @@ def _public_table(body, url):
 
 
 def _request(url, api_key, fetch):
+    from stock_lab_core.report_io_audit import http_call
     public = url in _PUBLIC_BY_URL
     kwargs = {"headers": {"User-Agent": "StockLab-Economic-Consensus/1.0"},
               "timeout": REQUEST_TIMEOUT, "allow_redirects": False, "stream": True}
@@ -270,7 +271,7 @@ def _request(url, api_key, fetch):
         fetch = session.get
     started = time.monotonic()
     try:
-        response = fetch(url, **kwargs)
+        response = http_call("consensus_public" if public else "consensus_api", fetch, url, **kwargs)
         status = response.status_code
         if status != 200:
             reason = {401: "api_key_rejected", 403: "calendar_subscription_required",
@@ -301,16 +302,21 @@ def _request(url, api_key, fetch):
 
 
 def _cached(url, api_key, fetch, now):
+    from stock_lab_core.report_io_audit import cache_event, lock_wait
+    label = "consensus_public" if url in _PUBLIC_BY_URL else "consensus_api"
+    cache_event(label, "lookup")
     key = (url, hashlib.sha256(api_key.encode()).digest(), id(fetch))
     tick = time.monotonic()
-    with _LOCK:
+    with lock_wait(_LOCK, "consensus_cache"):
         entry = _CACHE.get(key)
         if entry and entry[1] is fetch:
             _, _, stored, payload, reason, status, retrieved_at = entry
             ttl = FAILURE_TTL if reason else CACHE_TTL
             if tick - stored < ttl and retrieved_at <= now.isoformat():
                 _CACHE.move_to_end(key)
+                cache_event(label, "hit")
                 return deepcopy(payload), reason, status, retrieved_at, True
+    cache_event(label, "miss")
     try:
         payload, reason, status = _request(url, api_key, fetch)
     except _Unavailable as exc:
@@ -366,7 +372,9 @@ def _public_fallback(rows, keys, now, fetch, result):
     matches, conflicts = {}, set()
     ordered_targets = sorted(targets.items())
     with ThreadPoolExecutor(max_workers=4) as executor:
-        responses = list(executor.map(lambda item: _cached(item[0], "", fetch, now), ordered_targets))
+        from stock_lab_core.performance import submit_with_context
+        futures = [submit_with_context(executor, _cached, item[0], "", fetch, now) for item in ordered_targets]
+        responses = [future.result() for future in futures]
     for (url, wanted), response in zip(ordered_targets, responses):
         payload, reason, status, retrieved_at, cached = response
         public["sources"].append({"source_url": url, "reason": reason, "http_status": status,

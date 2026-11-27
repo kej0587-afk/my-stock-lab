@@ -106,21 +106,22 @@ def parse_cboe_ratio(body):
 
 @cache_result(ttl=900, failure_ttl=30, is_success=lambda r: not r[0].empty, trace_name="macro_monitor")
 def load_macro_series(symbol, years, as_of):
+    from stock_lab_core.report_io_audit import http_call
     item = CATALOG[symbol]
     try:
         if item.provider == "FRED":
             start = (pd.Timestamp(as_of) - pd.DateOffset(years=years)).date().isoformat()
-            with requests.get("https://fred.stlouisfed.org/graph/fredgraph.csv",
+            with http_call("fred_observatory", requests.get, "https://fred.stlouisfed.org/graph/fredgraph.csv",
                               params={"id": symbol, "cosd": start}, timeout=(2, 6)) as response:
                 response.raise_for_status()
                 series = parse_fred_csv(response.text, item)
         elif item.provider == "Cboe":
-            with requests.get(item.url, timeout=(2, 6)) as response:
+            with http_call("cboe_observatory", requests.get, item.url, timeout=(2, 6)) as response:
                 response.raise_for_status()
                 series = parse_cboe_ratio(response.text)
             return series, "공식 최신 표 · 단일 관측, 이력 미연결" if not series.empty else "공식 표의 일자·전체 비율 미연결"
         elif item.provider == "CNN":
-            with requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            with http_call("cnn_observatory", requests.get, "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
                               headers={"User-Agent": "Mozilla/5.0"}, timeout=(2, 6)) as response:
                 response.raise_for_status()
                 data = response.json().get("fear_and_greed_historical", {}).get("data", [])

@@ -182,7 +182,10 @@ class PerformanceTrace:
             category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
             events = dict(self._events)
         for entry in entries:
-            entry["active_wall_seconds"] = _interval_seconds(function_intervals[(entry["category"], entry["name"])])
+            intervals = function_intervals[(entry["category"], entry["name"])]
+            entry["active_wall_seconds"] = _interval_seconds(intervals)
+            entry["first_started_seconds"] = min(start for start, _ in intervals) - self._started
+            entry["last_finished_seconds"] = max(end for _, end in intervals) - self._started
         entries.sort(key=lambda entry: entry["total_seconds"], reverse=True)
         categories = {}
         for entry in entries:

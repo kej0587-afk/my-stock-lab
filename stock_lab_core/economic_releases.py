@@ -57,6 +57,8 @@ from stock_lab_core.release_calendar import (
     load_release_calendar,
 )
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.performance import count_event, measure, timed_call
+from stock_lab_core.report_io_audit import http_call, lock_wait, cache_event, provider_label
 
 
 register_loaded_source(__name__, __file__)
@@ -116,12 +118,18 @@ class _Unavailable(ValueError):
 
 
 def _cached(key, loader, now):
+    # Fixed labels only; cache keys may contain credential hashes.
+    group = key[0] if isinstance(key, tuple) and key[0] in {
+        "bls", "retail", "fed", "ecos", "ecos_metadata"} else "bulletin"
+    cache_event(group, "lookup")
     tick = time.monotonic()
-    with _CACHE_LOCK:
+    with lock_wait(_CACHE_LOCK, "economic_cache"):
         entry = _CACHE.get(key)
         if entry and tick - entry[0] < CACHE_TTL and entry[1] <= now.isoformat():
             _CACHE.move_to_end(key)
+            cache_event(group, "hit")
             return deepcopy(entry[2]), "", entry[1]
+    cache_event(group, "miss")
     try:
         value = loader()
         if not value:
@@ -133,7 +141,7 @@ def _cached(key, loader, now):
         return None, f"request_failed:{type(exc).__name__}", None
     except (ValueError, TypeError, KeyError, OverflowError, AttributeError):
         return None, "invalid_response", None
-    with _CACHE_LOCK:
+    with measure("official_store", "economic_cache"), lock_wait(_CACHE_LOCK, "economic_cache"):
         _CACHE[key] = (time.monotonic(), now.isoformat(), deepcopy(value))
         _CACHE.move_to_end(key)
         while len(_CACHE) > _CACHE_LIMIT:
@@ -215,7 +223,7 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
     try:
         from stock_lab_core.report_generation_performance import report_http_attempt
         report_http_attempt('economic_api')
-        response = method(url, **kwargs)
+        response = http_call(provider_label(url), method, url, **kwargs)
     except requests.RequestException as exc:
         if diagnostics is not None:
             diagnostics["transport_error"] = type(exc).__name__
@@ -245,7 +253,8 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
         if url.startswith(ECOS_URL) or url.startswith("https://www.motir.go.kr/"):
             response.encoding = "utf-8"
         try:
-            result = response.text if text else response.json()
+            with measure("official_transform", "economic_response"):
+                result = response.text if text else response.json()
             if census and diagnostics is not None:
                 diagnostics["response_summary"] = _census_response_summary(result, (params or {}).get("key", ""))
             return result
@@ -955,12 +964,14 @@ def load_economic_releases(event_rows=None, now=None, *, include_calendar=False)
         fed = submit_with_context(executor, _fed, now, fred_key)
         calendar = submit_with_context(executor, load_release_calendar, now=now, fred_api_key=fred_key)
         korea = [submit_with_context(executor, _ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
-        rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
-        calendar = calendar.result()
+        with measure("official_join", "economic_workers"):
+            rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
+            calendar = calendar.result()
         for row, spec in zip(rows, _BLS_SERIES):
             _link_bls_calendar(row, spec, calendar, now)
     from stock_lab_core.economic_cache import retain_successful_observations
-    rows = retain_successful_observations(rows, now)
+    with measure("official_store", "economic_observations"):
+        rows = retain_successful_observations(rows, now)
     # A failed batch has no period until the last successful observation is restored.
     for row, spec in zip(rows, _BLS_SERIES):
         if row["status"] == "stale":

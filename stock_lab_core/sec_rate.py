@@ -24,6 +24,9 @@ from urllib.parse import urlsplit
 import requests
 
 from stock_lab_core.performance import count_event, measure
+from stock_lab_core.earnings_discovery_performance import (
+    observed_lock, transport_measurement, transport_response_event,
+)
 
 KST = timezone(timedelta(hours=9))
 SEC_HOSTS = {"www.sec.gov", "data.sec.gov", "efts.sec.gov"}
@@ -81,7 +84,7 @@ class SecLimiter:
         """Block until a slot is free in the 1 s window; raise while an SEC access limit is active."""
         with measure("external_data", "sec_rate_wait"):
             while True:
-                with self._lock:
+                with observed_lock(self._lock, "sec_rate"):
                     now = self._clock()
                     if now < self._paused_until:
                         count_event("sec.blocked_by_access_limit")
@@ -96,7 +99,8 @@ class SecLimiter:
                         count_event("sec.mode." + self.mode())
                         return
                     delay = WINDOW - (now - self._starts[0])
-                self._sleep(max(delay, 0.001))
+                with measure("external_data", "sec_rate_window_wait"):
+                    self._sleep(max(delay, 0.001))
 
     def access_limited(self, retry_after=None):
         with self._lock:
@@ -150,12 +154,16 @@ def _is_access_limit(response):
 
 def _send(self, request, **kwargs):
     if urlsplit(request.url).hostname not in SEC_HOSTS:
-        return _original_send(self, request, **kwargs)
+        with transport_measurement():
+            return transport_response_event(_original_send(self, request, **kwargs))
     if _prepaid.get():
         _prepaid.set(False)  # one prepaid slot covers exactly one send (redirect hops pay again)
     else:
         limiter.acquire()
-    response = _original_send(self, request, **kwargs)
+    count_event("sec.http.attempt")
+    with transport_measurement(), measure("external_data", "sec_http_provider_response"):
+        response = _original_send(self, request, **kwargs)
+    transport_response_event(response, prefix="sec.http")
     if _is_access_limit(response):
         limiter.access_limited(response.headers.get("Retry-After"))
     return response

@@ -25,6 +25,8 @@ import requests
 
 from stock_lab_core.earnings_sources import _ALIASES, _ISSUERS
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.performance import count_event, measure, submit_with_context
+from stock_lab_core.earnings_discovery_performance import observed_get, observed_lock, coverage_event
 
 register_loaded_source(__name__, __file__)
 
@@ -444,7 +446,7 @@ def _request_source(ticker, now, url, *, pdf=False):
         return None, diagnostic
     started = time.monotonic()
     try:
-        response = requests.get(spec["source_url"], timeout=REQUEST_TIMEOUT, allow_redirects=False, stream=True,
+        response = observed_get("ir_pdf" if pdf else "ir_html", requests.get, spec["source_url"], timeout=REQUEST_TIMEOUT, allow_redirects=False, stream=True,
                                 headers={"User-Agent": "StockLab-OfficialResults/1.0",
                                          "Accept": "application/pdf" if pdf else "text/html"})
         try:
@@ -456,19 +458,22 @@ def _request_source(ticker, now, url, *, pdf=False):
             if not is_official_result_url(ticker, response.url):
                 diagnostic["reason"] = "response_url_not_allowed"
                 return None, diagnostic
-            data = bytearray()
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                data.extend(chunk)
-                if len(data) > (MAX_PDF_BYTES if pdf else MAX_BYTES):
-                    raise ValueError("page_too_large")
-                if time.monotonic() - started > MAX_SECONDS:
-                    diagnostic.update(reason="request_deadline", fallback_allowed=True)
-                    return None, diagnostic
-            if pdf:
-                from stock_lab_core.earnings_result_pdf import parse_official_result_pdf
-                result = parse_official_result_pdf(bytes(data), ticker, spec, now)
-            else:
-                result = parse_earnings_result(bytes(data), ticker, now)
+            with measure("external_data", "earnings_collection.ir_pdf.body" if pdf else "earnings_collection.ir_html.body"):
+                data = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    data.extend(chunk)
+                    if len(data) > (MAX_PDF_BYTES if pdf else MAX_BYTES):
+                        raise ValueError("page_too_large")
+                    if time.monotonic() - started > MAX_SECONDS:
+                        count_event("earnings_collection.ir_result.time_budget.body")
+                        diagnostic.update(reason="request_deadline", fallback_allowed=True)
+                        return None, diagnostic
+            with measure("external_data", "earnings_collection.ir_pdf.transform" if pdf else "earnings_collection.ir_html.transform"):
+                if pdf:
+                    from stock_lab_core.earnings_result_pdf import parse_official_result_pdf
+                    result = parse_official_result_pdf(bytes(data), ticker, spec, now)
+                else:
+                    result = parse_earnings_result(bytes(data), ticker, now)
             diagnostic.update(status="connected", reason="official_result")
             return result, diagnostic
         finally:
@@ -494,6 +499,7 @@ def _request_result(ticker, now):
     if result or not alternate or not diagnostic.get("fallback_allowed"):
         return result, diagnostic
     first = deepcopy(diagnostic)
+    count_event("earnings_collection.ir_result.alternate_attempt")
     result, diagnostic = _request_source(ticker, now, alternate, pdf=True)
     diagnostic["attempts"] = [first, deepcopy(diagnostic)]
     if result:
@@ -509,24 +515,28 @@ def _safe_age(result, now, max_age):
 
 def _collect(ticker, now, refresh):
     key = (ticker, _PROFILES[ticker]["fiscal_period"])
-    with _ISSUER_LOCKS[ticker]:
-        with _LOCK:
+    with observed_lock(_ISSUER_LOCKS[ticker], "earnings_collection.ir_result.issuer"):
+        with observed_lock(_LOCK, "earnings_collection.ir_result.cache"), measure("external_data", "earnings_collection.ir_result.cache_lookup"):
             cached, last = deepcopy(_CACHE.get(key)), deepcopy(_LAST_SUCCESS.get(key))
         diagnostic = dict(ticker=ticker, fiscal_period=key[1], source_url=_PROFILES[ticker]["source_url"],
                           checked_at=now.isoformat(), attempted=False, from_cache=False, status="unavailable", reason="refresh_disabled")
         if cached and _stamp(cached["diagnostic"]["checked_at"]) > now:
+            count_event("earnings_collection.ir_result.cache.cutoff_rejected")
             diagnostic["reason"] = "cached_observation_after_cutoff"
             return None, diagnostic
         if cached and _safe_age(cached["diagnostic"], now, SUCCESS_TTL if cached["result"] else FAILURE_TTL):
             ttl = SUCCESS_TTL if cached["result"] else FAILURE_TTL
             if time.monotonic() - cached["clock"] < ttl:
+                count_event("earnings_collection.ir_result.cache." + ("hit" if cached["result"] else "failure_hit"))
                 diagnostic = dict(cached["diagnostic"], attempted=False, from_cache=True)
                 if cached["result"]:
                     return dict(cached["result"], collection_reason="success_cache"), diagnostic
                 refresh = False
+        if not diagnostic["from_cache"]:
+            count_event("earnings_collection.ir_result.cache.miss")
         if refresh:
             result, diagnostic = _request_result(ticker, now)
-            with _LOCK:
+            with observed_lock(_LOCK, "earnings_collection.ir_result.cache"), measure("external_data", "earnings_collection.ir_result.cache_store"):
                 _CACHE[key] = dict(clock=time.monotonic(), result=deepcopy(result), diagnostic=deepcopy(diagnostic))
                 if result:
                     _LAST_SUCCESS[key] = deepcopy(result)
@@ -536,6 +546,7 @@ def _collect(ticker, now, refresh):
             if result:
                 return result, diagnostic
         if last and _safe_age(last, now, LAST_SUCCESS_MAX_AGE) and (diagnostic.get("fallback_allowed") or diagnostic["reason"] == "refresh_disabled"):
+            count_event("earnings_collection.ir_result.cache.last_success_hit")
             result = dict(last, stale=True, collection_reason="last_success:" + diagnostic["reason"])
             diagnostic.update(status="fallback", fallback_used=True, last_success_at=last["checked_at"])
             return result, diagnostic
@@ -587,11 +598,22 @@ def load_earnings_results(events, now, *, refresh=True):
         elif ticker not in eligible:
             eligible.append(ticker)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        collected = list(pool.map(lambda ticker: _collect(ticker, now, refresh), eligible))
+        futures = [submit_with_context(pool, _collect, ticker, now, refresh) for ticker in eligible]
+        with measure("external_data", "earnings_collection.ir_result.ordered_join_wait"):
+            try:
+                collected = [future.result() for future in futures]
+            except BaseException:
+                # Executor.map cancelled unconsumed futures on iterator failure.
+                # Context propagation must retain that exceptional-path behavior.
+                for future in futures:
+                    future.cancel()
+                raise
     results = [result for result, _ in collected if result]
     sources.extend(diagnostic for _, diagnostic in collected)
     if len(supplied) > MAX_EVENTS:
+        count_event("earnings_collection.ir_result.input_cap_reached")
         sources.append(dict(status="skipped", reason="event_limit", attempted=False))
+    coverage_event("ir_result", results=results, sources=sources)
     return dict(results=sorted(results, key=lambda row: (row["release_date"], row["ticker"])), sources=sources)
 
 

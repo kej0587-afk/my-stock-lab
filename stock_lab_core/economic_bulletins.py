@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 from stock_lab_core import economic_releases as releases
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.performance import count_event, measure, submit_with_context, timed_call
+from stock_lab_core.report_io_audit import http_call
 
 register_loaded_source(__name__, __file__)
 
@@ -77,7 +78,7 @@ def _customs_detail_request(params, diagnostics):
         try:
             count_event("bulletin_http.exports_detail.attempt")
             with measure("report_transport", "bulletin_exports_detail_http"):
-                response = releases.requests.get(
+                response = http_call("customs_detail", releases.requests.get,
                     CUSTOMS_DETAIL_URL, params=params, timeout=CUSTOMS_DETAIL_TIMEOUT, allow_redirects=False,
                     headers={"User-Agent": "StockLab-Economic-Releases/1.0"})
             try:

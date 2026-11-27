@@ -245,6 +245,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"],
               "earnings_collection_scope": earnings_scope,
               "central_bank_results": central_bank_results}
+    from stock_lab_core.report_generation_performance import record_official_coverage
+    record_official_coverage(result)
     try:
         from stock_lab_core.report_dashboard import observatory_fred_observations
         with measure("external_data", "observatory_fred"):

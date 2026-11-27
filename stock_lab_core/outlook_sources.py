@@ -8,6 +8,8 @@ import threading
 import time
 
 import requests
+from stock_lab_core.performance import count_event, measure, timed_call
+from stock_lab_core.report_io_audit import http_call, cache_event
 from lxml import etree
 
 from stock_lab_core.official_outlook import discover_oracle_outlook, parse_oracle_outlook
@@ -33,10 +35,12 @@ def clear_outlook_cache():
         _CACHE.clear()
 
 
+@timed_call("official_transport_body", "ir_outlook")
 def _read(url, deadline, *, params=None):
     if time.monotonic() >= deadline:
+        count_event("official_budget.ir_outlook.request_skipped")
         raise ValueError("request_deadline")
-    response = requests.get(url, params=params, timeout=(2, 3), allow_redirects=False,
+    response = http_call("ir_outlook", requests.get, url, params=params, timeout=(2, 3), allow_redirects=False,
                             stream=True, headers={"User-Agent": "StockLab-OfficialOutlook/1.0"})
     try:
         if response.status_code != 200:
@@ -62,14 +66,20 @@ def load_official_outlooks(now=None):
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError("timezone_required")
-    if not _LOCK.acquire(timeout=.1):
+    with measure("official_wait", "ir_outlook"):
+        acquired = _LOCK.acquire(timeout=.1)
+    if not acquired:
+        count_event("official_budget.ir_outlook.in_progress")
         return dict(events=[], sources=[dict(ticker="ORCL", status="unavailable", reason="collection_in_progress")])
     try:
         cached = _CACHE.get("ORCL")
+        cache_event("ir_outlook", "lookup")
         if cached and cached[1] <= now and time.monotonic() - cached[0] < cached[2]:
+            cache_event("ir_outlook", "hit")
             result = deepcopy(cached[3])
             result["sources"][0]["from_cache"] = True
             return result
+        cache_event("ir_outlook", "miss")
         spec = _PROFILES["ORCL"]
         source = dict(ticker="ORCL", status="unavailable", reason="", checked_at=now.isoformat(),
                       from_cache=False, source_url=spec["url"])
@@ -79,11 +89,14 @@ def load_official_outlooks(now=None):
             payload = json.loads(_read(spec["url"], deadline, params=spec["params"]))
             if not isinstance(payload, dict):
                 raise ValueError("invalid_ir_list")
-            candidate = spec["discover"](payload, now)
+            with measure("official_search", "ir_outlook"):
+                candidate = spec["discover"](payload, now)
             if candidate is None:
                 source["reason"] = "no_recent_investor_day"
             else:
-                event = spec["parse"](_read(candidate["source_url"], deadline), candidate, now)
+                body = _read(candidate["source_url"], deadline)
+                with measure("official_transform", "ir_outlook"):
+                    event = spec["parse"](body, candidate, now)
                 result["events"].append(event)
                 source.update(status=event["status"], source_url=candidate["source_url"])
         except requests.RequestException as exc:

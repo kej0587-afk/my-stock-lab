@@ -169,12 +169,13 @@ def parse_credit_spread(payload, as_of):
             "source": "ICE BofA via FRED", "stale": (date.fromisoformat(as_of) - date.fromisoformat(day)).days > 7}
 
 
-@cache_result(ttl=3600, failure_ttl=60)
+@cache_result(ttl=3600, failure_ttl=60, trace_name="report_credit_spread")
 def load_credit_spread(as_of, api_key):
     if not api_key:
         return {"ok": False, "reason": "FRED_API_KEY 미설정", "source_url": FRED_SOURCE}
     try:
-        response = requests.get("https://api.stlouisfed.org/fred/series/observations", params={
+        from stock_lab_core.report_io_audit import http_call
+        response = http_call("fred_credit", requests.get, "https://api.stlouisfed.org/fred/series/observations", params={
             "series_id": FRED_SERIES, "api_key": api_key, "file_type": "json", "sort_order": "desc",
             "observation_end": as_of, "limit": 20,
         }, timeout=(3, 6))

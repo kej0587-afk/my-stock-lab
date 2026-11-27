@@ -4,7 +4,8 @@ from copy import deepcopy
 
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import first, records
-from stock_lab_core.performance import measure
+from stock_lab_core.performance import count_event, measure
+from stock_lab_core.earnings_discovery_performance import coverage_event
 
 register_loaded_source(__name__, __file__)
 
@@ -64,11 +65,17 @@ def collect_report_earnings(summary_rows, calendar, now):
     catalog = issuer_catalog(summary_rows)
     eligible = [t for t in requested if t in catalog and catalog[t]["registered"]]
     tickers = sorted(eligible, key=lambda ticker: not catalog[ticker]["held"])
+    count_event("earnings_collection.requested", len(requested))
+    count_event("earnings_collection.eligible", len(tickers))
+    count_event("earnings_collection.submitted", len(tickers[:96]))
+    count_event("earnings_collection.cap_skipped", len(tickers[96:]))
+    count_event("earnings_collection.excluded_non_issuers", len(requested) - len(eligible))
     with measure("external_data", "earnings_filing_discovery"):
         discovered = collect_filing_earnings(tickers[:96], now)
     fresh = {row["ticker"] for row in discovered["results"] if row.get("collection_reason") == "sec_exhibit_99_1"}
     # The old verified IR sources remain a fallback, not the discovery universe.
-    earnings = load_official_earnings([t for t in tickers if t not in fresh], now)
+    with measure("external_data", "earnings_collection.ir_fallback_search"):
+        earnings = load_official_earnings([t for t in tickers if t not in fresh], now)
     updated = {row.get("ticker") for row in earnings["events"]}
     events = [r for r in calendar["events"] if r.get("ticker") not in updated] + earnings["events"]
     with measure("external_data", "earnings_result_reconciliation"):
@@ -76,10 +83,13 @@ def collect_report_earnings(summary_rows, calendar, now):
         if fresh:
             cached = load_earnings_results([row for row in discovered["events"] if row["ticker"] in fresh], now, refresh=False)
             results["results"].extend(cached["results"])
-    events, actuals = _merge_discovered(events, results["results"], discovered)
+    with measure("external_data", "earnings_collection.merge_transform"):
+        events, actuals = _merge_discovered(events, results["results"], discovered)
     connected = {row["ticker"] for row in actuals if row.get("collection_reason") == "sec_exhibit_99_1"}
-    return dict(calendar_events=events, earnings_sources=[*discovered["sources"],
+    output = dict(calendar_events=events, earnings_sources=[*discovered["sources"],
                     *(row for row in earnings["sources"] if row.get("ticker") not in connected)],
                 earnings_results=actuals, earnings_result_sources=[row for row in results["sources"] if row.get("ticker") not in connected],
                 earnings_collection_scope={"requested": tickers, "submitted": tickers[:96],
                     "not_submitted": tickers[96:], "excluded_non_issuers": [t for t in requested if t not in eligible]})
+    coverage_event("merged", events=events, results=actuals, sources=output["earnings_sources"])
+    return output

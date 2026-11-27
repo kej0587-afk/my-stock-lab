@@ -21,6 +21,8 @@ from zoneinfo import ZoneInfo
 
 from lxml import html as html_parser
 import requests
+from stock_lab_core.performance import count_event, measure, timed_call
+from stock_lab_core.report_io_audit import http_call, lock_wait, cache_event, provider_label
 
 from stock_lab_core.release_calendar import BOK_URL, FOMC_URL, _BOK_2026_DATES, _clock, _fomc_events
 from stock_lab_core.report_build import register_loaded_source
@@ -71,13 +73,15 @@ def _official_url(url):
     return parsed.netloc in {"www.federalreserve.gov", "www.boj.or.jp"} and not parsed.query
 
 
+@timed_call("official_transport_body", "central_bank")
 def _request(url, deadline):
     if not _official_url(url):
         raise _Unavailable("non_official_url")
     remaining = deadline - time.monotonic()
     if remaining <= 0:
+        count_event("official_budget.central_bank.request_skipped")
         raise _Unavailable("collection_deadline")
-    response = requests.get(url, stream=True, allow_redirects=False,
+    response = http_call(provider_label(url), requests.get, url, stream=True, allow_redirects=False,
                             timeout=tuple(min(t, remaining) for t in REQUEST_TIMEOUT),
                             headers={"User-Agent": "StockLab-Central-Bank-Results/1.0"})
     try:
@@ -431,14 +435,18 @@ def fetch_central_bank_results(now=None):
     for bank in ("FOMC", "BOJ", "BOK"):
         local = now.astimezone(ZoneInfo("America/New_York") if bank == "FOMC" else _KST)
         key = (bank, local.date().isoformat())
-        with _LOCK:
+        cache_event("policy_" + bank, "lookup")
+        with lock_wait(_LOCK, "policy_cache"):
             cached = _CACHE.get(key)
             if cached and 0 <= time.monotonic() - cached[0] < CACHE_TTL and cached[1] <= now:
+                cache_event("policy_" + bank, "hit")
                 row = deepcopy(cached[2])
                 row["from_cache"] = True
                 results.append(row)
                 continue
-        row = _load_bank(bank, now)
+        cache_event("policy_" + bank, "miss")
+        with measure("official_search", "policy_" + bank):
+            row = _load_bank(bank, now)
         if row["status"] == "official":
             with _LOCK:
                 _CACHE[key] = (time.monotonic(), now, deepcopy(row))
