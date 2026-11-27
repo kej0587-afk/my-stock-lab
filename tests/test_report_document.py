@@ -103,3 +103,16 @@ def test_every_original_table_row_survives_once_unless_projection_has_extra_fiel
     main, audit = output.split("## " + AUDIT_TITLE, 1)
     assert "PPI 근거 · 2026-11-13 원문" not in main
     assert "PPI 근거 · 2026-11-13 원문" in audit
+
+
+def test_moved_table_leaves_a_pointer_instead_of_an_empty_looking_block():
+    table = "후보·개별 신호·실행 상태 | 게이트 근거 | 해제 조건\n--- | --- | ---\nQGEN · S | 방어우선 | 시장 회복"
+    source = "\n".join(["## 관심 후보 상위 3개", "선정 기준: 미보유 Adj 상위 3개.", "", table, ""])
+    reader = "\n".join(["## 포트폴리오 · 교체 검토", "", table, ""])
+    remaining = dict(split_report_sections(additional_evidence(source, reader)))
+    block = remaining["관심 후보 상위 3개"]
+    assert "QGEN" not in block
+    assert "표는 위 '포트폴리오 · 교체 검토' 구역에 있습니다." in block
+    # A table that still has rows keeps them and gets no pointer.
+    partial = dict(split_report_sections(additional_evidence(source, "## 포트폴리오 · 교체 검토\n\n없음\n")))
+    assert "QGEN" in partial["관심 후보 상위 3개"] and "표는 위" not in partial["관심 후보 상위 3개"]
