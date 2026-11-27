@@ -232,5 +232,9 @@ def test_production_adapter_supplies_source_cutoff_and_exports_analysis():
     assert 'expected_close' in supplied and 'completed_profile' in supplied and 'quote_evidence' in supplied
     assert any(isinstance(n,ast.Constant) and n.value=='scenario_analysis' for n in ast.walk(tree))
     renderer=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='render_precision_candlestick_chart')
-    expected=[k.value for n in ast.walk(renderer) if isinstance(n,ast.Call) for k in n.keywords if k.arg=='chart_expected_close']
+    assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+               and n.func.attr == 'prepare_analysis' for n in ast.walk(renderer))
+    chart_tree = ast.parse(Path('stock_lab_core/precision_chart_view.py').read_text(encoding='utf-8-sig'))
+    analysis = next(n for n in chart_tree.body if isinstance(n, ast.FunctionDef) and n.name == 'prepare_analysis')
+    expected=[k.value for n in ast.walk(analysis) if isinstance(n,ast.Call) for k in n.keywords if k.arg=='chart_expected_close']
     assert len(expected)==1 and isinstance(expected[0],ast.Call)

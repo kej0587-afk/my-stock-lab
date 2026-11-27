@@ -6911,6 +6911,10 @@ def render_precision_candlestick_chart(
     show_level_labels: bool = False,
     show_channel: bool = True,
     show_signals: bool = True,
+    timeframe_override: str | None = None,
+    provisional_override: bool | None = None,
+    display_averages: tuple | None = None,
+    render: bool = True,
 ):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
@@ -6921,17 +6925,22 @@ def render_precision_candlestick_chart(
         st.warning("차트 모듈 업데이트가 대기 중입니다. Streamlit Cloud에서 Reboot app 후 다시 확인해 주세요.")
         return {}
     from stock_lab_core.chart_structure import last_bar_is_provisional, latest_completed_chart_session
-    timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
-    provisional_bar = last_bar_is_provisional(df, ticker, timeframe)
-    structure, pattern_candidates, channel, trendline_guides = precision_chart_view.prepare_chart_layers(
-        df, show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
+    timeframe = timeframe_override or ("weekly" if "week" in key else "monthly" if "month" in key else "daily")
+    provisional_bar = (last_bar_is_provisional(df, ticker, timeframe)
+                       if provisional_override is None else provisional_override)
+    structure, pattern_candidates, channel, trendline_guides, chart_context, chart_events, snapshot = precision_chart_view.prepare_analysis(
+        df, ticker, decision_context, timeframe, provisional=provisional_bar,
+        show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
         load_structure=_cached_chart_structure, detect_patterns=detect_chart_pattern_candidates,
         build_trendlines=_build_recent_trendline_guides,
-        provisional_last=provisional_bar,
     )
+    if not render:
+        return snapshot
     # 정밀관측소 차트는 일봉/주봉/월봉 캡처가 같은 방식으로 동작하도록
     # 경량 차트가 아니라 Plotly 차트로 통일한다.
     fig = build_price_figure(df, avg_price)
+    if display_averages is not None:
+        precision_chart_view.apply_display_averages(fig, df, *display_averages)
     liquidity_profile = None
     if show_liquidity:
         liquidity_profile = _add_liquidity_thermal_overlays(fig, df, ticker)
@@ -6950,20 +6959,21 @@ def render_precision_candlestick_chart(
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
-    from stock_lab_core.execution_readiness import precision_display_context
-    chart_context = dict(precision_display_context(decision_context or {}), chart_expected_close=latest_completed_chart_session(ticker))
-    chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
-                                       provisional_last=provisional_bar) if show_signals else []
     if chart_events:
         add_event_overlays(fig, chart_events)
-    volume_signals = build_volume_signal_series(df, timeframe=timeframe)
+    volume_signals = (precision_chart_view.intraday_volume_signals(df) if timeframe == "intraday"
+                      else build_volume_signal_series(df, timeframe=timeframe))
     finish_price_figure(fig, df, volume_signals, show_level_labels=show_level_labels)
-    fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
+    if timeframe == "intraday":
+        precision_chart_view.intraday_display_axis(fig, df)
+    else:
+        fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
     legend = dict(orientation="h", xref="container", yref="container", x=0.01, y=0,
                   xanchor="left", yanchor="bottom", entrywidth=100)
     if "maxheight" in go.layout.Legend()._valid_props:
         legend["maxheight"] = 96
     fig.update_layout(legend=legend)
+    fig.update_layout(uirevision=key)
     st.plotly_chart(fig, width='stretch', key=key)
     if channel:
         st.caption(precision_chart_view.channel_caption(channel))
@@ -6973,6 +6983,9 @@ def render_precision_candlestick_chart(
         st.caption(leverage_basis_note)
     if show_signals:
         event_rows = chart_structure_rows(structure, chart_events, chart_context)
+        if timeframe == "intraday":
+            for row, event in zip(event_rows, chart_events[-6:][::-1]):
+                row["확인봉"] = pd.Timestamp(event["time"]).strftime("%Y-%m-%d %H:%M")
         if event_rows:
             st.markdown("##### 패턴 신호 · 현재 실행 제한")
             st.dataframe(pd.DataFrame(event_rows), hide_index=True, width='stretch')
@@ -6984,7 +6997,7 @@ def render_precision_candlestick_chart(
         latest_volume = volume_signals.iloc[-1]
         rvol_text = f"{latest_volume['rvol']:.2f}x" if pd.notna(latest_volume['rvol']) else "이력 부족"
         st.caption(f"거래량 {latest_volume['signal']} · RVOL {rvol_text} · MA {'10' if timeframe == 'weekly' else '50'}봉 · 장중 봉은 미확정")
-    if pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok")):
+    if timeframe != "intraday" and (pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok"))):
         st.markdown(
             build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker, chart_latest_close(df)),
             unsafe_allow_html=True,
@@ -7022,10 +7035,7 @@ def render_precision_candlestick_chart(
         caption = build_smc_overlay_caption(smc_features, ticker)
         if caption:
             st.caption(caption)
-    return {"channel": channel, "events": chart_events, "patterns": pattern_candidates,
-            "basis": structure.get("basis"), "last_bar": structure.get("last_bar"), "timeframe": timeframe,
-            "decision_asof": chart_context.get("chart_price_asof"), "expected_close": chart_context.get("chart_expected_close"),
-            "provisional_last": provisional_bar}
+    return snapshot
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -34915,15 +34925,6 @@ if main_page == "precision":
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
     render_etf_parent_return(tkr)
 
-    # Quick chart first (분봉·일봉 + 이동평균선): a fragment, so interval/MA changes rerun only the chart.
-    with st.expander("📈 빠른 차트 · 분봉/일봉 · 이동평균선", expanded=True):
-        from stock_lab_core.intraday_chart_view import render_quick_chart
-        from stock_lab_core.chart_preferences import SupabaseChartPreferenceStore
-        _chart_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
-        _chart_store = (SupabaseChartPreferenceStore(supabase, owner_scope=_chart_owner)
-                        if _chart_owner and supabase is not None else None)
-        render_quick_chart(st, tkr, store=_chart_store, key="precision_quick_chart")
-
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
 
@@ -35486,13 +35487,31 @@ if main_page == "precision":
                 help="FVG, 간이 Order Block, EQH/EQL을 확인할 가격대로 표시합니다. 단독 매수 신호가 아니라 지지/저항 후보입니다.",
             )
             show_level_labels = st.checkbox("차트 안 가격대 이름", value=False, key=f"precision_level_labels_{tkr}")
-            day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
-            with day_tab:
-                c["chart_structure"]["일봉"] = render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
-            with week_tab:
-                c["chart_structure"]["주봉"] = render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
-            with month_tab:
-                c["chart_structure"]["월봉"] = render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
+            from stock_lab_core.intraday_chart_view import render_analysis_chart
+            from stock_lab_core.chart_preferences import SupabaseChartPreferenceStore
+            _chart_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+            _chart_store = (SupabaseChartPreferenceStore(supabase, owner_scope=_chart_owner)
+                            if _chart_owner and supabase is not None else None)
+            _chart_frames = {label: (mtf_pack.get(label) or {}).get("df", chart_df if label == "일봉" else pd.DataFrame())
+                             for label in ("일봉", "주봉", "월봉")}
+            _chart_options = dict(avg_price=avg_line, show_patterns=show_chart_patterns,
+                                  show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay,
+                                  ticker=tkr, decision_context=c, show_level_labels=show_level_labels,
+                                  show_channel=show_parallel_channel, show_signals=show_pattern_signals)
+            # Keep export/scenario snapshots independent of the selected display interval.
+            for _label, _timeframe in (("일봉", "daily"), ("주봉", "weekly"), ("월봉", "monthly")):
+                c["chart_structure"][_label] = render_precision_candlestick_chart(
+                    _chart_frames[_label], timeframe_override=_timeframe, render=False, **_chart_options)
+
+            def _render_analysis_frame(frame, label, ma_lines, overlay_lines, provisional):
+                return render_precision_candlestick_chart(
+                    frame, key=f"precision_analysis_{tkr}_{label}",
+                    timeframe_override={"일봉": "daily", "주봉": "weekly", "월봉": "monthly"}.get(label, "intraday"),
+                    provisional_override=provisional if label.endswith("분") else None,
+                    display_averages=(ma_lines, overlay_lines), **_chart_options)
+
+            render_analysis_chart(st, tkr, store=_chart_store, key="precision_analysis",
+                                  timeframe_frames=_chart_frames, analysis_renderer=_render_analysis_frame)
             from stock_lab_core.chart_review import render_chart_review
             render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
                                 is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")

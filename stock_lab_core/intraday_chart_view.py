@@ -46,7 +46,7 @@ def _session(market, now):
 
 def _labels(index, label, market):
     local = index.tz_convert(MARKET_ZONE[market]) if index.tz is not None else index
-    return [t.strftime("%Y-%m-%d") if label == "일봉" else t.strftime("%m-%d %H:%M") for t in local]
+    return [t.strftime("%Y-%m-%d") if ic.SPEC[label]["minutes"] is None else t.strftime("%Y-%m-%d %H:%M") for t in local]
 
 
 def build_figure(frame, label, market, ma_lines, overlay_lines, *, provisional=False):
@@ -112,7 +112,8 @@ def market_support_rows():
     ]
 
 
-def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None):
+def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_fn=None,
+                          timeframe_frames=None, analysis_renderer=None):
     if not ticker:
         return
     prefs = cp.load_into_state(st.session_state, store)
@@ -141,8 +142,8 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         enabled_default = [p for p in current["enabled"] if p in periods]
         enabled = st.pills("표시할 이동평균선", periods, selection_mode="multi", default=enabled_default,
                            format_func=lambda p: f"{p}", key=f"{prefix}_on_{'-'.join(map(str, periods))}") or []
-        overlay = False
-        if label != "일봉":
+        overlay = current["daily_overlay"]
+        if spec["minutes"] is not None:
             overlay = st.checkbox("분봉 위에 일봉 기준 이동평균선 겹쳐 보기", value=current["daily_overlay"],
                                   key=f"{prefix}_overlay",
                                   help="각 분봉에는 전 거래일 종가까지 계산한 일봉 N일선 값을 표시합니다(당일 미확정 종가 미사용).")
@@ -150,13 +151,18 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         st.session_state[cp.STATE_KEY] = current
 
         fetch_started = time.perf_counter()
-        history = load_history(ticker, spec["yahoo"], spec["period"])
-        tail = None
-        if session.get("phase") == "intraday" and live_on and not history.empty:
-            tail = load_tail(ticker, spec["yahoo"], spec["tail"])
-        frame = ic.build_frame(history, tail, label)
+        supplied = (timeframe_frames or {}).get(label)
+        try:
+            history = supplied if supplied is not None else load_history(ticker, spec["yahoo"], spec["period"])
+            tail = None
+            if supplied is None and session.get("phase") == "intraday" and live_on and not history.empty:
+                tail = load_tail(ticker, spec["yahoo"], spec["tail"])
+            frame = ic.build_frame(history, tail, label, market)
+        except Exception as exc:
+            st.warning(f"{ticker} {label} 차트 미연결 · {type(exc).__name__}: {exc}")
+            return
         daily = None
-        if overlay and enabled:
+        if overlay and enabled and spec["minutes"] is not None:
             daily_spec = ic.SPEC["일봉"]
             daily = load_history(ticker, daily_spec["yahoo"], daily_spec["period"])
         fetch_seconds = time.perf_counter() - fetch_started
@@ -167,9 +173,16 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         overlay_lines, overlay_status = ic.daily_overlay(daily, frame, enabled) if daily is not None else ({}, {})
         state = ic.last_bar_state(frame, label, now, session)
         build_started = time.perf_counter()
-        fig = build_figure(frame, label, market, ma_lines, overlay_lines, provisional=state.get("provisional", False))
+        if analysis_renderer is not None:
+            st.caption(f"{ticker} · {label} 가격·거래량·패턴·추세선·채널·매물대·SMC · "
+                       "기존 투자판정·실행계획은 일/주/월봉 기준 유지")
+            if spec["minutes"] is not None:
+                st.caption("선택 분봉 구조 관찰 · 일봉 실행조건 체크표와 별도 · 거래량은 선택 봉의 50봉 기준")
+            analysis_renderer(frame.tail(DISPLAY_BARS).copy(), label, ma_lines, overlay_lines, state["provisional"])
+        else:
+            fig = build_figure(frame, label, market, ma_lines, overlay_lines, provisional=state.get("provisional", False))
+            st.plotly_chart(fig, width="stretch", key=f"{prefix}_fig_{label}", config={"displaylogo": False, "scrollZoom": True})
         build_seconds = time.perf_counter() - build_started
-        st.plotly_chart(fig, width="stretch", key=f"{prefix}_fig", config={"displaylogo": False, "scrollZoom": True})
 
         zone = MARKET_ZONE[market]
         start_local = state["start"].tz_convert(zone) if state["start"].tz is not None else state["start"]
@@ -178,7 +191,9 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         price = f"{state['close']:,.0f}" if market == "KR" else f"{state['close']:,.2f}"
         volume = ("미수집" if state["volume"] is None
                   else "집계 전(공급처 0)" if state["volume"] == 0 and state["provisional"] else f"{state['volume']:,.0f}")
-        status = "진행 중·미확정(공급처 최신 봉)" if state["provisional"] else "확정"
+        from stock_lab_core.chart_structure import last_bar_is_provisional
+        provisional = (state["provisional"] if spec["minutes"] is not None else last_bar_is_provisional(frame, ticker))
+        status = "진행 중·미확정(공급처 최신 봉)" if provisional else "확정"
         parts = [f"마지막 봉 {bar_time} {tz_name if label != '일봉' else ''} · 가격 {price} · 거래량 {volume} · {status}"]
         if state["lag_minutes"] is not None:
             parts.append(f"조회 시각 대비 봉 시작 {state['lag_minutes']:.0f}분 전")
@@ -188,7 +203,12 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         first = frame.index[0].tz_convert(zone) if frame.index.tz is not None else frame.index[0]
         shown = min(len(frame), DISPLAY_BARS)
         st.caption(f"받은 범위 {first.strftime('%Y-%m-%d')}부터 {len(frame):,}봉 (화면 최근 {shown:,}봉, 이동평균은 받은 전체로 계산) · 요청 한도 {ic.REQUEST_LIMIT_TEXT[label]} · "
-                   f"공급처 Yahoo Finance(정규장) · 120분봉은 60분봉 2개 묶음")
+                   f"공급처 {'기존 분석 원자료' if supplied is not None else 'Yahoo Finance(정규장)'}")
+        aggregation = frame.attrs.get("aggregation")
+        if aggregation:
+            st.caption(f"120분 진단 · 받은 60분봉 {aggregation['received_60']:,} · 생성 120분봉 {len(frame):,} · "
+                       f"화면 캔들 {shown:,} · 개장 기준 묶음 · 정규장 밖 제외 {aggregation['excluded']} · "
+                       f"원봉 일부 미수집/진행 중 구간 {aggregation['incomplete']} · 마감 짧은 구간 보존")
         notes = _shortage_text(ma_status, label) + _shortage_text(overlay_status, label, overlay=True)
         if notes:
             st.caption(" · ".join(notes))
@@ -206,8 +226,12 @@ def render_quick_chart(st, ticker, *, store=None, key="quick_chart", now_fn=None
         s2.caption(cp.STATUS_TEXT.get(st.session_state.get(cp.STATUS_KEY, "session"), ""))
         with st.expander("시장별 실시간 지원 · 지연 · 조회 가능 기간", expanded=False):
             st.dataframe(pd.DataFrame(market_support_rows()), hide_index=True, width="stretch")
-            st.caption("지연은 공급처 공지가 아니라 이 화면이 받은 마지막 봉 시각과 조회 시각의 차이로 표시합니다. "
-                       "한국 실시간(네이버 등) 연결은 아직 없습니다.")
+            st.caption("30초는 화면 재조회 주기입니다. 봉 시작 이후 경과시간은 체결 시세 지연이 아닙니다. "
+                       "공급처 실제 체결 지연은 별도 타임스탬프가 없어 미확인입니다. 한국 실시간(네이버 등) 연결은 아직 없습니다.")
 
     run_every = LIVE_REFRESH_SECONDS if live_session else None
     st.fragment(run_every=run_every)(body)()
+
+
+# Backwards compatibility for non-observatory callers; no second chart in the app.
+render_quick_chart = render_analysis_chart
