@@ -34915,6 +34915,15 @@ if main_page == "precision":
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
     render_etf_parent_return(tkr)
 
+    # Quick chart first (분봉·일봉 + 이동평균선): a fragment, so interval/MA changes rerun only the chart.
+    with st.expander("📈 빠른 차트 · 분봉/일봉 · 이동평균선", expanded=True):
+        from stock_lab_core.intraday_chart_view import render_quick_chart
+        from stock_lab_core.chart_preferences import SupabaseChartPreferenceStore
+        _chart_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+        _chart_store = (SupabaseChartPreferenceStore(supabase, owner_scope=_chart_owner)
+                        if _chart_owner and supabase is not None else None)
+        render_quick_chart(st, tkr, store=_chart_store, key="precision_quick_chart")
+
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
 
