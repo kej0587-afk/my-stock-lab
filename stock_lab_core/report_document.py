@@ -116,14 +116,23 @@ def additional_evidence(report, reading):
         else:
             body = [line for line in body if not line.startswith("# ")]
         remaining = []
+        moved_tables = kept_tables = 0
         for kind, block in _blocks("\n".join(body)):
             if kind == "table":
                 table = block.splitlines()
                 rows = [row for row in table[2:] if row not in covered_rows.get(table[0], set())]
                 if rows:
                     remaining.append("\n".join([*table[:2], *rows]))
+                    kept_tables += 1
+                else:
+                    moved_tables += 1
             elif block not in covered_text:
                 remaining.append(block)
+        if remaining and title and moved_tables and not kept_tables:
+            # Only the explanation is left; say where its table went instead of looking empty.
+            shown = [name for name in MOVED_SECTIONS.get(title, ()) if name in destinations]
+            if shown:
+                remaining.append("표는 위 " + " · ".join(f"'{name}'" for name in shown) + " 구역에 있습니다.")
         if remaining:
             output += (["## " + title] if title else []) + remaining
     return "\n\n".join(output)
