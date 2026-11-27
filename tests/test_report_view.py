@@ -22,6 +22,17 @@ def test_report_scroll_layout_is_scoped_and_never_enables_raw_article_html(monke
     assert "overflow-x: auto" in REPORT_STYLE
 
 
+def test_mobile_multi_column_tables_keep_dates_and_prose_readable_without_hiding_cells():
+    assert "@media (max-width: 640px)" in REPORT_STYLE
+    assert ".st-key-market_report_reading table:has(th:nth-child(3)) td:not(:first-child)" in REPORT_STYLE
+    assert "min-width: 10rem" in REPORT_STYLE
+    assert "min-width: 12rem" in REPORT_STYLE
+    assert "overscroll-behavior-x: contain" in REPORT_STYLE
+    assert "display: none" not in REPORT_STYLE
+    assert "text-overflow: ellipsis" not in REPORT_STYLE
+    assert "overflow: hidden" not in REPORT_STYLE
+
+
 def _render(monkeypatch, report):
     chunks, expanders, current = [], [], []
 
