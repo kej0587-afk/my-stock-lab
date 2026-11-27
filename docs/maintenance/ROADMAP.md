@@ -1,6 +1,6 @@
 # Stock Lab 전체 작업 지도
 
-Updated: 2026-11-24 KST. 현재 실행할 한 건은 루트 `HANDOFF.md`의 **Next Task Only**가 정한다.
+Updated: 2026-11-27 KST. 현재 실행할 한 건은 루트 `HANDOFF.md`의 **Next Task Only**가 정한다.
 이 문서는 우선순위와 완료 기준이다. 여러 단계를 동시에 수정하라는 지시가 아니다.
 
 ## 사용자가 얻어야 하는 결과
@@ -78,6 +78,7 @@ A-4: 익절 검토(PROFIT_TAKE_REVIEW)를 보유관리(caution)·월적립 0배�
 점수·판정·수치 계산은 바꾸지 않았다.
 DART 재무제표 하루 보관(사용자 승인): 15:47 보고서에서 한국 보류 12→0, 남은 미국 8곳은 SEC 요청 간격 상한([기록](20261124_dart_budget_review.md)).
 큰 함수 분리 #19 1단계: `report_sections` 기준일 블록 분리, 출력 동일([기록](20261124_refactor_report_basis_lines.md)).
+큰 함수 분리 #19 3~6단계(2026-11-27): `report_sections` 452→245줄, 보도상 배경 후보·경제지표·업종별 왜·관심 후보 표를 함수로 이동. 전체 테스트 실패 목록 동일(22건), 테스트 중 출력 129건·합성 입력 10건 동일([기록](20261127_refactor_report_sections_tables.md)).
 
 DART 기업 식별 목록이 만료되어 국내 공시 연결이 빠지던 문제를 재현하고, 실시간 정상 조회 목록을
 검증 후 영구 보관소에 저장해 장애 때 마지막 정상 목록(저장일·최신성 표시)을 쓰도록 했다.
@@ -124,7 +125,7 @@ SEC 초당 8건 A안 채택 (2026-11-27, 사용자 채택 기준 충족): 같은
 
 | 함수 | 파일 | 줄 수 | 분리 검토 방향 |
 | --- | --- | ---: | --- |
-| report_sections | stock_lab_core/report_evidence.py | 488 | 근거 묶음 생성과 표시 순서 |
+| report_sections | stock_lab_core/report_evidence.py | 488 → 245 (11-27) | 근거 묶음 생성과 표시 순서. 남은 덩어리: 시장 스토리 사실 줄 |
 | calc_scores_and_decision | app.py | 463 | 기존 helper 이후 남은 조합 책임; 판정 동등성 우선 |
 | render_image_theme_flow_section | app.py | 421 | 상태 처리·자료 준비·렌더링 경계 |
 | build_portfolio_analysis_report | app.py | 411 | 계산 근거와 설명 조합 |
