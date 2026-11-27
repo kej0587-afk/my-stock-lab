@@ -45,6 +45,8 @@ def test_trial_never_exceeds_eight_in_any_second(limiter):
 def test_trial_ends_without_extension_and_forced_legacy(limiter, monkeypatch):
     lim, clock = limiter
     lim._wall = lambda: sec_rate.TRIAL_ENDS_AT + timedelta(seconds=1)
+    assert sec_rate.ADOPTED is True and lim.limit() == 8  # adopted 2026-11-27 after the 3-pair comparison
+    monkeypatch.setattr(sec_rate, "ADOPTED", False)
     assert lim.limit() == 5
     monkeypatch.setattr(sec_rate, "ADOPTED", True)
     assert lim.limit() == 8

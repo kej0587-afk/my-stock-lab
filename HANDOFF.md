@@ -597,6 +597,14 @@ first-after-reboot reports legacy (`sec_rate_mode = "legacy"` secret) vs A, medi
 wait −30% with no more time-budget failures, or failures −30% with no more wait, and official count not lower; then set
 `ADOPTED = True`. Otherwise legacy and stop. Afterwards: show the last completed report (with its time) first while a new one
 builds; find the +12 s assembly growth from the `report_assembly` spans; Supabase filing store (B) only if reboot re-downloads dominate.
+**A1 (A only, reboot 02:18 KST):** report 123.3 s, first summary 166.1 s, SEC wait 17.8 s / 146 requests, no access limit, official 23, time-limit failures 10 (all KR). Rerun 67.5 s, SEC 0 s / 32. **Result (3 pairs, 2026-11-27 09:12-10:25 KST, office PC, PR #92 `docs/maintenance/20261127_sec_rate_trial_a_pairs.md`):** medians legacy → A: SEC wait 44.4 → 26.7 s (−40%), time-limit failures 16 → 8 (US 0), official 21 → 23, report 121.2 → 119.7 s, first summary 164.6 → 155.4 s; no access limits. Both adoption rules met → **adopted, `ADOPTED = True`** (merged with PR #91). Secrets `sec_rate_mode` line removed by the user 10:15 KST. Total time barely moved: earnings collection waits for its 24 s budget; remaining failures are KR (DART).
+
+**Last completed report first (user 02:06 KST; decided 06:28 KST: create Supabase `report_latest`, merge PR #91 only after the SEC
+comparison; doc `docs/maintenance/20261127_last_report_first.md`):** `stock_lab_core/report_latest.py` stores each new complete report
+per verified login + selected account set (`account_key` hash), restores it once per session even before Today runs, and keeps it
+when a new report fails or is 미계산 (replaced only by the next complete one). SQL `docs/20261127_report_latest.sql` (RLS forced,
+service_role only) **not applied yet**. Prod check in the user's order: save one report → reboot → before Today the last report and
+its time are visible (record time to visible), then new report completion time.
 
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
