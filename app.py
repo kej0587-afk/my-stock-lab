@@ -18242,6 +18242,10 @@ LEVERAGED_ETF_PRECISION_PROFILES = {
 
 def get_leveraged_etf_precision_profile(ticker, name=""):
     symbol = clean_symbol(ticker)
+    # SOXS has no approved inverse recovery profile. Never borrow SOXL's long
+    # conditions, even when provider names are truncated or incorrectly labelled.
+    if symbol == "SOXS":
+        return "", {}
     normalized = normalize_ticker(sanitize_ticker_value(ticker))
     text = f"{symbol} {normalized} {name}".upper()
     if symbol == "418660" or ("TIGER" in text and ("NASDAQ" in text or "나스닥" in text) and ("2X" in text or "2배" in text or "레버리지" in text)):
@@ -18250,7 +18254,8 @@ def get_leveraged_etf_precision_profile(ticker, name=""):
         return symbol, LEVERAGED_ETF_PRECISION_PROFILES[symbol]
     if "ROUNDHILL T-REX" in text and "DRAM" in text:
         return "RAM", LEVERAGED_ETF_PRECISION_PROFILES["RAM"]
-    if "DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text:
+    if ("DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text
+            and not any(marker in text for marker in ("BEAR", "INVERSE", "인버스"))):
         return "SOXL", LEVERAGED_ETF_PRECISION_PROFILES["SOXL"]
     if symbol == "BITU":
         return "BITX", LEVERAGED_ETF_PRECISION_PROFILES["BITX"]
