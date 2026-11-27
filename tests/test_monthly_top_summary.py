@@ -42,3 +42,13 @@ def test_slot_is_filled_once_and_a_stale_slot_is_harmless():
     view._fill_top_summary(St(Slot(fail=True)), [{"plan": 1, "executed": 0, "executable": 0}],
                            executed_status="ok", month_key="2026-11", scope="acc")
     view._fill_top_summary(St(None), [], executed_status="ok", month_key="2026-11", scope="acc")
+
+
+def test_missing_signals_name_the_fixable_cause():
+    rows = [{"plan": None, "plan_src": "신호 미확인", "executed": 0, "executable": None},
+            {"plan": None, "plan_src": "신호 미확인", "executed": 5000, "executable": None}]
+    totals = monthly_totals(rows, executed_status="ok")
+    assert totals["월계획액"] == totals["오늘 추가 가능액"] == "미확인(2종목 신호 미계산 · 오늘 점검 계산 후 표시)"
+    assert totals["누적 집행기록액"] == "5,000원"
+    mixed = rows + [{"plan": None, "plan_src": "", "executed": 0, "executable": None}]
+    assert monthly_totals(mixed, executed_status="ok")["월계획액"] == "미확인(3종목 계획 미확인)"
