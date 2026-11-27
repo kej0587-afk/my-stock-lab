@@ -14,6 +14,6 @@
 - 점수·판정·시장방어 입력에는 넣지 않는다.
 
 ## 검증
-- `tests/test_report_observatory_fred.py` 3개(연결/미연결 혼합, 표 형식, 실패 시 0 없음).
+- `tests/test_report_observatory_fred.py` 3개(관측일 유지·실패는 채우지 않음, 표가 리포트 커버리지 상태에 집계됨, 자료 없으면 표 없음).
 - `check_refactor --scope report` 수정 전 208/0, 수정 후 208/0 (같은 venv).
 - 클라우드는 FRED가 프록시 403이라 실제 값은 운영 리포트에서만 확인 가능. 운영 확인: HANDOFF 참조.
