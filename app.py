@@ -17707,27 +17707,6 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
             st.caption("데이터 부족: " + ", ".join(failed["티커"].astype(str).tolist()))
 
 
-def _entry_basis_rows(rows, prices, entries, ticker, *, gate_open, target, stop, target_source, stop_source):
-    """Display only (2026-11-27): each planned entry price with the line/formula that produced it."""
-    stages = [row for row in rows if str(row.get("단계", "")).startswith(("1차 진입", "추가 1차", "2차 추가", "3차 예비"))]
-    out = []
-    for row, raw, basis in zip(stages, entries, prices.get("basis") or ()):
-        amount = str(row.get("금액/수량") or "-")
-        out.append({
-            "단계": row.get("단계"), "가격": row.get("가격"),
-            "기준선·산식": f"{basis} · 반올림 전 {raw:.4f}" if finite_num(raw) else basis,
-            "R/R(최종 목표·손절 기준)": row.get("예상 R/R", "-"),
-            "실행·수량": (amount if gate_open and amount != "-" else
-                       "보류 · 수량 미산출" if not gate_open else "수량 미산출"),
-        })
-    out.append({"단계": "최종 목표", "가격": format_currency(target, ticker), "기준선·산식": target_source,
-                "R/R(최종 목표·손절 기준)": "-", "실행·수량": "진입 후 재산출"})
-    out.append({"단계": "계획 무효·손절", "가격": format_currency(stop, ticker),
-                "기준선·산식": f"{stop_source} · 종가 기준 · 일봉 B 경계·단기 손절과 별개",
-                "R/R(최종 목표·손절 기준)": "-", "실행·수량": "신규·추가 계획 무효선"})
-    return out
-
-
 def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, my_price=0.0):
     """Show a concrete entry/exit plan using the app's existing R/R logic."""
     plan_title = "보유/추가매수 관리 계획" if has_pos else "신규진입 실행 계획"
@@ -18121,6 +18100,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     # Three different amounts, never merged: the theoretical gap to the target, what today's gate allows, and
     # what was actually recorded. This screen reads no fill ledger, so a recorded amount is never estimated.
     gate_open = plan_workflow.get("게이트상태") == GATE_EXECUTABLE
+    from stock_lab_core.precision_plan_rows import build_entry_basis_rows
     first_today = plan_buy_amt_krw * clean_float(tranche_weights[0], 0.0)
     if not gate_open:
         today_text = f"0 · 오늘 신규·추가 실행 보류({plan_workflow.get('게이트근거') or '실행 게이트 재확인 필요'})"
@@ -18143,9 +18123,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     plan = {
         "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
         "weight_source": weight_source, "amount_split": amount_split,
-        "entry_basis": _entry_basis_rows(rows, prices, (entry1, entry2, entry3), ticker,
+        "entry_basis": build_entry_basis_rows(rows, prices, (entry1, entry2, entry3), ticker,
                                          gate_open=gate_open, target=target, stop=stop,
-                                         target_source=target_source, stop_source=stop_source),
+                                         target_source=target_source, stop_source=stop_source,
+                                         format_currency=format_currency),
         "rows": rows, "amount_note": amount_note, "current_price": cur,
         "target": target, "stop": stop, "target_source": target_source,
         "stop_source": stop_source, "rr_now": rr_now_text,
