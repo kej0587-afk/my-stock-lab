@@ -128,7 +128,7 @@ SEC 초당 8건 A안 채택 (2026-11-27, 사용자 채택 기준 충족): 같은
 | report_sections | stock_lab_core/report_evidence.py | 488 → 168 (11-27) | 블록 호출 순서·공유 상태 전달만 남음. 분리 종료 |
 | calc_scores_and_decision | app.py | 463 | 기존 helper 이후 남은 조합 책임; 판정 동등성 우선 |
 | render_image_theme_flow_section | app.py | 421 | 상태 처리·자료 준비·렌더링 경계 |
-| build_portfolio_analysis_report | app.py | 411 → 296 (11-27) | 계산 근거와 설명 조합. 보유자산 행·위험지수 구성 분리 완료([기록](20261127_refactor_portfolio_asset_rows.md)), 다음 위험 메모 |
+| build_portfolio_analysis_report | app.py | 411 → 266 (11-27) | 계산 근거와 설명 조합. 보유자산 행·위험지수 구성·위험 메모 분리 완료([기록](20261127_refactor_portfolio_asset_rows.md)) |
 | render_entry_execution_plan | app.py | 389 | 계획 근거와 표시 |
 
 이 목록의 함수를 지금 동시에 옮기지 않는다. 해당 시점의 코드와 병목을 다시 확인해
