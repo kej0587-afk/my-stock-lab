@@ -199,6 +199,8 @@ def test_ui_no_trade_permission_and_budget_inputs_do_not_mutate_decision(monkeyp
     ui=UI()
     render_trade_desk(ui,dict(frames={"SOXL":xl},five_minute={}),hourly,sched,now,decision,str)
     assert decision == before and "시장방어" in str(ui.tables)
+    brief = next(table for table in ui.tables if table and table[0].get("항목") == "현재 관찰 상태")
+    assert len(brief) == 7 and "최대 보유기간" in str(brief)
     assert "과거 검증 미실행" in " ".join(ui.text)
     empty = research.summarize([])
     policy = dict(stats=empty,early=empty,late=empty,cost20=empty,trades=[],rejected={})

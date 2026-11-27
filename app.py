@@ -1243,10 +1243,10 @@ st.markdown("<style>@media (max-width: 640px) { h1#realtime-digital-dashboard-v1
             " line-height: 1.25 !important; padding: .25rem 0 !important; } "
             "[data-testid='stMainBlockContainer'] { padding-top: 2.5rem !important; } "
             # Metric and macro-card rows: two per row instead of one tall column each.
-            "[data-testid='stHorizontalBlock']:has(.macro-panel), [data-testid='stHorizontalBlock']:has([data-testid='stMetric']) "
+            "[data-testid='stHorizontalBlock']:has(.macro-panel), [data-testid='stHorizontalBlock']:has([data-testid='stMetric']):not(:has([data-testid='stHorizontalBlock'])) "
             "{ flex-direction: row !important; flex-wrap: wrap !important; gap: .5rem !important; } "
             "[data-testid='stHorizontalBlock']:has(.macro-panel) > [data-testid='stColumn'], "
-            "[data-testid='stHorizontalBlock']:has([data-testid='stMetric']) > [data-testid='stColumn'] "
+            "[data-testid='stHorizontalBlock']:has([data-testid='stMetric']):not(:has([data-testid='stHorizontalBlock'])) > [data-testid='stColumn'] "
             "{ flex: 1 1 calc(50% - .5rem) !important; width: calc(50% - .5rem) !important; min-width: calc(50% - .5rem) !important; } "
             ".macro-panel { padding: 8px 10px !important; margin-bottom: 4px !important; font-size: .85em !important; } }</style>", unsafe_allow_html=True)
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
