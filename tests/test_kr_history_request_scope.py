@@ -169,3 +169,58 @@ def test_all_app_functions_except_scope_wrapper_unchanged():
     # module (including every other function and top-level statement) is frozen.
     historical.body[historical.body.index(extracted)] = wrapper(original)
     assert ast.dump(original) == ast.dump(historical)
+
+
+def test_diagnostics_separate_wait_headers_body_parse_and_hide_keys(monkeypatch):
+    clock = [0.0]
+    def advance(seconds):
+        clock[0] += seconds
+    def request(*args, **kwargs):
+        advance(2)
+        return SimpleNamespace(raise_for_status=lambda: None, close=lambda: None)
+    def body(*args):
+        advance(3)
+        return XML
+    original_parse = history.parse_history
+    def parse(*args):
+        advance(4)
+        return original_parse(*args)
+    monkeypatch.setattr(history, '_read_body', body)
+    monkeypatch.setattr(history, 'parse_history', parse)
+    reader = history.KrFlowHistoryReader(request=request)
+    with PerformanceTrace(clock=lambda: clock[0]) as trace, history.reuse_kr_history_requests():
+        first = reader.read('005930', now='2026-11-07')
+        with history.reuse_kr_history_requests():
+            second = reader.read('005930.KS', now='2026-11-07')
+    pd.testing.assert_frame_equal(first, second, check_exact=True)
+    report = trace.report()
+    rows = {r['name']: r for r in report['functions']}
+    assert rows['kr_history_headers']['total_seconds'] == 2
+    assert rows['kr_history_body']['total_seconds'] == 3
+    assert rows['kr_history_http']['total_seconds'] == 5
+    assert rows['kr_history_parse']['total_seconds'] == 4
+    assert rows['kr_history_lock_wait']['total_seconds'] == 0
+    assert report['transport_events']['kr_history.request_unique'] == 1
+    assert report['transport_events']['kr_history_scope.reuse'] == 1
+    assert '005930' not in str(report)
+    assert history._request_audit.get() is None
+
+
+def test_diagnostics_count_retries_and_unscoped_calls_without_deduplicating():
+    calls = []
+    def request(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise requests.ReadTimeout()
+        return SimpleNamespace(text=XML, raise_for_status=lambda: None, close=lambda: None)
+    reader = history.KrFlowHistoryReader(request=request)
+    with PerformanceTrace() as trace:
+        with history.reuse_kr_history_requests():
+            assert reader.read('005930', now='2026-11-07').empty
+            assert not reader.read('005930', now='2026-11-07').empty
+        reader.read('005930', now='2026-11-07')
+    events = trace.report()['transport_events']
+    assert len(calls) == events['kr_history.request'] == 3
+    assert events['kr_history.request_repeat'] == 1
+    assert events['kr_history.request_unique'] == 1
+    assert events['kr_history.request_unscoped'] == 1
