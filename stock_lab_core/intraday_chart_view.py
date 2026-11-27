@@ -249,7 +249,8 @@ def render_analysis_chart(st, ticker, *, store=None, key="analysis_chart", now_f
         st.caption(" · ".join(p.strip() for p in parts))
         first = frame.index[0].tz_convert(zone) if frame.index.tz is not None else frame.index[0]
         shown = min(len(frame), DISPLAY_BARS)
-        st.caption(f"받은 범위 {first.strftime('%Y-%m-%d')}부터 {len(frame):,}봉 (화면 최근 {shown:,}봉, 이동평균은 {"장기 일봉 " + format(len(daily_long), ",") + "거래일로 먼저 계산" if basis_notes else "받은 전체로 계산"}) · 요청 한도 {ic.REQUEST_LIMIT_TEXT[label]} · "
+        ma_scope = (f"장기 일봉 {len(daily_long):,}거래일로 먼저 계산" if basis_notes else "받은 전체로 계산")
+        st.caption(f"받은 범위 {first.strftime('%Y-%m-%d')}부터 {len(frame):,}봉 (화면 최근 {shown:,}봉, 이동평균은 {ma_scope}) · 요청 한도 {ic.REQUEST_LIMIT_TEXT[label]} · "
                    f"공급처 {'기존 분석 원자료' if supplied is not None else 'Yahoo Finance(정규장)'}")
         aggregation = frame.attrs.get("aggregation")
         if aggregation:
