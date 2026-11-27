@@ -1,5 +1,6 @@
 """Instrumentation must preserve calculation statements, provider policy and outputs."""
 import ast
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
@@ -9,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 from stock_lab_core import news, yahoo_metadata
 from stock_lab_core.performance import PerformanceTrace, measure
+from tests.test_decision_refactor_parity import scenarios
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIXES = ('summary_asset_metadata[', 'summary_financial_score[', 'summary_holdings_lookup[',
@@ -41,17 +43,22 @@ def strip_added_timing(node):
     return StripAddedTiming().visit(node)
 
 
-def test_all_app_functions_match_immutable_reference_after_removing_only_timers():
-    old = subprocess.check_output(['git', 'show', 'f746134c:app.py'], cwd=ROOT, encoding='utf-8-sig')
-    current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
-    def functions(source):
-        return {n.name: ast.dump(strip_added_timing(n)) for n in ast.parse(source).body
-                # Source-flow fast path has immutable-wrapper/full-row parity
-                # coverage in test_source_flow_row; all other functions frozen.
-                if isinstance(n, ast.FunctionDef) and n.name not in {
-                    '_timed_today_analyst_snapshot', 'build_source_flow_context', '_normalize_source_flow_row',
-                    '_render_image_theme_selection'}}
-    assert functions(old) == functions(current)
+@pytest.mark.parametrize('case', scenarios(), ids=[c[0] for c in scenarios()])
+def test_all_app_functions_match_immutable_reference_after_removing_only_timers(app_module, monkeypatch, case):
+    from tests.summary_worker_contract import prepare_worker
+    run = prepare_worker(app_module, monkeypatch, case)
+    node = next(n for n in ast.parse((ROOT / 'app.py').read_text(encoding='utf-8-sig')).body
+                if isinstance(n, ast.FunctionDef) and n.name == '_compute_summary_item')
+    plain = StripAddedTiming().visit(deepcopy(node))
+    plain.decorator_list = []
+    assert ast.dump(node) != ast.dump(plain)
+    env = vars(app_module).copy()
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[plain], type_ignores=[])), '<untimed>', 'exec'), env)
+    with PerformanceTrace() as trace:
+        measured = run(app_module._compute_summary_item)
+    names = [r['name'] for r in trace.report()['functions']]
+    assert any(name.startswith('summary_financial_score[') for name in names)
+    assert measured == run(env[node.name])
 
 
 def test_analyst_callback_identity_errors_and_symbol_timing():
