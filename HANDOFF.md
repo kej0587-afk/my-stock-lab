@@ -1,5 +1,14 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 MSFT IR 계약 완료 · 최신
+
+- 완료: app 전체 AST 요구를 실제 IR 화면 성공 조회→재실행→실패 갱신의 점수/SEC 근거 보존으로 교체.
+  실패 시 과거 표는 숨기고, 재무점수 map·기존 판정·분기 공시 원자료는 보존.
+- 검증: IR 파서/화면33통과(3.08초). **남은 알려진 실패7건(A6/E1)**(합동 재집계 전).
+- 운영 코드 변경/재부팅/새 운영 확인 없음. main 커밋·푸시, `cache/resume_20261127/msft_contract.xml/log`.
+- **다음 한 건:** 정밀관측소 서술의 `test_legacy_body_and_signature_stay_unchanged_with_opt_in_observations`.
+  고정 HTML 결과는 유지하고 과거 함수 본문 해시의 차이를 확인한다.
+
 ## 2026-11-27 레버리지 설명 계약 완료 · 최신
 
 - 완료: 과거 차트/레버리지 패널 AST 동일 요구를4상품 설명 표시 전후 바스켓·수익률·판정
