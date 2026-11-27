@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import pandas as pd
 import pytest
+from tests.test_decision_refactor_parity import scenarios
 
 from stock_lab_core import kr_sector_snapshot as kr, prices
 from stock_lab_core.formatters import clean_float, sanitize_ticker_value
@@ -293,45 +294,20 @@ def test_render_union_is_one_batch_with_identical_snapshots_and_warm_cache(offli
     assert kr._KR_CLUSTER_RUN.get() is None
 
 
-def test_investment_functions_are_unchanged():
-    from tests.test_summary_wait_diagnostics import strip_added_timing
-    from tests.decision_finalization_reference import restore_finalization_for_ast
-    from tests.signal_basis_reference import before_price_basis_identity
-    from tests.quote_observation_reference import before_quote_observation
-    # Freeze after the approved recovery display fix. Precision context was
-    # extracted and has three-view frozen-input coverage in test_execution_context.
-    baseline = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=ROOT, encoding="utf-8-sig")
-    names = {"_compute_summary_item", "calc_scores_and_decision",
-             "load_display_live_price", "build_holdings_table"}
-    trees = []
-    expected_metadata = ast.parse(
-        '{"qty": clean_float(item.get("qty"), np.nan), '
-        '"has_pos": clean_float(item.get("qty"), float(has_p)) > 0}', mode="eval").body
-    for index, code in enumerate((baseline, source("app.py"))):
-        functions = {node.name: node for node in ast.parse(code).body
-                     if isinstance(node, ast.FunctionDef) and node.name in names}
-        if index:
-            functions['load_display_live_price'] = before_quote_observation(functions['load_display_live_price'])
-            from tests.decision_record_ast_contract import without_decision_record_capture
-            functions['_compute_summary_item'] = before_price_basis_identity(without_decision_record_capture(functions['_compute_summary_item']))
-            # Restore only the approved SMC/finalization extractions. Their actual
-            # bodies, arguments, return order and outputs are independently frozen
-            # by test_decision_smc_refactor / test_decision_finalization_refactor,
-            # both included in the combined gate. Keep this older baseline intact.
-            functions["calc_scores_and_decision"] = restore_finalization_for_ast(
-                functions["calc_scores_and_decision"]
-            )
-            row = next(node.value for node in functions["_compute_summary_item"].body
-                       if isinstance(node, ast.Assign) and any(
-                           isinstance(target, ast.Name) and target.id == "row" for target in node.targets))
-            metadata = [(key, value) for key, value in zip(row.keys, row.values)
-                        if isinstance(key, ast.Constant) and key.value in {"qty", "has_pos"}]
-            assert ast.dump(ast.Dict(keys=[key for key, _ in metadata],
-                                     values=[value for _, value in metadata])) == ast.dump(expected_metadata)
-            # Exclude only the approved output metadata, never decision expressions.
-            retained = [(key, value) for key, value in zip(row.keys, row.values)
-                        if not (isinstance(key, ast.Constant) and key.value in {"qty", "has_pos"})]
-            row.keys, row.values = [key for key, _ in retained], [value for _, value in retained]
-        trees.append({name: ast.dump(strip_added_timing(node), include_attributes=False) for name, node in functions.items()})
-    assert trees[0].keys() == names
-    assert trees[0] == trees[1]
+@pytest.mark.parametrize('case', scenarios(), ids=[c[0] for c in scenarios()])
+def test_investment_functions_are_unchanged(app_module, monkeypatch, case):
+    import socket
+    from tests.test_decision_refactor_parity import run_scenario
+    from tests.summary_worker_contract import prepare_worker
+    monkeypatch.setattr(socket.socket, 'connect', lambda *a, **kw: pytest.fail('fixed-input contract is offline'))
+    monkeypatch.setattr(app_module, 'lookup_yfinance_display_name', lambda ticker: ticker)
+    baseline = run_scenario(app_module, monkeypatch, case)
+    for allowed in ([], [case[4]['ticker']]):
+        with prices.overnight_quote_scope(allowed):
+            assert run_scenario(app_module, monkeypatch, case) == baseline
+    run = prepare_worker(app_module, monkeypatch, case)
+    row = run(app_module._compute_summary_item)
+    assert row['row']['has_pos'] == bool(case[4]['has_pos'])
+    for allowed in ([], [case[4]['ticker']]):
+        with prices.overnight_quote_scope(allowed):
+            assert run(app_module._compute_summary_item) == row
