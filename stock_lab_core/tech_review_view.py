@@ -41,6 +41,12 @@ def leverage_policy_rows(decision, workflow, lev) -> list[dict]:
     except (TypeError, ValueError):
         left_budget = "미확인"
     recovery = bar.get("recovery_passed")
+    obs = d.get("leveraged_l3_observation") if isinstance(d.get("leveraged_l3_observation"), dict) else {}
+    if not read and obs:
+        return [{"항목": k, "값": v} for k, v in _observation_rows(obs, wf, lev)]
+    note = str(read.get("record_note") or "") if read else ""
+    if read and note and budget is None:
+        left_budget = f"조회 실패 · {note}"
     rows = [
         ("적용 정책", "레버리지 전용 정책(L0~L3) · 일반 기술검토 종합상태는 평가하지 않음"),
         ("레버리지 단계", f"{lev['stage']} {lev['stage_label']}" if lev else "미확인"),
@@ -58,6 +64,29 @@ def leverage_policy_rows(decision, workflow, lev) -> list[dict]:
         ("최종 실행가능 여부", str(wf.get("게이트상태") or "미확인")),
     ]
     return [{"항목": k, "값": v} for k, v in rows]
+
+
+def _observation_rows(obs, wf, lev):
+    """L0 (not held): price-only inputs are observed; cycle rules are 해당 없음, never 미확인 or 0."""
+    na = "해당 없음 · " + str(obs.get("reason") or "L0 미보유")
+    under = obs.get("underlying_above_ma50")
+    under_text = (f"조회 실패 · {obs.get('underlying_error')}" if under is None and obs.get("underlying_error")
+                  else _yes_no(under) + (f" ({obs.get('axis')} {obs.get('underlying_date')} 종가)" if under is not None else ""))
+    rec, total = obs.get("recovery_passed"), obs.get("recovery_total") or 6
+    return [
+        ("적용 정책", "레버리지 전용 정책(L0~L3) · 일반 기술검토 종합상태는 평가하지 않음"),
+        ("레버리지 단계", f"{lev['stage']} {lev['stage_label']}" if lev else "미확인"),
+        ("시장방어", str(wf.get("시장실행상태") or "미확인")),
+        ("기초지수 MA50", under_text),
+        ("레버리지 ETF MA50", _yes_no(obs.get("leveraged_above_ma50"))),
+        ("회복체크", "미확인" if rec is None else f"{int(rec)}/{int(total)}"),
+        ("패닉 latch", na),
+        ("남은 회차", na),
+        ("20거래일 cooldown", na),
+        ("남은 예산", na),
+        ("L3 판독", na),
+        ("최종 실행가능 여부", str(wf.get("게이트상태") or "미확인")),
+    ]
 
 
 def tech_review_rows(decision, workflow, *, pattern_candidates=None, liquidity_profile=None, invalidated_patterns=None,
@@ -104,6 +133,8 @@ def render_tech_review_shadow(st, decision, workflow, **kwargs) -> dict:
         if model["leverage_rows"]:
             st.markdown("**레버리지 전용 정책 적용**")
             st.dataframe(pd.DataFrame(model["leverage_rows"]), width="stretch", hide_index=True)
+            st.caption("회복체크는 신규진입 계획의 '회복 n/6'과 같은 6항목(MA20·MA50·MA120·MACD·RS 기울기·기초축 1W)입니다. "
+                       "미보유(L0)는 회차·예산 규칙이 '해당 없음'이고, 조회 실패만 '조회 실패'로 표시합니다.")
             st.caption("아래 일반 기술검토 근거는 참고용이며 L3 판정·사이징에 영향을 주지 않습니다.")
         if review.get("type_note"):
             st.caption(review["type_note"])
