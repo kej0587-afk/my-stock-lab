@@ -7240,7 +7240,8 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicat
 
 
 @timed_call("indicators")
-def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None, _include_daily_snapshot=True) -> dict:
+def load_precision_long_daily(ticker: str, _long_price_df=None) -> pd.DataFrame:
+    """The long daily history behind 주/월봉 (and the chart's trading-day N일선). Uses the cached loader."""
     raw_long = pd.DataFrame()
     for period in ("10y", "max", "5y", "2y"):
         try:
@@ -7251,6 +7252,11 @@ def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *,
             raw_long = candidate
         if raw_long is not None and not raw_long.empty and len(raw_long) >= 520:
             break
+    return raw_long
+
+
+def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None, _include_daily_snapshot=True) -> dict:
+    raw_long = load_precision_long_daily(ticker, _long_price_df)
     used_daily_fallback = raw_long is None or raw_long.empty
     if used_daily_fallback:
         raw_long = daily_df.copy() if daily_df is not None else pd.DataFrame()
@@ -35597,7 +35603,8 @@ if main_page == "precision":
                     display_averages=(ma_lines, overlay_lines), **_chart_options)
 
             render_analysis_chart(st, tkr, store=_chart_store, key="precision_analysis",
-                                  timeframe_frames=_chart_frames, analysis_renderer=_render_analysis_frame)
+                                  timeframe_frames=_chart_frames, analysis_renderer=_render_analysis_frame,
+                                  daily_long=load_precision_long_daily(tkr))
             from stock_lab_core.chart_review import render_chart_review
             render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
                                 is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")

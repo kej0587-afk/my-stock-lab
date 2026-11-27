@@ -91,12 +91,19 @@ def prepare_analysis(frame, ticker, decision, timeframe, *, provisional, show_pa
     return structure, patterns, channel, guides, context, events, snapshot
 
 
+def _period_key(value):
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return int(digits) if digits else 0
+
+
 def apply_display_averages(fig, frame, ma_lines, overlay_lines):
     """Replace only plotted MAs. Never rewrite calculation-frame MA columns."""
     colors = ("#22c55e", "#fbbf24", "#60a5fa", "#f472b6", "#94a3b8", "#a78bfa")
     fig.data = tuple(t for t in fig.data if not str(t.name or "").startswith("MA"))
-    for i, (period, values) in enumerate(sorted(ma_lines.items())):
-        fig.add_trace(go.Scatter(x=frame.index, y=values.reindex(frame.index), name=f"MA{period}",
+    # A str key is already a display name with its unit (e.g. "240주선"); an int key is the bar-unit MA.
+    for i, (period, values) in enumerate(sorted(ma_lines.items(), key=lambda kv: _period_key(kv[0]))):
+        fig.add_trace(go.Scatter(x=frame.index, y=values.reindex(frame.index),
+                                name=period if isinstance(period, str) else f"MA{period}",
                                 mode="lines", line=dict(color=colors[i % len(colors)], width=1.4)))
     for i, (period, values) in enumerate(sorted(overlay_lines.items())):
         fig.add_trace(go.Scatter(x=frame.index, y=values.reindex(frame.index), name=f"일봉 {period}일선",
