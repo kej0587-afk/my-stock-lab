@@ -10,6 +10,7 @@ from stock_lab_core.soxl_short_data import load_trade_history
 from stock_lab_core.report_eventstudy import _exchange_schedule
 from stock_lab_core.execution_readiness import build_execution_readiness
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.soxl_observation_brief import render_brief
 
 register_loaded_source(__name__, __file__)
 
@@ -109,11 +110,6 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
     five = paired_five((payload.get("five_minute") or {}).get("frames", {}), schedule, now)
     readiness = build_execution_readiness(decision.get("execution_workflow"), decision.get("chart_final_check"))
     st.markdown("**SOXL 단기 가격 계획 · 별도 연구안**")
-    st.table([
-        {"구분": "기존 실행 판정", "현재 상태": readiness["label"], "근거": readiness["reason"]},
-        {"구분": "SOXX 타점 조건", "현재 상태": "지지 반응 관찰" if context["signal"] else "조건 대기", "근거": context["reason"]},
-        {"구분": "거래 세션", "현재 상태": "미국 정규장" if context["session_active"] else "정규장 외 · 다음 정규장 재확인", "근거": "시간외·데이마켓을 정규장 가격에 섞지 않음"},
-    ])
     st.caption("계획 기준 봉 종료: " + format_time(context["as_of"]) + " · 완료봉 가격이며 실시간 체결 호가가 아닙니다.")
     plan = context["plan"]
     price_time = context["as_of"]
@@ -134,11 +130,6 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
         if custom:
             st.caption("수동 진입가 시나리오 · 이 가격의 조건부 승률은 검증되지 않았습니다.")
         if plan:
-            st.table([
-                {"SOXL 가격 기준": "가정 진입가", "USD": f"{plan['entry']:.4f}", "의미": "수정 OHLC 참고값 · 실제 주문/매수 승인 아님"},
-                {"SOXL 가격 기준": "가격 손절 참고선", "USD": f"{plan['stop']:.4f}", "의미": "같은 SOXL 1시간봉 저가 · 갭 손실 확대 가능"},
-                {"SOXL 가격 기준": "1R 익절 참고선", "USD": f"{plan['target']:.4f}", "의미": f"동일 진입·손절 기준, 가격거리 {plan['risk_pct']:.2f}% · 수익 보장 아님"},
-            ])
             st.caption("가격 시나리오는 타점 미충족 때도 표시하지만 실행 가능을 뜻하지 않습니다. "
                        "SOXX 1시간 지지 실패는 별도 무효 조건이고, SOXL 가격 손절은 그보다 먼저 발생할 수 있습니다.")
             st.caption("신규 후보 계획입니다. 조회할 때 기준봉이 바뀌므로 이미 진입한 포지션의 손절선을 자동으로 바꾸는 용도가 아닙니다.")
@@ -157,6 +148,7 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
                        "시나리오나 이 가격의 승률을 검증한 결과가 아닙니다.")
     else:
         st.info("동일 시각 SOXL 가격 계획 미산출 · 자료 또는 손절거리 확인 필요")
+    render_brief(st, context, readiness, plan, format_time(price_time))
     st.markdown("**같은 시각 5분 가격 · 이탈은 관찰 전용**")
     st.table([{"종목": r["ticker"], "5분 종가": "미연결" if r["close"] is None else f"{r['close']:.2f}",
                "봉 종료": format_time(five["end"]), "자료 상태": r["issue"] or "동일 완료봉"} for r in five["rows"]])
