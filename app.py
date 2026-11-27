@@ -29967,6 +29967,8 @@ def render_today_unified_briefing_panel(
     render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
 
     if detail == "시장":
+        from stock_lab_core.market_quick_view import render_market_quick_view
+        render_market_quick_view(st, key="today_market_quick", script_started=SCRIPT_RUN_STARTED)
         from stock_lab_core.market_board import render_market_board
         market_view = st.radio("시장 화면", ("시장판", "매크로 관측실"), horizontal=True, key="today_market_surface")
         if market_view == "매크로 관측실":
@@ -33608,6 +33610,7 @@ def _calculate_fresh_today_summary(mode, watch_items, raw_watch_items, flow_auto
     from stock_lab_core.report_history import tag_input_origins
     summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
     summary_df = stamp_portfolio_signal_context(summary_df)
+    st.session_state["_today_full_calculation_count"] = st.session_state.get("_today_full_calculation_count", 0) + 1
     return summary_df
 
 
@@ -34565,6 +34568,7 @@ MAIN_PAGE_OPTIONS = {
     "asset": "💼 자산 현황",
     "today": "✅ 오늘 점검",
     "macro": "시장·매크로 차트",
+    "briefing": "브리핑 보기",
     "portfolio": "📊 포트폴리오 분석",
     "dashboard": "📋 전광판",
     "precision": "🔍 정밀관측소",
@@ -36628,8 +36632,15 @@ if main_page == "scenario":
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 if main_page == "macro":
+    from stock_lab_core.market_quick_view import render_market_quick_view
     from stock_lab_core.macro_monitor import render_macro_monitor
+    render_market_quick_view(st, key="standalone_market_quick", script_started=SCRIPT_RUN_STARTED)
     render_macro_monitor(st, key="standalone_macro_monitor", explicit_refresh=True)
+
+if main_page == "briefing":
+    from stock_lab_core.market_quick_view import render_market_quick_view
+    render_market_quick_view(st, key="briefing_market_quick", script_started=SCRIPT_RUN_STARTED)
+    st.caption("시장 조회만 실행합니다. 전체 종목 판정·새 시황 생성은 오늘 점검에서 선택해 실행할 수 있습니다.")
 
 if main_page == "short":
     render_short_trend_tab(holdings_table, st.session_state.watchlist)
