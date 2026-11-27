@@ -1,5 +1,31 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 SOXL Research Handoff (read this first)
+
+**확인한 중단 지점:** 원격 main `ad5f6f1f` / PR #107까지 반영, 시작 시 주 작업 트리 clean,
+열린 PR 없음. PR #106 빠른 차트 구현, #107 SQL 적용·재접속 복원 검증은 완료 상태였다.
+기존 11/13 SOXX 1시간봉 연구는 있지만 새 SOXL -20% 기준가/+10·+20% 비교 결과는 없었다.
+다른 Claude 작업 트리의 월적립 `app.py` 수정과 11/16 임시 baseline 삭제 상태는 건드리지 않았다.
+
+**이번에 끝낸 일:** [SOXL 비교 보고서](docs/maintenance/20261127_soxl_drawdown_report.md).
+전일 종가/직전 20일 최고 종가 × 종가 확인/장중 도달 × +10/+20 목표 8개 안을
+같은 진입 날짜·가격·금액으로 비교했다. 결과 수집 전 프로토콜 커밋 `5ada8a50`.
+공개 일봉 4,205개(2010-03-11~2026-11-25), 신호·거래·일별 계좌곡선·해시·재실행 코드 보존.
+전일 종가 -20%는 두 목표 모두 평균손익 음수. 20일 최고 종가 -20%는 평균 양수지만
+기간별 불안정·갭 손실이 있어 운영 채택 근거로 단정하지 않는다. 장기판정·월적립·L3·앱 코드는 변경 없음.
+새 연구 21개와 빠른 차트 9개 테스트 통과. SOXL 포함 선택 회귀는 기존 실패 1건을 수정 전 커밋에서 재현했다.
+운영 14:22~14:24 KST: MA 복원·일봉/5분 표시 확인, 캐시 재조회 첫 차트 데이터 표시 약 3.9초(서버 0.11초).
+연구 브랜치 `research/soxl-drawdown-paired-exits-20261127`; PR 검토용이며 main 병합·운영 재부팅은 하지 않는다.
+
+**아직 확인하지 못한 일:** 다른 PC와 `/mnt/project-files/` 전용 자료는 확인 불가.
+미국 정규장이 닫혀 있어 SOXL 장중 30초 마지막 봉 갱신·실제 시세 지연은 운영 확인 대기.
+과거 분봉 순서, 당시 실제 체결, 독립 기간 외 성과, 과거 시장방어 통과 여부는 이번 일봉 연구로 검증하지 않았다.
+SQL은 #107 적용 기록과 운영 설정 복원으로 확인했으며 이번에 DB DDL/RLS를 재조회·수정하지 않았다.
+
+**다음 한 건:** 미국 정규장에 SOXL 30초 마지막 봉 갱신과 공급 시세 지연만 실측한다
+(11/27 단축장 23:30 KST~11/28 03:00 KST). 단기매매 화면 반영·다른 상품 확대는 보고서 검토 후 사용자 결정.
+아래 누적 작업 지시보다 이 인계가 우선한다.
+
 Updated: 2026-11-27 KST. Read before large source files or edits.
 This is the current work order. Historical next-task instructions are superseded.
 
@@ -569,6 +595,12 @@ Fixed replay sources: Downloads `precision_review_379810.KS (4).zip` and
 partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
+
+**Current (2026-11-27):** SOXL -20% paired-exit research is finished; see the four-part handoff at the top
+and [report](docs/maintenance/20261127_soxl_drawdown_report.md). One next task: measure the remaining
+SOXL live last-bar refresh/quote delay during a US regular session. Do not deploy the research rules.
+
+### Historical work orders (superseded by the current handoff above)
 
 **Current work order (user, 2026-11-26 21:18 KST; replaces the order below; status table §4):** errors and speed before new features.
 (1) prod-check records up to date (done: status table v3). (2) incomplete results visible to the user: report made right after a reboot

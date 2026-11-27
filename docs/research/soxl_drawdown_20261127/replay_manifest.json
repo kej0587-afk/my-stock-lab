@@ -1,0 +1,24 @@
+{
+  "protocol": {
+    "drop": 0.2,
+    "stop": 0.1,
+    "hold_sessions": 10,
+    "commission": 0.0005,
+    "slippage": 0.001,
+    "capital": 100000.0,
+    "cash_per_trade": 10000.0
+  },
+  "price_sha256": "101c4be2f8fdfa854fd8af9a306e44221cbaf84f640d377ab73ec490d6d88a67",
+  "hash_convention": "SHA-256 of UTF-8 text with CRLF normalized to LF",
+  "engine_sha256": "e7c748b157b1dcd3b69481e8dcdb55c275cb4f86280b9c4148e45aa4fda71400",
+  "runner_sha256": "08874f78d5d7e0de864231d1e295bce681bb1985d0d861d521bf8638f5ea4537",
+  "output_sha256": {
+    "summary.csv": "fa33c2692ce778b385cfb6c1eb7ea06fe30a14a69305d58f3c6a559a85994ce8",
+    "trades.csv": "efc117e49db778ab9f16656214444f7783ca15fac7f13d94e7010ba57c73a9ee",
+    "equity.csv": "a35892636eaffcac9cb78a0038a6fd064606e4f29649d49b3a3ee7b08a827fec",
+    "signals.csv": "93c60428104d3a7bdd66cbe88c8822e61b3730d454f1990df7cf9547c55044d0",
+    "entries.csv": "ffbb272e2f0932aa4fb0a996c299b50d82cdb18462938db8d82f7bc082b2078e",
+    "paired.csv": "0f1ed87da3e2be596100f457006150af0753006cafa77f5bdfb7a979f78f595d",
+    "yearly.csv": "6f0f39bd2fab16e274c109eebc2bab20fa561119868ed34c335e9dba3b8a04ed"
+  }
+}
