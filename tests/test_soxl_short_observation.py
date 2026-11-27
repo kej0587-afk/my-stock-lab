@@ -138,6 +138,7 @@ class UI:
         self.clicked, self.session_state, self.text, self.tables = clicked, {}, [], []
     def expander(self, *args, **kwargs): return nullcontext()
     def spinner(self, *args, **kwargs): return nullcontext()
+    def radio(self, label, options, **kwargs): return options[0]
     def button(self, *args, **kwargs): return self.clicked
     def markdown(self, text): self.text.append(text)
     def caption(self, text): self.text.append(text)

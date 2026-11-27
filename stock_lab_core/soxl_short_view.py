@@ -78,14 +78,48 @@ def render_observation_result(st, model):
         st.caption("참고 흐름은 단기 타점이나 기존 중기 회복점수에 합산하지 않습니다. 지수는 포인트, ETF는 USD.")
 
 
-def render_soxl_short_observation(st, ticker, decision):
+def _render_status(st, title, status, gate_text):
+    met = status.get("met")
+    flag = "미판정(규칙 미정)" if met is None and "미정" in str(status.get("next", "")) else (
+        "자료 확인 필요" if met is None else ("조건 충족" if met else "조건 미충족"))
+    st.markdown(f"**{title}** · {flag}")
+    st.caption("마지막 확인: " + status["summary"])
+    st.caption("다음 확인: " + status["next"] + " · 현재 보류 이유: " + gate_text)
+
+
+def render_soxl_short_observation(st, ticker, decision, daily=None):
     if str(ticker).upper() != "SOXL":
         return
-    with st.expander("SOXL 단기 계획 · 가격·손실예산·과거 검증", expanded=False):
+    from stock_lab_core import soxl_strategy_select as ss
+    with st.expander("SOXL 단기 관찰 · 세 전략 · 가격·손실예산·과거 검증", expanded=False):
         workflow = precision_display_context(decision).get("execution_workflow") or {}
+        gate_text = str(workflow.get("게이트상태", "미확인")) + " · " + str(workflow.get("게이트근거", "기존 중기 판정·시장방어 유지"))
         st.markdown("**관찰 전용 · 매수 승인 아님**")
-        st.caption("기존 실행 제한: " + str(workflow.get("게이트상태", "미확인")) + " · "
-                   + str(workflow.get("게이트근거", "기존 중기 판정·시장방어 유지")))
+        st.caption("기존 실행 제한: " + gate_text)
+        choice = st.radio("관찰 전략", ss.STRATEGIES, key="soxl_strategy_choice_v1")
+        with st.expander("세 전략의 기준 종목·검증 단계", expanded=False):
+            st.dataframe(ss.strategy_rows(), hide_index=True, width="stretch")
+        if choice == ss.DROP:
+            status = ss.drop_rebound_status(daily, gate_text=gate_text)
+            _render_status(st, ss.DROP, status, gate_text)
+            st.caption("2차 분봉 검증: 중첩 16건 중 가격 불일치 12·결측 4 → 체결 순서 확정 0건. 이 검증의 승률은 미산출입니다. "
+                       "일봉 연구 결과는 현재 가격의 승률이 아닙니다.")
+            with st.expander("가정 진입·손절·익절 (연구 규칙 · 주문가 아님)", expanded=False):
+                if status["prices"]:
+                    st.table(status["prices"])
+                else:
+                    st.caption("조건 미충족 · 가정 가격 미산출")
+                st.caption("연구 규칙: 진입 " + ss.DROP_RULE["entry"] + " · 손절 −10% · +10%/+20% 비교 · 최대 10거래일. "
+                           "운영 판정·시장방어·월적립·L3에 적용하지 않습니다.")
+            return
+        if choice == ss.VOLUME:
+            status = ss.volume_breakout_status(daily, gate_text=gate_text)
+            _render_status(st, ss.VOLUME, status, gate_text)
+            st.caption("진입·청산 규칙과 성과 검증 전이라 가정 가격을 만들지 않습니다.")
+            return
+        st.markdown(f"**{ss.SUPPORT}**")
+        st.caption("지지 확인은 SOXX 60분 완료봉, 손익 계산은 SOXL 가격. 5분봉은 조기 확인용. "
+                   "가정 진입가·손절가·익절가는 아래 계획 상세 안에 있습니다.")
         st.caption("Yahoo 미국 정규장 완료 60분봉 · 수정 OHLC · 프리/애프터/데이마켓 제외. "
                    "개장 시각부터 1시간 단위이며 마지막 30분 및 단축장 잔여 봉 제외. 조회 지연 가능.")
         key = f"soxl_short_hours_v{VERSION}_paired"
@@ -106,7 +140,11 @@ def render_soxl_short_observation(st, ticker, decision):
             schedule = _exchange_schedule("US", (pd.Timestamp(now) - pd.Timedelta(days=65)).date().isoformat(),
                                           (pd.Timestamp(now) + pd.Timedelta(days=1)).date().isoformat())
             model = build_short_observation(payload["frames"], schedule, now)
-            render_trade_desk(st, payload, model, schedule, now, decision, _time)
+            st.markdown("**지지 조건: " + str(model.get("status")) + "**")
+            st.caption("SOXX 60분 기준봉 종료 " + _time(model.get("as_of")) + " · 기대 완료봉 " + _time(model.get("expected_end"))
+                       + " · 자료 수집 " + _time(payload["captured_at"]) + " · 현재 보류 이유: " + gate_text)
+            with st.expander("가정 진입·손절·익절 · 5분 확인 · 수량 시나리오 · 과거 검증", expanded=False):
+                render_trade_desk(st, payload, model, schedule, now, decision, _time)
             with st.expander("SOXX 1시간 채널 · 5분 이탈 상세", expanded=False):
                 render_observation_result(st, model)
                 render_five_observation(st, payload.get("five_minute") or {}, model, schedule, now, _time)
