@@ -224,6 +224,32 @@ def test_collector_caches_accounts_and_rendering_does_not_query(monkeypatch):
     assert get.call_count == 3
 
 
+def test_persistent_directory_keeps_filing_and_financial_results_identical(monkeypatch):
+    from stock_lab_core import dart_corporate_snapshot as snapshot
+    setup_codes(monkeypatch)
+    snapshot.configure_corporate_store(None)
+    def collect():
+        get = Mock(side_effect=[Response(dart_payload()), Response(COMPANY), Response(payload())])
+        result = sources.collect_filing_earnings([TICKER], NOW, sec_user_agent="", dart_api_key="test", get=get)
+        assert get.call_count == 3  # filing list, company identity and actual accounts are still queried
+        return result
+    live = collect()
+    sources.clear_cache()
+    snapshot.configure_corporate_store(Mock(load=Mock(return_value={
+        "version": 1, "source": snapshot.SOURCE,
+        "retrieved_at": (NOW - timedelta(hours=6)).isoformat(), "codes": {"123456": CORP},
+    })))
+    try:
+        cached = collect()
+    finally:
+        snapshot.configure_corporate_store(None)
+        sources.clear_cache()
+    assert cached["events"] == live["events"] and cached["results"] == live["results"]
+    assert cached["sources"][0]["mapping_attempts"] == 0
+    assert cached["sources"][0]["mapping_source"] == "official_cache"
+    assert live["sources"][0]["mapping_attempts"] == 1
+
+
 @pytest.mark.parametrize("api_status,expected_calls,connected", [("013", 4, True), ("020", 3, False), ("010", 3, False)])
 def test_ofs_fallback_only_on_no_data_not_api_or_auth_failure(monkeypatch, api_status, expected_calls, connected):
     setup_codes(monkeypatch)

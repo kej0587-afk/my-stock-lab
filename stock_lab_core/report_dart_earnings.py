@@ -128,7 +128,7 @@ def identity_notice_lines(context):
     for key in ("earnings_sources", "earnings_result_sources"):
         for row in (context or {}).get(key) or []:
             if (isinstance(row, dict) and str(row.get("ticker", "")).endswith((".KS", ".KQ"))
-                    and row.get("mapping_source") == "official_snapshot"):
+                    and row.get("mapping_source") in {"official_snapshot", "official_cache"}):
                 diagnostic = {k: row.get(k) for k in ("mapping_source", "snapshot_origin", "snapshot_asof", "snapshot_valid_until")}
                 try:
                     from datetime import datetime
