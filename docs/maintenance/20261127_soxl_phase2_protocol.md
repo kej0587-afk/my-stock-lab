@@ -48,8 +48,9 @@ Status: research only. Production decisions, monthly allocation and L3 unchanged
 - Review after at least 30 completed entries per mode AND 3 calendar months;
   neither is a statistical guarantee. Never pool training-period trades into
   an independent success probability. Missing live guard remains unknown.
-- Collection requires an actively running recorder or a separately approved
-  scheduler. A zero-row ledger is honest while no new eligible session closed.
+- Collection requires an actively running recorder or a configured scheduler;
+  neither has been deployed. The user's paper-recording approval does not imply
+  a service is running. A zero-row ledger is honest while no new eligible session closed.
 
 ## Next Decision
 
