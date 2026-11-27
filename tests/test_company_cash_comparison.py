@@ -127,11 +127,75 @@ def test_52_week_calendar_matches_fiscal_quarter_with_shifted_dates():
     assert prior_year_cash_row(p) is not None
 
 
-def test_app_entry_and_decision_reader_unchanged():
-    import subprocess
-    from pathlib import Path
-    assert Path('app.py').read_text(encoding='utf-8-sig')==subprocess.check_output(
-        ['git','show','08b2ac4e:app.py'],encoding='utf-8-sig')
+@pytest.mark.parametrize('source', ['direct', 'recovered', 'held', 'invalid'])
+def test_app_entry_and_decision_reader_unchanged(app_module, monkeypatch, source):
+    """Review/query changes must not write scores or alter fixed-input decisions.
+
+    The old whole-app equality to 08b2ac4e also rejected unrelated, approved
+    app changes. Exercise the real review renderer and decision reader instead;
+    the existing decision snapshot suite still owns the absolute baseline.
+    """
+    from datetime import datetime, timezone
+    from hashlib import sha256
+    import json
+
+    import pandas as pd
+    import stock_lab_core.company_deep_dive as view
+    from tests.test_decision_refactor_parity import run_scenario, scenarios
+
+    packet = direct_pair() if source == 'direct' else year_pair()
+    recovery = collect(packet)[0] if source == 'recovered' else {}
+    if source == 'invalid':
+        packet['eligible_for_scoring'] = True
+    original = deepcopy((packet, recovery))
+    cases = scenarios()
+    # Display-name lookup is unrelated to this financial/decision boundary.
+    monkeypatch.setattr(app_module, 'lookup_yfinance_display_name', lambda ticker: ticker)
+
+    st = app_module.st
+    scores = {'ACME': 1}
+    summary = pd.DataFrame([dict(ticker='ACME', f_score=1, decision_code='FINANCIAL_F')])
+    monkeypatch.setitem(st.session_state, 'fin_score_map', deepcopy(scores))
+    monkeypatch.setitem(st.session_state, 'today_queue_summary_df', summary.copy(deep=True))
+    monkeypatch.setitem(st.session_state, 'today_queue_summary_sig', 'fixed-input-contract')
+    prefix = 'market_company_' + sha256(b'cash-contract').hexdigest()[:20]
+    # Restore even the newly created review keys when the test finishes.
+    monkeypatch.setitem(st.session_state, prefix, None)
+    monkeypatch.setitem(st.session_state, prefix+'_selection', '')
+    before = {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases}
+    monkeypatch.setattr(st, 'radio', lambda *a, **kw: '개별기업')
+    monkeypatch.setattr(st, 'selectbox', lambda *a, **kw: 'ACME')
+    monkeypatch.setattr(st, 'button', lambda *a, **kw: True)
+    queries, downloads = [], []
+
+    def load(*args, **kwargs):
+        queries.append('quarter')
+        return packet
+
+    def release_loader(value):
+        assert value is packet
+        queries.append('release')
+        return recovery
+
+    monkeypatch.setattr(view, 'load_quarter_evidence', load)
+    monkeypatch.setattr(st, 'download_button', lambda label, data, **kw: downloads.append(json.loads(data)))
+    view.render_company_deep_dive(
+        st, universe=[dict(ticker='ACME', name='ACME', source='관심', is_etf=False)],
+        owner='cash-contract', configured=True, resolve_cik=None, fetch_facts=None,
+        load_kr=None, cash_release_loader=release_loader,
+        now=datetime(2026, 11, 8, tzinfo=timezone.utc))
+
+    assert queries == ['quarter', 'release'] and len(downloads) == 1
+    comparison = downloads[0]['cash_comparison']
+    assert comparison['status'] == ('verified_comparison' if source in {'direct', 'recovered'} else 'held')
+    assert comparison['review_only'] is True and comparison['eligible_for_scoring'] is False
+    assert bool(comparison['table']) is (source in {'direct', 'recovered'})
+    assert (packet, recovery) == original
+    assert st.session_state['fin_score_map'] == scores
+    pd.testing.assert_frame_equal(st.session_state['today_queue_summary_df'], summary)
+    assert st.session_state['today_queue_summary_sig'] == 'fixed-input-contract'
+    after = {s[0]: run_scenario(app_module, monkeypatch, s) for s in cases}
+    assert after == before
 
 
 def test_overflow_never_becomes_verified_infinity():

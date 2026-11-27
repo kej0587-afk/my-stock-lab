@@ -1,5 +1,23 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 기업 현금흐름 비교 계약 완료 · 최신 지시
+
+- 시작 clean `codex/resume-report-tests/e6ca8f30`, fetch한 main과 동일. 다른 PC 변경 이월 없음.
+- 완료: 과거 `08b2ac4e` app 전체 문자 일치 검사1건을 현금 근거4상태의 조회·표시 계약으로 교체.
+  원자료/점수 map/오늘점검 표·서명 불변, 외부조회 각1회, 20개 고정 판정의 전후 전체 출력 동일 확인.
+  운영 코드·점수·판정·TTL 변경 없음, golden 재생성/skip 없음.
+- **실제 남은 실패12건(A11/E1)**: 기존 전체에서 실패했던16개를 다시 실행하여7통과/12실패(50.96초).
+  교체한1건이4개 상태로 늘어 총19개. 새 전체 suite 실행은 아니며 과거 전체10313통과/16실패 기록을 대체하지 않음.
+- 검증: 해당 파일29통과, 현금 비교/해석/심층 UI/SEC 복구/전체 판정 출력140통과(26.54초).
+  `check_refactor --scope decision` **1669통과/0실패/0skip**(162.589초, `decision_s3fgo382`).
+  [변경과 검증 범위](docs/maintenance/20261127_cash_comparison_contract.md).
+- 반영: 이 단위는 main에 직접 커밋·푸시하며, 실행 코드 변경이 없어 운영 재부팅은 필요하지 않음.
+- 운영 범위: 이번 새 운영 화면 확인/재부팅 없음(테스트·문서만 변경). 기존 #121 하단 검증 기록 재사용;
+  보유 L2/L3 및 보유 Today 일치는 여전히 미확인. Git에는 개인 계좌/관심목록 자료 없음.
+- **다음 한 건:** `tests/test_company_market_reading.py::test_app_adapter_restores_only_current_company_context_change`.
+  시장·업종 맥락 연결의 입력/출력과 점수 비반영을 검사하도록 과거 app 전체 AST 비교를 좁힌다.
+  나머지 A→E→ROADMAP 실측 병목 순서 유지. 아래 이전 다음 작업은 과거 기록.
+
 ## 2026-11-27 재개 완료 · 최신 작업 지시 (아래 과거 다음 작업보다 우선)
 
 - 시작: clean `claude/project-thread-a6hied/20452bea` → fetch한 main `339baf81`과102커밋 차이,

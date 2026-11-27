@@ -1,5 +1,9 @@
 # Stock Lab 전체 작업 지도
 
+최신: 기업 현금흐름 비교 계약1건 정리, 기존 실패 목록 재실행 **12실패(A11/E1)**.
+[현금 비교 계약 기록](20261127_cash_comparison_contract.md). 다음 한 건은 HANDOFF 맨 위
+company_market_reading 연결 계약. 운영 코드·점수·판정 변경 없음. 아래13건은 직전 기록.
+
 2026-11-27 재개 갱신: 최신 main339baf81 전체 재현16실패 → B3 정리 후 잔여13(A12/E1).
 C는 전체에서 통과/단독 실패였고 오프라인 조회 경계 보완 후 단독 통과. 상세:
 [재개 검증](20261127_test_resume_bc.md). 다음 한 건은 HANDOFF 맨 위 company_cash_comparison 계약.
