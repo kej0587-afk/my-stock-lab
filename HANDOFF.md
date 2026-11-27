@@ -1,5 +1,16 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 DART 검토 계약 완료 · 최신
+
+- 완료: app 전체 AST 비교를 실제 DART 파서로 미리보기→확인→저장→중복 저장→재조회하는
+  AppTest로 교체. 표시 금액/기간과 저장 원자료 일치, 자동/수동/최종 점수 불변, 재실행 추가 조회 없음.
+- 검증: DART 화면/저장45통과(18.48초). 수정 전13통과/1실패. 기존 실패11건 중1건 해결,
+  **남은 알려진 실패10건(A9/E1)**; 전체/실패목록 전체 재실행은 이 단위에서 하지 않음.
+- 운영: 테스트·문서만 변경, 실제 Cloud/Supabase 재검증·재부팅 없음. 운영 파서·점수·판정·TTL 변경 없음.
+  main 커밋·푸시 단위. 증거 `cache/resume_20261127/dart_contract.xml/log`(Git 제외).
+- **다음 한 건:** `test_guard_duplicate_inputs::test_only_exact_reviewed_app_edits_differ_from_parent`.
+  중복 지수·매크로/이벤트 근거의 계산 계약으로 좁히고 현재 위험 점수 기준은 유지한다.
+
 ## 2026-11-27 기업·시장·업종 연결 계약 완료 · 최신 지시
 
 - 시작 clean `058dcd6f`, fetch한 main과 동일. 완료: 과거 app 전체 AST 비교1건을 실제 앱 진입의

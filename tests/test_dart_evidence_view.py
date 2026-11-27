@@ -1,11 +1,8 @@
 """Real Streamlit panel lifecycle with synthetic uploads/identity/storage."""
 
-import ast
 from copy import deepcopy
 from datetime import timedelta
-from pathlib import Path
 import socket
-import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -60,7 +57,8 @@ kwargs={}
 if st.session_state.get('fake_upload', True):
     kwargs['uploader']=lambda *a, **k: BytesIO(st.session_state['raw']) if st.session_state.get('raw') is not None else None
 render_dart_evidence(st, ticker=st.session_state.get('ticker','005930.KS'), owner=st.session_state.get('owner','first@example.invalid'),
-    fin_meta=st.session_state['meta'], extract_metrics=lambda df, year, code: {'revenue': 250000, 'ocf': 45000},
+    fin_meta=st.session_state['meta'], extract_metrics=st.session_state.get('extract_metrics',
+        lambda df, year, code: {'revenue': 250000, 'ocf': 45000}),
     identity_loader=identity, store_factory=lambda owner: MemoryStore(st.session_state, owner),
     is_demo=st.session_state.get('demo',False), now=st.session_state.get('now', NOW), **kwargs)
 '''
@@ -198,10 +196,20 @@ def test_existing_parser_and_app_functions_preserved(app_module):
     before = deepcopy(payload)
     rows = metric_rows(payload, app_module.extract_dart_metrics)
     assert rows[0]["매출"] == 250000 and "누적" in rows[0]["금액 기준"] and payload == before
-    base = subprocess.check_output(['git', 'show', '5cadb203:app.py']).decode('utf-8-sig')
-    current = Path('app.py').read_text(encoding='utf-8-sig')
-    def functions(text):
-        return {n.name: ast.dump(n, include_attributes=False) for n in ast.parse(text).body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    assert functions(current) == functions(base)
-    assert 'render_dart_evidence(' in current
+    # Keep the real app parser, not a historical hash of unrelated app functions.
+    app = app_with_file(payload, extract_metrics=app_module.extract_dart_metrics)
+    scores = deepcopy(app.session_state['meta'])
+    assert not app.exception and not app.session_state['calls']
+    assert app.dataframe[2].value.to_dict('records') == rows
+    for action in (VERIFY, IMPORT, IMPORT, LOAD):
+        button(app, action).click().run()
+        assert not app.exception and app.session_state['meta'] == scores
+    assert len(app.session_state['database']) == 1
+    stored = next(iter(app.session_state['database'].values()))
+    assert stored['payload'] == before and payload == before
+    assert app.dataframe[-1].value.to_dict('records') == rows
+    assert [call[0] for call in app.session_state['calls']] == ['identity', 'insert', 'insert', 'load']
+    calls = deepcopy(app.session_state['calls'])
+    app.run()
+    assert not app.exception and app.session_state['calls'] == calls
+    assert app.session_state['meta'] == scores
