@@ -98,6 +98,7 @@ class PerformanceTrace:
         self._function_intervals = {}
         self._category_intervals = {}
         self._events = {}
+        self._event_keys = {}
         self.elapsed_seconds = 0.0
         self.status = "not_started"
         self.on_phase = on_phase
@@ -216,6 +217,22 @@ def count_event(name, count=1):
     trace = _trace.get()
     if trace is not None:
         trace.count_event(name, count)
+
+
+def count_distinct_event(name, key):
+    """Run-local identity counts; keys are never included in exported reports."""
+    trace = _trace.get()
+    if trace is None:
+        return
+    with trace._lock:
+        seen = trace._event_keys.setdefault(name, set())
+        suffix = "repeat" if key in seen else "unique"
+        if suffix == "unique" and len(seen) >= 4096:
+            suffix = "overflow"
+        else:
+            seen.add(key)
+        event = f"{name}.{suffix}"
+        trace._events[event] = trace._events.get(event, 0) + 1
 
 
 def queue_measurement_details(report):
