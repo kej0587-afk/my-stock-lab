@@ -18760,7 +18760,8 @@ def build_leveraged_dca_timing_state(c, state):
         entry2_cond = entry3_cond = "자료 미확인 · 추가 회차 보류"
     elif dca_blocked:
         if dca_stage == "미보유 관찰":
-            entry2_cond = "목표비중 설정 후 같은 타점 기준으로 금액 재계산"
+            entry2_cond = ("목표비중 설정 후 같은 타점 기준으로 금액 재계산" if target_w <= 0
+                           else "신규 1차 진입 후 같은 타점 기준으로 재계산 · 조건부 수량 미산출")
             entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"
         elif target_w <= 0:
             entry2_cond = "목표비중이 0%라 금액 계산 제외. 타점 참고만 표시"
