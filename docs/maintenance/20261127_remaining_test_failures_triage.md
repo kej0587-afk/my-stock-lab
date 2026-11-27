@@ -38,3 +38,16 @@
    함수 분리보다 대기 축소가 먼저다.
 4. `render_entry_execution_plan`: 1번 작업에서 출처·금액 분리가 붙어 길어졌다. 계산과 표시를 나눈다.
 각 단계는 기존 결과와 같은지(같은 입력 → 같은 행·금액)를 먼저 고정한 뒤 옮긴다. 판정 규칙은 바꾸지 않는다.
+
+## D 정리 결과 (2026-11-27 19:0x KST)
+- `test_conflicting_tables_with_same_header_are_held`: **실제 결함.** 설치된 lxml 5.4(libxml2)는 첫 `</html>` 뒤를 버린다.
+  그래서 같은 머리글의 충돌 표가 뒤에 붙어 있으면 파서가 그 표를 보지 못했고, 앞 표 값으로 "확인"을 냈다.
+  `parse_cash_release`는 이제 파싱된 표 수와 원문의 `<table` 수가 다르면 보류(None)한다. 숫자를 만드는 쪽이 아니라 보류하는 쪽이다.
+- `test_recovery_is_review_only_and_default_market_collection_unchanged`: 7dd38ffe 시점 app 함수 전체 AST 비교라
+  분류 A와 같은 낡은 계약이었다. 의도만 남겼다.
+  - 원문 대조 로더(`collect_cash_release`)를 쓰는 app 함수는 `render_today_market_memo_panel`의 '기업 심층분석' 분기 하나뿐이다.
+  - 리포트 수집 모듈은 `sec_cash_recovery`를 import하지 않는다.
+- 검증: sec_cash_recovery 47개 통과. sec/company/cash 관련 1,037개 통과(남은 실패 4개는 분류 A).
+  report 범위 208/0.
+- 남은 실패: 17건(A 12, B 3, C 1, E 1). 다음은 B(리포트 위치 3건).
+- 운영 화면: 리포트 경로는 바뀌지 않는다. 기업 심층분석에서 원문 대조 버튼을 눌러 보는 확인은 아직 하지 않았다.

@@ -69,8 +69,14 @@
 - 매크로·이벤트 점수는 재현하지 못했다(미확인). [기록](docs/maintenance/20261127_core_first_buy_simulation.md).
   종목별 표는 프로젝트 파일 `stock-lab/20261127_core_first_buy_events.md`에 있다(Git 밖).
 
-**다음 한 건:** 실패 테스트 D(SEC 현금 충돌 표 보류 2건)부터. 숫자를 지어낼 위험이 있는 묶음이다. 이어서 B → C → A → E.
-그 뒤 `kr_history_http` 중복 요청 축소를 같은 조건 전후로 비교한다.
+**D 결과 (19:0x KST):**
+- SEC 현금 원문 대조 파서가 첫 `</html>` 뒤의 충돌 표를 못 보고 앞 표 값으로 확인을 내던 결함을 고쳤다.
+  파싱된 표 수가 원문과 다르면 보류한다. 구조 비교 테스트 1건은 의도(심층분석 전용·리포트 수집 미사용)만 남겼다.
+- 남은 실패 17건. [기록](docs/maintenance/20261127_remaining_test_failures_triage.md).
+- 긴 실행은 집 PC가 연결되기 전까지 클라우드에서 바로 돌린다(11-27 코디네이터 전달).
+
+**다음 한 건:** 실패 테스트 B(리포트 위치 3건: bok_report_calendar, report_evidence front order, summary_ownership RAM).
+그 뒤 C → A → E, 그리고 `kr_history_http` 중복 요청 축소를 같은 조건 전후로 비교한다.
 
 
 ## 2026-11-27 16:50 KST 최종 인계: 통합 차트·연구·운영 확인
