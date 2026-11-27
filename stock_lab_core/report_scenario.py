@@ -71,11 +71,20 @@ def interval_observation(frame, start, end):
             "source": "Yahoo 5분봉 · 지연 가능"}
 
 
+def _us_close(day):
+    """Actual close of the US session (13:00 ET on early-close days); 16:00 ET when the calendar is unknown."""
+    from stock_lab_core.report_exchange_clock import session_on_date
+    session = session_on_date("US", day)
+    if session.get("known") and session.get("trading_day"):
+        return session["close"].tz_convert("America/New_York").to_pydatetime()
+    return datetime.combine(datetime.fromisoformat(day).date(), time(16), ZoneInfo("America/New_York"))
+
+
 def build_scenario_context(frames, sessions, now):
     us = text(sessions.get("US"))
     if not us:
         return {}
-    base = datetime.combine(datetime.fromisoformat(us).date(), time(16), ZoneInfo("America/New_York"))
+    base = _us_close(us)
     kr = text(sessions.get("KR"))
     close = datetime.combine(now.date(), time(15, 30), KST)
     current = {symbol: interval_observation(frames.get(symbol), base, now) for symbol in SYMBOLS}
@@ -104,7 +113,7 @@ def build_scenario_context(frames, sessions, now):
                     status[symbol] += " · 마지막 유효 시각 " + last.tz_convert("Asia/Seoul").strftime("%m/%d %H:%M KST")
             else:
                 status[symbol] = "비교 기준 미국 종가 시각의 유효 가격 미수집(" + base.isoformat() + ")"
-    return {"latest": current, "kr_close": closed, "latest_status": status}
+    return {"latest": current, "kr_close": closed, "latest_status": status, "us_close_et": base.strftime("%H:%M")}
 
 
 def scenario_observation_line(row, evidence):
@@ -140,4 +149,5 @@ def latest_futures_line(evidence):
         else:
             reason = (evidence or {}).get("latest_status", {}).get(symbol, "수집 실패/지연 또는 비교 시각 자료 미수집")
             parts.append(f"{symbol} 미수집({reason})")
-    return "현재 선물 관측(미국 기준일 16:00 ET 대비, 지연 가능): " + " / ".join(parts)
+    close_et = (evidence or {}).get("us_close_et") or "16:00"
+    return f"현재 선물 관측(미국 기준일 {close_et} ET 대비, 지연 가능): " + " / ".join(parts)

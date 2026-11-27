@@ -51,3 +51,20 @@ def test_no_kr_close_values_for_previous_session_or_before_close():
     assert not build_scenario_context({}, {}, NOW)
     assert "미수집" in latest_futures_line({})
     assert scenario_observation_line({"티커": "RAM"}, {}) == ""
+
+
+def test_early_close_session_uses_actual_13_00_et_base():
+    # 2026-11-27 closes 13:00 ET = 03:00 KST (11-28); a 16:00 ET base bar does not exist.
+    now = datetime.fromisoformat("2026-11-30T09:03:00+09:00")
+    bars = pd.DataFrame({"Close": [200, 204]},
+        index=pd.to_datetime(["2026-11-28T02:55+09:00", "2026-11-30T08:55+09:00"]))
+    data = build_scenario_context({"NQ=F": bars}, {"US": "2026-11-27", "KR": "2026-11-27"}, now)
+    assert data["us_close_et"] == "13:00"
+    assert data["latest"]["NQ=F"]["return"] == pytest.approx(.02)
+    assert "미국 기준일 13:00 ET 대비" in latest_futures_line(data)
+
+
+def test_normal_session_keeps_16_00_et_label():
+    data = build_scenario_context({"NQ=F": frame()}, DATES, NOW)
+    assert data["us_close_et"] == "16:00"
+    assert "미국 기준일 16:00 ET 대비" in latest_futures_line(data)
