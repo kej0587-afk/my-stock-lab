@@ -22773,34 +22773,14 @@ def render_correlation_interpretation(corr_df, avg_corr):
         st.dataframe(top_pairs, width='stretch', hide_index=True)
 
 
-def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
-    if analysis_start_date is not None:
-        analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
+def _portfolio_asset_rows(active_df, total_asset, active_value, usdkrw, period, analysis_start_date, notes):
+    """Per-holding weight/P&L/strategy rows and the price series used for portfolio risk.
 
-    total_asset = (
-        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
-    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
-
-    full_df = append_cash_rows(
-        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
-        krw_cash,
-        usd_cash,
-        usdkrw,
-        total_asset,
-    )
-    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
-    active_df = get_active_portfolio_rows(full_df)
-    blended_benchmark_spec = build_portfolio_blended_benchmark_spec(full_df)
-
+    Adds a 가격 데이터 note to ``notes`` for each holding without 20 closes (same order as before).
+    """
     asset_rows = []
     strategy_rows = []
     price_series = {}
-    notes = []
-
-    if active_df.empty:
-        add_portfolio_risk_note(notes, "참고", "분석 대상", "운용대상 보유자산이 없습니다.", "보유 종목을 등록하면 포트폴리오 분석이 표시됩니다.")
-
-    active_value = float(active_df["원화환산"].sum()) if not active_df.empty else 0.0
     for _, row in active_df.iterrows():
         ticker = str(row.get("티커", "")).strip()
         name = str(row.get("자산명", "")).strip()
@@ -22871,6 +22851,36 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
             add_portfolio_risk_note(notes, "참고", "가격 데이터", ticker, "가격 데이터가 부족해 변동성/MDD 계산에서 제외했습니다.")
 
         asset_rows.append(row_info)
+    return asset_rows, strategy_rows, price_series
+
+
+def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
+    if analysis_start_date is not None:
+        analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
+
+    total_asset = (
+        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
+    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
+
+    full_df = append_cash_rows(
+        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        total_asset,
+    )
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+    active_df = get_active_portfolio_rows(full_df)
+    blended_benchmark_spec = build_portfolio_blended_benchmark_spec(full_df)
+
+    notes = []
+
+    if active_df.empty:
+        add_portfolio_risk_note(notes, "참고", "분석 대상", "운용대상 보유자산이 없습니다.", "보유 종목을 등록하면 포트폴리오 분석이 표시됩니다.")
+
+    active_value = float(active_df["원화환산"].sum()) if not active_df.empty else 0.0
+    asset_rows, strategy_rows, price_series = _portfolio_asset_rows(
+        active_df, total_asset, active_value, usdkrw, period, analysis_start_date, notes)
 
     asset_df = pd.DataFrame(asset_rows, columns=[
         "자산명", "티커", "버킷", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "평가손익_원화", "수익률_pct", "기간수익률", "연환산변동성", "MDD", "데이터"
