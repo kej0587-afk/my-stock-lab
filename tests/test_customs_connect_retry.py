@@ -83,4 +83,7 @@ def test_cooldown_cannot_extend_manual_fact_expiry(transport, monkeypatch):
     cached = bulletins.apply_official_bulletins([row], now)[0]
     assert first["actual"] is None and cached["actual"] is None
     assert cached["bulletin_request_metadata"]["failure_cooldown"]
-    assert len(transport["calls"]) == 3
+    # The later MOTIR fallback is independent of Customs' failure cooldown.
+    customs = [url for url in transport["calls"] if url in
+               {bulletins.CUSTOMS_LIST_URL, bulletins.CUSTOMS_DETAIL_URL}]
+    assert customs == [bulletins.CUSTOMS_LIST_URL, bulletins.CUSTOMS_DETAIL_URL, bulletins.CUSTOMS_DETAIL_URL]
