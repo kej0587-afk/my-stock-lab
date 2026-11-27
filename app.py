@@ -29557,6 +29557,32 @@ def render_today_briefing_investor_flow(summary_df=None, watch_items=None):
         st.caption("거래량 확인: 돈흐름 상세 계산 후 거래량 증가 상위 축이 표시됩니다.")
 
 
+def _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
+    """Render non-holdings surfaces without preceding them with holdings detail."""
+    if detail == "뉴스":
+        render_today_action_news_panel(df)
+        return True
+    if detail == "키움":
+        render_kiwoom_market_evidence("today_kiwoom")
+        return True
+    if detail != "시황":
+        return False
+    from stock_lab_core import report_latest
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
+                   "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
+    report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store)
+    if kept := report_latest.keep_last_complete(st.session_state):
+        st.warning(report_latest.kept_notice(kept))
+    if notice := report_latest.restored_notice(st.session_state):
+        st.info(notice)
+    render_today_market_memo_panel(df)
+    report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store)
+    return True
+
+
 @timed_call("phase", "briefing_render")
 def render_today_unified_briefing_panel(
     summary_df=None,
@@ -29789,6 +29815,24 @@ def render_today_unified_briefing_panel(
         headline = "오늘은 보유 유지, 관심 후보 정리, 뉴스 확인이 중심입니다."
 
     st.markdown("#### 1. 오늘 브리핑 통합판")
+    # Restore the owner-bound report and view before rendering holdings-only detail.
+    from stock_lab_core import report_latest
+    latest_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
+    latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
+                    if latest_owner and supabase is not None else None)
+    latest_accounts = st.session_state.get("acc_filter", [])
+    report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                      store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
+    from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
+    restore_briefing_view(st.session_state)
+    detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
+                                  on_change=save_briefing_view, args=(st.session_state,)) or "보유관리"
+    if detail != "시황" and (latest_caption := report_latest.last_report_caption(st.session_state)):
+        st.caption(latest_caption)
+    if detail in {"뉴스", "시황", "키움"}:
+        st.caption(f"시장 {mode} · {action_text}")
+    if _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
+        return
     if not df.empty:
         from stock_lab_core.today_snapshot import load_previous_today_summary
         from stock_lab_core.report_history_panel import render_history_changes
@@ -29822,44 +29866,6 @@ def render_today_unified_briefing_panel(
     from stock_lab_core.decision_workspace import render_frame_decision_brief
     render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
 
-    # Last completed market report (owner-bound): restored once per session, even before Today runs.
-    from stock_lab_core import report_latest
-    latest_owner = "" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL
-    latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
-                    if latest_owner and supabase is not None else None)
-    latest_accounts = st.session_state.get("acc_filter", [])
-    report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                      store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
-
-    # Keep existing sessions valid after retiring the optional manual ledger view.
-    from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
-    restore_briefing_view(st.session_state)
-    detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
-                                  on_change=save_briefing_view, args=(st.session_state,)) or "보유관리"
-    if detail != "시황" and (latest_caption := report_latest.last_report_caption(st.session_state)):
-        st.caption(latest_caption)
-    if detail == "뉴스":
-        render_today_action_news_panel(df)
-        return
-    if detail == "시황":
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            # Rebooted session: a report made now has no holdings and no company earnings (not "0 results").
-            st.warning("오늘 점검이 아직 계산되지 않았습니다. 지금 생성하면 보유 종목 영향과 기업 실적 점검이 빠진 "
-                       "시장 전용 리포트가 됩니다. 오늘 점검을 먼저 계산한 뒤 생성해 주세요.")
-        # A failed or 미계산 new report keeps the last complete one; a complete one replaces and is stored.
-        report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                          store=latest_store)
-        if kept := report_latest.keep_last_complete(st.session_state):
-            st.warning(report_latest.kept_notice(kept))
-        if notice := report_latest.restored_notice(st.session_state):
-            st.info(notice)
-        render_today_market_memo_panel(df)
-        report_latest.persist_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                          store=latest_store)
-        return
-    if detail == "키움":
-        render_kiwoom_market_evidence("today_kiwoom")
-        return
     if detail == "시장":
         from stock_lab_core.market_board import render_market_board
         market_view = st.radio("시장 화면", ("시장판", "매크로 관측실"), horizontal=True, key="today_market_surface")
