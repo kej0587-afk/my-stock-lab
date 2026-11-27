@@ -67,7 +67,7 @@ def test_unverified_price_is_not_filled(kind):
 
 def test_non_us_instruments_do_not_fetch_us_quote():
     st, fetch = MagicMock(), Mock()
-    for ticker in ("418660.KS", "005930.KS", "BTC-USD", "NQ=F", "^IXIC"):
+    for ticker in ("418660.KS", "005930.KS", "BTC-USD", "NQ=F", "^IXIC", "VOD.L", "SAP.F"):
         render_quote_evidence(st, ticker, fetch_quote=fetch)
     fetch.assert_not_called()
     assert any("한국 상장 상품" in str(call) for call in st.caption.call_args_list)

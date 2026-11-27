@@ -18,7 +18,7 @@ VERSION = "quote-evidence-v2"
 
 def supports_quote_evidence(ticker):
     # Only US equity/ETF symbols: do not send KR, FX, futures or crypto to this path.
-    return isinstance(ticker, str) and re.fullmatch(r"[A-Z]{1,6}(?:[.-][A-Z])?", ticker) is not None
+    return isinstance(ticker, str) and re.fullmatch(r"[A-Z]{1,6}(?:-[A-Z])?", ticker) is not None
 
 
 def quote_evidence(ticker, quote, now):
