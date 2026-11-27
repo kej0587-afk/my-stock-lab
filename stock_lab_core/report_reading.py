@@ -445,13 +445,15 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         market_blocks[market] = lines
     order = ("KR", "US") if _korea_first(states) else ("US", "KR")
 
-    from stock_lab_core.report_dashboard import COUNTRY_ETFS, OBSERVATORY_DAILY, local_index_table_lines, observatory_table_lines
+    from stock_lab_core.report_dashboard import (COUNTRY_ETFS, OBSERVATORY_DAILY, local_index_table_lines,
+                                                 observatory_fred_table_lines, observatory_table_lines)
     collected = context.get("observatory_daily") or {}
     options = [ticker for ticker in OBSERVATORY_DAILY if ticker not in COUNTRY_ETFS]
     if any(collected.get(ticker) for ticker in options):
         # Right after the 심리·변동성 group, before central-bank and news rows.
         at = 2 + len(macro)
         macro_lines[at:at] = ["**옵션 위험 · 관측실 지표**", *observatory_table_lines(context, options)]
+    macro_lines += observatory_fred_table_lines(context)
     country_lines = observatory_table_lines(context, COUNTRY_ETFS)
     rendered = "\n".join([*indices, *board, *macro_lines, *economy_lines, *country_lines,
                            *market_blocks["KR"], *market_blocks["US"]])

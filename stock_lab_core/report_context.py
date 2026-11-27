@@ -245,6 +245,12 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"],
               "earnings_collection_scope": earnings_scope,
               "central_bank_results": central_bank_results}
+    try:
+        from stock_lab_core.report_dashboard import observatory_fred_observations
+        with measure("external_data", "observatory_fred"):
+            result["observatory_fred"], result["observatory_fred_meta"] = observatory_fred_observations(now)
+    except Exception as exc:
+        result["observatory_fred"], result["observatory_fred_meta"] = {}, {"issue": type(exc).__name__}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
     if market_watch_sources is not None:
