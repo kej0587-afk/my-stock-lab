@@ -606,6 +606,12 @@ when a new report fails or is 미계산 (replaced only by the next complete one)
 service_role only) applied 10:33 KST. **Merged (PR #91, main 2db1e580) and prod-checked 10:29-10:47 KST:** after reboot, the 오늘 점검 screen shows the last report caption 7.9 s after entering (first screen 8.5 s), before Today; 시황 view body 3.4 s; a 미계산 new report kept the old one; after Today a new report (148.7 s on screen) replaced it and updated the row. Not tested live: other user/account isolation (unit tests only). Prod check in the user's order: save one report → reboot → before Today the last report and
 its time are visible (record time to visible), then new report completion time.
 
+**Report quality round 1 (work-order step 4; doc `docs/maintenance/20261127_report_quality_round1.md`):** from the 10:46 KST prod
+report and a 390 px check: index table now shown once (빠른 요약), 빠른 요약 lists the top-3 holdings' move (copied, no new numbers),
+DART actuals read as 조/억원 (exact won in 상세 근거), 주요 기업과 사건 keeps 10 rows (body-confirmed first), rest in 상세 근거; phone-only
+smaller title. Session order, 외국인 units and title/body labels were already right. Next: mobile round 2 (metric cards, distance to
+시황, 월적립 key amounts first, 34 wide tables).
+
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live
 update of the last bar's price/volume during the session; measure first-chart and bar-switch time on SOXL; show realtime support,

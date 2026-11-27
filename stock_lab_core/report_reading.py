@@ -168,7 +168,52 @@ def _portfolio_lines(sections):
     return lines
 
 
-def _quick_summary_lines(judgment_lines, current_state, indices, states, interpretation, context, changes=()):
+def _holding_rows(portfolio_lines):
+    """(종목, 일간, 상태) copied from the holdings table; [] when the table is absent."""
+    for header, rows in tables("\n".join(portfolio_lines or ())):
+        if header and header[0] == "종목":
+            status = len(header) - 1
+            return [(row[0], row[1], row[status]) for row in rows]
+    return []
+
+
+def _quick_holding_lines(portfolio_lines, *, limit=3):
+    """Mobile-first: the largest holdings' move right under the market reading (no new numbers)."""
+    import re
+    from stock_lab_core.report_input_status import MISSING_ACCOUNT
+    rows = _holding_rows(portfolio_lines)
+    if not rows:
+        if MISSING_ACCOUNT in "\n".join(portfolio_lines or ()):
+            return ["**내 보유 종목 영향** · 오늘 점검 미계산 · 보유 종목 영향 확인 불가(영향 없음이 아님).", ""]
+        return []
+
+    def weight(row):
+        found = re.search(r"현재비중 (-?[\d.]+)%", row[2])
+        return float(found[1]) if found else -1.0
+
+    top = sorted(rows, key=weight, reverse=True)[:limit]
+    lines = ["**내 보유 종목 영향** · 비중 상위 " + str(len(top)) + "개 (전체는 「마무리」)"]
+    lines += ["- " + name + " · " + move + " · " + status for name, move, status in top]
+    return lines + [""]
+
+
+def _cap_news_table(lines, *, limit=10):
+    """Keep the main path short: body-confirmed rows first, at most ``limit``; the rest move to 상세 근거."""
+    parsed = tables("\n".join(lines))
+    if not parsed or len(parsed[0][1]) <= limit:
+        return list(lines), []
+    header, rows = parsed[0]
+    ranked = sorted(range(len(rows)), key=lambda i: (" · 본문: " not in rows[i][1], i))
+    keep = sorted(ranked[:limit])
+    rest = [rows[i] for i in range(len(rows)) if i not in set(keep)]
+    main = _table(header, [rows[i] for i in keep])
+    main += [f"본문 확인 기사를 먼저 두고 {limit}건만 표시했습니다. 나머지 {len(rest)}건은 「{AUDIT_TITLE}」 아래 "
+             "‘주요 기업과 사건 · 나머지’에 있습니다.", ""]
+    return main, ["### 주요 기업과 사건 · 나머지", "", *_table(header, rest)]
+
+
+def _quick_summary_lines(judgment_lines, current_state, indices, states, interpretation, context, changes=(),
+                         holdings=()):
     """Reader's first screen: market movement first, account state in one line."""
     def basis(market, label):
         state = (states or {}).get(market) or {}
@@ -181,6 +226,7 @@ def _quick_summary_lines(judgment_lines, current_state, indices, states, interpr
     # Always visible (2026-11-26): an empty list says the comparison is missing, not that nothing changed.
     lines += ["**오늘 달라진 점**", *(["- " + change for change in changes] if changes else
                                     ["- 전 거래일과 비교할 변화 자료 미연결 · 변화가 없다는 뜻은 아닙니다."]), ""]
+    lines += list(holdings)
     if indices:
         lines += ["**주요시장**", *indices]
     guard = (context.get("market_guard") or {}).get("action")
@@ -200,12 +246,7 @@ def _closing_lines(portfolio_lines, calendar_lines, *, limit=5):
     """마무리: holdings impact and next checks, copied from the tables above (no new numbers)."""
     from stock_lab_core.report_input_status import MISSING_ACCOUNT
     lines = ["## 마무리 · 보유 종목 영향과 다음 확인 사항", ""]
-    impact = []
-    for header, rows in tables("\n".join(portfolio_lines)):
-        if header and header[0] == "종목":
-            status = len(header) - 1
-            impact = [(row[0], row[1], row[status]) for row in rows]
-            break
+    impact = _holding_rows(portfolio_lines)
     lines += ["**보유 종목에 미치는 영향**", ""]
     if impact:
         lines += _table(["종목", "일간(위 보유 표 그대로)", "상태/사유"], impact)
@@ -321,9 +362,11 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     pipeline = build_earnings_pipeline(context, summary_rows, news, now)
     from stock_lab_core.report_daily_change import completed_event_changes
     changes = [*synthesis.get("daily_changes", ()), *completed_event_changes(context, pipeline)]
+    portfolio = _portfolio_lines(sections)
     quick = _quick_summary_lines(judgment, current_state, indices, states, interpretation, context,
-                                 changes=changes)
-    board = ["## 지수", "", *indices]
+                                 changes=changes, holdings=_quick_holding_lines(portfolio))
+    # The index table is shown once, in 빠른 요약 (2026-11-27: the separate 지수 section repeated it).
+    board = [] if indices else ["## 지수", "", "지수 자료 미연결.", ""]
 
     macro_lines = ["## 매크로", "", *macro]
     policy = tables(sections.get("중앙은행 공식 결과", ""))
@@ -337,6 +380,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     economy_lines = ["## 물가·고용·소비·경기", "", *(economy or ["최근 발표로 고른 지표가 없습니다. 전체 경제지표 표는 상세 근거에 있습니다.", ""])]
 
     shared = context_news_lines(context, now, bucket="other_market_news", excluded=macro_brief["article_keys"], summary_rows=summary_rows)
+    shared, shared_rest = _cap_news_table(shared)
     events = ["## 주요 기업과 사건", "", *(["**해외·공통 재료**", *shared] if shared else
                                       ["시장별 기업 실적·사건은 미국·한국 시장 구역에 있습니다.", ""])]
 
@@ -381,7 +425,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     collected = context.get("observatory_daily") or {}
     options = [ticker for ticker in OBSERVATORY_DAILY if ticker not in COUNTRY_ETFS]
     # Only items with an actual observation count as shown; a 미연결 row is not.
-    rendered = "\n".join([*board, *macro_lines, *(f"({ticker})" for ticker, obs in collected.items() if obs)])
+    rendered = "\n".join([*indices, *board, *macro_lines, *(f"({ticker})" for ticker, obs in collected.items() if obs)])
     if any(collected.get(ticker) for ticker in options):
         # Right after the 심리·변동성 group, before central-bank and news rows.
         at = 2 + len(macro)
@@ -425,7 +469,6 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                 if extra:
                     calendar_lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
 
-    portfolio = _portfolio_lines(sections)
     lines = [*head, *quick, *board, *market_blocks[order[0]], *market_blocks[order[1]], *world,
              *macro_lines, *economy_lines, *observatory, *weekly_theme_lines(digest), *_flow_lines(sections),
              *events, *judgment, *account_preamble, *portfolio, *calendar_lines,
@@ -433,6 +476,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     # Keep unique evidence; do not append a second complete legacy report.
     reading = "\n".join(lines)
     status, checks = check_lines(connection_checks(context, summary_rows, digest, reading, now))
-    lines += [status, "", f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", "", *checks, *weekly_source_lines(digest)]
+    lines += [status, "", f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", "", *checks, *weekly_source_lines(digest),
+              *shared_rest]
     lines.append(additional_evidence(report, reading))
     return "\n".join(lines).strip()

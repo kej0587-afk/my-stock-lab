@@ -60,7 +60,7 @@ def test_reading_order_keeps_one_report_and_unique_audit_evidence():
     output = render()
     parts = split_report_sections(output.split("## " + AUDIT_TITLE, 1)[0])
     # Quick summary -> market body -> account -> schedule (2026-11-24 report-overhaul request).
-    assert [title for title, _ in parts][1:] == ["빠른 요약", "지수", "미국 시황", "한국 시황", "세계 시장과 국가 ETF",
+    assert [title for title, _ in parts][1:] == ["빠른 요약", "미국 시황", "한국 시황", "세계 시장과 국가 ETF",
         "매크로", "물가·고용·소비·경기", "관측실 지표 연결 상태", "이번 주 테마 5개", "돈흐름 · 업종 순환",
         "주요 기업과 사건", "오늘의 판단", "포트폴리오 · 교체 검토", "다음 일정", "마무리 · 보유 종목 영향과 다음 확인 사항"]
     main, audit = output.split("## " + AUDIT_TITLE, 1)
@@ -80,7 +80,10 @@ def test_units_dates_partial_coverage_and_gate_do_not_disappear():
     sections = dict(split_report_sections(render()))
     assert "5.15 % | +2.20% · 1개월 변화 | 2026-11-13" in sections["매크로"]
     assert "코스피(^KS11)" not in sections["매크로"]
-    assert "5.15" not in sections["지수"]
+    assert "5.15" not in sections["빠른 요약"] and "지수" not in sections  # index table once, in 빠른 요약
+    assert sections["빠른 요약"].count("코스피(^KS11)") == 1
+    assert "**내 보유 종목 영향** · 비중 상위 1개" in sections["빠른 요약"]
+    assert "- Fixture(SOXL) · -11.00% (2026-11-13 확정 종가) · 방어우선 · 레버리지 보유" in sections["빠른 요약"]
     portfolio = sections["포트폴리오 · 교체 검토"]
     assert "전체 추정 보류: 연결 90% 미만" in portfolio
     assert "실제 계좌 수익률이 아닙니다" in portfolio
@@ -302,3 +305,24 @@ def test_snapshot_flow_history_is_not_called_completed():
             "--- | --- | --- | --- | --- | ---", "KOSPI | 외국인 | 순매수 2거래일 | +1.00 | +2.00 | 2026-11-24", ""]
     out = "\n".join(_kr_flow_table_lines(flow))
     assert "완료 거래일" not in out and "장중 수치가 포함될 수 있습니다" in out
+
+
+def test_shared_news_keeps_ten_body_first_rows_and_moves_the_rest_to_audit():
+    from stock_lab_core.report_reading import _cap_news_table, _table
+    rows = [(f"분야{i}", f"[기사{i}](https://example.test/{i})" + (" · 본문: 사실" if i in (11, 12) else " (제목 확인·기사 주장)"),
+             f"11/27 {i:02d}:00", "확인") for i in range(14)]
+    main, rest = _cap_news_table(_table(["분야", "확인된 재료", "보도시각·범위", "다음 확인"], rows))
+    shown = [r for r in main if r.startswith("분야") and not r.startswith("분야 |")]
+    assert len(shown) == 10 and any("기사11]" in r for r in shown) and any("기사12]" in r for r in shown)
+    assert [r.split(" | ")[0] for r in shown] == sorted((r.split(" | ")[0] for r in shown), key=lambda x: int(x[2:]))
+    assert sum(r.startswith("분야") and not r.startswith("분야 |") for r in rest) == 4 and rest[0] == "### 주요 기업과 사건 · 나머지"
+    assert "나머지 4건" in "\n".join(main)
+    short = _table(["분야", "확인된 재료", "보도시각·범위", "다음 확인"], rows[:3])
+    assert _cap_news_table(short) == (short, [])
+
+
+def test_quick_holdings_say_uncomputed_instead_of_disappearing():
+    from stock_lab_core.report_reading import _quick_holding_lines
+    from stock_lab_core.report_input_status import MISSING_ACCOUNT
+    assert "오늘 점검 미계산" in _quick_holding_lines(["## 내 보유 종목 영향", MISSING_ACCOUNT])[0]
+    assert _quick_holding_lines(["## 다른 표"]) == []

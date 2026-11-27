@@ -159,8 +159,8 @@ def test_close_report_uses_cumulative_frames_without_replacing_daily_actual():
     rows = [{"티커": ticker, "보유량": 1} for ticker in ("379810.KS", "418660.KS")]
     original = {ticker: frame.copy(deep=True) for ticker, frame in context["price_frames"].items()}
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW.replace(day=20, hour=22))
-    nasdaq = next(line for line in report.splitlines() if "(379810.KS)" in line)
-    leveraged = next(line for line in report.splitlines() if "(418660.KS)" in line)
+    nasdaq = next(line for line in report.splitlines() if "(379810.KS)" in line and " | " in line)  # holdings table row, not the 빠른 요약 line
+    leveraged = next(line for line in report.splitlines() if "(418660.KS)" in line and " | " in line)
     assert "-0.73% (2026-10-20 확정 종가)" in nasdaq and "누적 비교 보류" in nasdaq
     assert "잔차 -0.59%p" not in nasdaq and "누적 -1.32%" not in nasdaq
     assert "-1.00% (2026-10-20 확정 종가)" in leveraged and "누적 비교 보류" in leveraged
