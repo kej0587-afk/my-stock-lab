@@ -1,5 +1,27 @@
 # Stock Lab Work Handoff
 
+## 2026-11-27 남은 실패 정리 · 전체 합동 검증 완료 · 최신
+
+- 완료: 시작 시 남은11건(A10/E1) 모두 해결. 기능별 실제 입출력·자료/점수 보존 계약으로
+  오래된 전체 app AST 비교를 정리하고, 연구 재생의 가변 프로토콜 참조는 원본 동결 파일로 복구.
+- **실제 남은 실패0건.** 코드 고정 `62f6c1a1`, Python3.11.9/pandas2.3.3/numpy1.26.4에서
+  전체 `pytest tests -q -p no:cacheprovider --tb=line -rf`: **10,382통과 / 0실패 / 1skip**,
+  subtest18통과, 경고86건, **756.25초**. XML failures/errors 모두0.
+  skip은 기존 `test_post_close_paragraph_and_following_brief_are_separate_tables`의
+  선택 패키지 `markdown_it` 미설치이며 새 skip/xfail은 추가하지 않았다.
+- 검증 범위: DART 가져오기·중복저장·재조회, SEC/IR 성공·실패 갱신, 시장방어 중복 입력,
+  정밀관측소/오늘점검 연결 계약, 같은20입력의 계측·시세 범위별 전체 출력 불변.
+  실제 연구 오프라인 재생 CSV5개 출력 해시도 기존과 일치. golden/manifest 수정 없음.
+- 운영 범위: 이번에는 새 Cloud/UI/Supabase 확인·재부팅 없음. 기존 #121 화면 확인 기록 재사용.
+  `app.py`/`stock_lab_core` 변경 없음: 점수·판정·시장방어·월적립·L3·금액·TTL 유지.
+  테스트/연구 수정은 main에 단위별 푸시 완료; 이 결과와 ROADMAP/분류 문서도 함께 커밋·푸시.
+- 증거: `cache/resume_20261127/all_after.xml/log` 및 각 단위 로그(Git 제외).
+  [수정·검증 집계](docs/maintenance/20261127_remaining_contracts_complete.md).
+- **Next Task Only — 다음 한 건:** 국내 가격 이력 `kr_history_http` 실제 중복/대기 계측.
+  같은 조건A의 오늘점검에서 요청키·scope 재사용·실요청 수·벽시간을 구분해 먼저 측정한다.
+  이미 있는 성공값/넓은 기간 재사용과 worker 범위 전달을 확인하고, 실제 중복만 줄인다.
+  과거334회만으로 중복 단정 금지. 판정·데이터 기준·TTL 유지, 같은 입력 전후 비교.
+
 ## 2026-11-27 연구 프로토콜 재생 복구 · 최신
 
 - 실제 원인: 수집 후 `a3e027a7`에서 프로토콜의 서비스 미배포 설명을 수정했으나 재생은 가변 문서를 참조.
