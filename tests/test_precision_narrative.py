@@ -148,6 +148,19 @@ def test_legacy_body_and_signature_stay_unchanged_with_opt_in_observations(origi
     validated_rr = ast.parse('(c.get("execution_workflow") or {}).get("RR값", c.get("rr_ratio"))', mode="eval").body
     assert ast.dump(rr.value) == ast.dump(validated_rr)
     rr.value = ast.parse('c.get("rr_ratio")', mode="eval").body
+    # 35dd624d added source dates beside returns; restore only that exact block.
+    # All remaining statements still match the immutable pre-extraction hash.
+    basis_block = ast.parse('''basis = c.get("input_basis") or {}
+if basis.get("등락비교기준"):
+    comparison = f"{basis['등락비교기준']} · {basis.get('등락봉시간상태', '완료 여부 미확인')}"
+    if c.get("live_price_used"):
+        comparison += " / 최신가 비교: " + basis.get("최신가비교기준", "미확인")
+    flow_parts.append("등락 기준: " + escape_html_value(comparison))
+''').body
+    start = next(i for i, node in enumerate(original_body)
+                 if ast.dump(node) == ast.dump(basis_block[0]))
+    assert [ast.dump(n) for n in original_body[start:start+2]] == [ast.dump(n) for n in basis_block]
+    del original_body[start:start+2]
     assert digest(ast.dump(ast.Module(body=original_body, type_ignores=[]))) == original_goldens["body_sha256"]
     assert wrapper.args.kwonlyargs[-1].arg == "observation_context"
     assert ast.dump(wrapper.args.kw_defaults[-1]) == ast.dump(ast.Constant(value=None))
