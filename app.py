@@ -7239,7 +7239,6 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicat
     }
 
 
-@timed_call("indicators")
 def load_precision_long_daily(ticker: str, _long_price_df=None) -> pd.DataFrame:
     """The long daily history behind 주/월봉 (and the chart's trading-day N일선). Uses the cached loader."""
     raw_long = pd.DataFrame()
@@ -7255,8 +7254,19 @@ def load_precision_long_daily(ticker: str, _long_price_df=None) -> pd.DataFrame:
     return raw_long
 
 
+@timed_call("indicators")
 def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None, _include_daily_snapshot=True) -> dict:
-    raw_long = load_precision_long_daily(ticker, _long_price_df)
+    # Frozen by tests/test_today_mtf_snapshot.py; load_precision_long_daily repeats this loop for the chart.
+    raw_long = pd.DataFrame()
+    for period in ("10y", "max", "5y", "2y"):
+        try:
+            candidate = _long_price_df if period == "10y" and _long_price_df is not None else load_price_df(ticker, period)
+        except Exception:
+            candidate = pd.DataFrame()
+        if candidate is not None and not candidate.empty and len(candidate) > len(raw_long):
+            raw_long = candidate
+        if raw_long is not None and not raw_long.empty and len(raw_long) >= 520:
+            break
     used_daily_fallback = raw_long is None or raw_long.empty
     if used_daily_fallback:
         raw_long = daily_df.copy() if daily_df is not None else pd.DataFrame()
