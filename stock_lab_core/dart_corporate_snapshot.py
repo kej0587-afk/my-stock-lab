@@ -1,4 +1,4 @@
-"""Dated public corporate identities, only for transient DART transport outages.
+"""Dated public corporate identities, separate from filing/financial freshness.
 
 Two dated sources may stand in for a failed live download: the latest validated
 live download kept in a persistent store (survives app restarts), and the list
@@ -17,6 +17,7 @@ from stock_lab_core.dart_corporate_codes import CorporateCodeMap
 SNAPSHOT_PATH = Path(__file__).parent / "data" / "dart_corporate_codes.json"
 SOURCE = "https://opendart.fss.or.kr/api/corpCode.xml"
 MAX_AGE = timedelta(days=7)
+FRESH_AGE = timedelta(days=1)
 TRANSIENT = frozenset({"connect_timeout", "read_timeout", "timeout", "transport_error"})
 # A live list much shorter than the last good one is more likely a truncated
 # response than mass delisting; keep the stored list rather than overwrite it.
@@ -72,6 +73,29 @@ def _store_load(store):
     def load():
         return store.load(SOURCE)
     return load
+
+
+def fresh_corporate_codes(*, now, store=None):
+    """Reuse a validated last-success list for its original one-day lifetime.
+
+    Never renew the timestamp on read or use a bundled list as a fresh cache.
+    Missing issuers remain explicitly unlinked, as in the existing one-day cache.
+    Filing requests still authenticate with the caller's own DART key.
+    """
+    store = _STORE if store is None else store
+    if store is None or now.tzinfo is None:
+        return None
+    _, payload = _candidate("persistent_last_success", _store_load(store), now)
+    if payload is None:
+        return None
+    codes, stamp, age = _validated(payload, now)
+    if age >= FRESH_AGE:
+        return None
+    return CorporateCodeMap(dict(codes), diagnostic={
+        "mapping_source": "official_cache", "snapshot_origin": "persistent_last_success",
+        "snapshot_asof": stamp.isoformat(), "snapshot_valid_until": (stamp + FRESH_AGE).isoformat(),
+        "mapped_count": len(codes), "cause": "cache_hit",
+    })
 
 
 def remember_corporate_codes(live, *, store=None, now=None):
@@ -160,6 +184,11 @@ def use_corporate_snapshot(live, *, path=SNAPSHOT_PATH, now=None, store=None):
 
 def snapshot_notice(diagnostic):
     """One Korean line for screens/reports; empty when the live list was used."""
+    if isinstance(diagnostic, dict) and diagnostic.get("mapping_source") == "official_cache":
+        return ("DART 기업코드 1일 캐시 사용 · 저장 " + str(diagnostic.get("snapshot_asof", "미확인"))
+                + " · 만료 " + str(diagnostic.get("snapshot_valid_until", "미확인"))
+                + ". 기업 식별용 목록이며 공시·실적의 기준일과 수집 주기는 변경하지 않았습니다. "
+                "저장 이후 신규 상장 기업은 미등록일 수 있습니다.")
     if not isinstance(diagnostic, dict) or diagnostic.get("mapping_source") != "official_snapshot":
         if isinstance(diagnostic, dict) and diagnostic.get("snapshot_status") == "unavailable_or_expired":
             states = diagnostic.get("snapshot_candidates") or {}

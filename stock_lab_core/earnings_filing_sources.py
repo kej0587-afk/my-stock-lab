@@ -67,10 +67,11 @@ def _archive_put(url, body):
             _ARCHIVE_BODIES.pop(min(_ARCHIVE_BODIES, key=lambda k: _ARCHIVE_BODIES[k][0]))
 
 
-def _cached(key, now, loader, *, ttl=CACHE_TTL):
+def _cached(key, now, loader, *, ttl=CACHE_TTL, valid=None):
     with _LOCK:
         saved = _CACHE.get(key)
-        if saved and 0 <= (now - saved[0]).total_seconds() < (ttl if saved[2] is None else FAILURE_TTL):
+        if (saved and 0 <= (now - saved[0]).total_seconds() < (ttl if saved[2] is None else FAILURE_TTL)
+                and (saved[2] is not None or valid is None or valid(saved[1]))):
             if saved[2]:
                 cache_event(key, "failure_hit")
                 raise CachedFailure(saved[2])
@@ -226,8 +227,7 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
     future cache entries. A shared wall budget bounds cold work across issuers.
     """
     from stock_lab_core.economic_releases import _api_key
-    from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
-    from stock_lab_core.dart_corporate_snapshot import use_corporate_snapshot
+    from stock_lab_core.earnings_dart_directory import directory_cache_valid, prepare_directory
 
     user_agent = _api_key("sec_user_agent") if sec_user_agent is None else sec_user_agent
     dart_key = _api_key("dart_api_key") if dart_api_key is None else dart_api_key
@@ -246,26 +246,11 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
         if dart_key:
             try:
                 def code_map():
-                    data = fetch_corporate_codes(dart_key, get=get, timeout=5)
-                    attempts = 1
-                    # A transient directory failure must not remove every KR
-                    # issuer; one retry shares the existing collection budget.
-                    if (not data and data.diagnostic.get("cause") in
-                            {"connect_timeout", "read_timeout", "timeout", "transport_error"}
-                            and deadline - time.monotonic() >= 6):
-                        data = fetch_corporate_codes(dart_key, get=get, timeout=5)
-                        attempts += 1
-                    data = use_corporate_snapshot(data, now=now)
-                    if not data:
-                        cause = data.diagnostic.get("cause", "unavailable")
-                        status = str(data.diagnostic.get("api_status", ""))
-                        suffix = "_" + status if re.fullmatch(r"\d{3}", status) else ""
-                        raise ValueError("dart_corporate_mapping_" + cause + suffix)
-                    return dict(data), {"mapping_attempts": attempts, **{key: data.diagnostic[key] for key in
-                        ("mapping_source", "snapshot_origin", "snapshot_asof", "snapshot_valid_until")
-                        if key in data.diagnostic}}
+                    return prepare_directory(dart_key, now, deadline, get)
                 with measure("external_data", "earnings_discovery.setup_dart"):
-                    (kr_setup["codes"], kr_setup["mapping"]), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
+                    (kr_setup["codes"], kr_setup["mapping"]), _ = _cached(
+                        ("dart_codes", auth), now, code_map, ttl=86400,
+                        valid=lambda pair: directory_cache_valid(pair, now))
                 if kr_setup["mapping"].get("snapshot_valid_until") and now > datetime.fromisoformat(kr_setup["mapping"]["snapshot_valid_until"]):
                     raise ValueError("dart_corporate_mapping_snapshot_expired")
             except ValueError as error:
@@ -310,7 +295,7 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
                 if not corp:
                     # A dated list cannot know issuers listed after it was saved.
                     raise ValueError("dart_ticker_mapping_unavailable_in_snapshot"
-                                     if mapping.get("mapping_source") == "official_snapshot"
+                                     if mapping.get("mapping_source") in {"official_snapshot", "official_cache"}
                                      else "dart_ticker_mapping_unavailable")
                 data = _json("https://opendart.fss.or.kr/api/list.json", deadline=deadline, get=get,
                              params=dict(crtfc_key=dart_key, corp_code=corp,
