@@ -3,7 +3,7 @@
 Every HTTP request to an SEC host from this process (all users, screens, background work and
 retries) passes one sliding-window limiter installed on ``requests.Session.send``:
 
-* trial: at most 8 requests in any 1-second window, until ``TRIAL_ENDS_AT`` (no automatic extension);
+* trial: at most 8 requests in any 1-second window, until ``TRIAL_ENDS_AT``; kept after it because ``ADOPTED``;
 * legacy: at most 5 in any 1-second window (the previous 0.2 s spacing), used after the trial, after a
   second access limit, or if the window ever counts more than 8 starts.
 
@@ -34,7 +34,9 @@ DEFAULT_PAUSE = 600.0
 # Trial A runs at most 7 days from its production start (recorded in HANDOFF); it is not extended.
 TRIAL_STARTS_AT = datetime(2026, 11, 27, 2, 30, tzinfo=KST)
 TRIAL_ENDS_AT = TRIAL_STARTS_AT + timedelta(days=7)
-ADOPTED = False  # set True only after the 3-pair comparison meets the user's adoption rule
+# Adopted 2026-11-27: 3 pairs (docs/maintenance/20261127_sec_rate_trial_a_pairs.md) met both rules: SEC wait median
+# 44.4 -> 26.7 s (-40%), time-limit failures 16 -> 8, official count 21 -> 23. Limit and access-limit rules stay.
+ADOPTED = True
 
 
 def _forced_legacy():
