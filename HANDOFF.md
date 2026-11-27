@@ -609,8 +609,7 @@ its time are visible (record time to visible), then new report completion time.
 **Report quality round 1 (work-order step 4; doc `docs/maintenance/20261127_report_quality_round1.md`):** from the 10:46 KST prod
 report and a 390 px check: index table now shown once (빠른 요약), 빠른 요약 lists the top-3 holdings' move (copied, no new numbers),
 DART actuals read as 조/억원 (exact won in 상세 근거), 주요 기업과 사건 keeps 10 rows (body-confirmed first), rest in 상세 근거; phone-only
-smaller title. Session order, 외국인 units and title/body labels were already right. Next: mobile round 2 (metric cards, distance to
-시황, 월적립 key amounts first, 34 wide tables).
+smaller title. **Merged PR #94, prod-checked 11:13 KST** (all four visible; 390 px title 440→62 px, holdings impact 7,070→4,410 px). Session order, 외국인 units and title/body labels were already right. Round 2: top-of-자산 현황 line '이번 달 월적립' (월계획액·누적 집행기록액·남은 계획액·오늘 추가 가능액, 미확인 never summed) and 2-per-row metric/macro cards on phones. Next: distance from 오늘 점검 to 시황 on phones, 34 wide tables.
 
 **Follow-ups after errors/speed (user, 2026-11-26 21:28 KST), order: charts → short-term verification, in Streamlit:**
 (a) intraday charts for KR/US stocks, ETFs, leveraged ETFs: 1/5/30/60/120-minute and daily bars; recent chart first on click, live

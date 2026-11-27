@@ -69,6 +69,26 @@ def build_execution_rows(calc_rows, holdings_table, *, total_asset, cash_krw, ga
     return out
 
 
+SUMMARY_SLOT_KEY = "_monthly_summary_slot"
+
+
+def _fill_top_summary(st, rows, *, executed_status, month_key, scope):
+    """Phones first (2026-11-27): the key monthly amounts also appear at the top of 자산 현황 in the same run."""
+    slot = st.session_state.pop(SUMMARY_SLOT_KEY, None)
+    if slot is None:
+        return
+    from stock_lab_core.monthly_execution import STD_EXECUTED, STD_OPEN, STD_PLAN, STD_TODAY, monthly_totals
+    totals = monthly_totals(rows, executed_status=executed_status)
+    if not totals:
+        return
+    parts = " · ".join(f"{name} {totals[name]}" for name in (STD_PLAN, STD_EXECUTED, STD_OPEN, STD_TODAY))
+    try:  # a slot left from another page's run must never break the calculator
+        slot.markdown(f"**이번 달 월적립** ({month_key} · 계좌 범위 {scope}) · {parts}  \n"
+                      "종목별 금액과 게이트는 아래 ‘💰 월 적립 리밸런싱 계산기’에 있습니다.")
+    except Exception:
+        pass
+
+
 def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cash_krw, gate_reader, decisions,
                                    store):
     """store: {"client", "owner_email", "accounts"} or None (demo / no client: plan 임시, executed 미확인)."""
@@ -89,6 +109,7 @@ def render_monthly_execution_panel(st, plan, holdings_table, *, total_asset, cas
                                 gate_reader=gate_reader, decisions=decisions, confirmed=confirmed,
                                 executed=executed, executed_status=exec_status)
 
+    _fill_top_summary(st, rows, executed_status=exec_status, month_key=month_key, scope=scope)
     st.markdown("#### 🧾 이번 달 월계획액 · 누적 집행기록액 · 오늘 추가 가능액")
     flash = st.session_state.pop("_monthly_execution_flash", None)
     if flash:
