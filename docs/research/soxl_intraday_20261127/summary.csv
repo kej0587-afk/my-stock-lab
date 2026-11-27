@@ -1,0 +1,17 @@
+reference,mode,target,cohort,entries,target_hit_rate,net_win_rate,mean_net_return,worst_trade,strategy_mdd,median_holding_sessions,both_hit_bars,uncertain_entry_high
+previous_close,close_confirmed,0.1,no_guard,0,,,,,,,0,0
+previous_close,close_confirmed,0.1,guard_verified_allowed,0,,,,,,,0,0
+previous_close,close_confirmed,0.2,no_guard,0,,,,,,,0,0
+previous_close,close_confirmed,0.2,guard_verified_allowed,0,,,,,,,0,0
+previous_close,intraday_touch,0.1,no_guard,0,,,,,,,0,0
+previous_close,intraday_touch,0.1,guard_verified_allowed,0,,,,,,,0,0
+previous_close,intraday_touch,0.2,no_guard,0,,,,,,,0,0
+previous_close,intraday_touch,0.2,guard_verified_allowed,0,,,,,,,0,0
+previous_20_highest_close,close_confirmed,0.1,no_guard,0,,,,,,,0,0
+previous_20_highest_close,close_confirmed,0.1,guard_verified_allowed,0,,,,,,,0,0
+previous_20_highest_close,close_confirmed,0.2,no_guard,0,,,,,,,0,0
+previous_20_highest_close,close_confirmed,0.2,guard_verified_allowed,0,,,,,,,0,0
+previous_20_highest_close,intraday_touch,0.1,no_guard,0,,,,,,,0,0
+previous_20_highest_close,intraday_touch,0.1,guard_verified_allowed,0,,,,,,,0,0
+previous_20_highest_close,intraday_touch,0.2,no_guard,0,,,,,,,0,0
+previous_20_highest_close,intraday_touch,0.2,guard_verified_allowed,0,,,,,,,0,0
