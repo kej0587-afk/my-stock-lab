@@ -258,8 +258,8 @@ def monthly_totals(rows, *, executed_status):
     plans = [r.get("plan") for r in rows]
     no_signal = sum(r.get("plan") is None and r.get("plan_src") == "신호 미확인" for r in rows)
     if no_signal and no_signal == sum(p is None for p in plans):
-        # Every missing plan is a missing signal: name the cause the reader can fix (run 오늘 점검).
-        reason = "신호 미계산 · 오늘 점검 계산 후 표시"
+        # Every missing plan is a missing signal: name the fix (자산 현황 → 기술적 타점계산 fills _ticker_signal_cache).
+        reason = "신호 미계산 · 자산 현황 ‘기술적 타점계산’ 후 표시"
         executed_ok = executed_status == "ok"
         executed_txt = (total([r.get("executed") for r in rows], "기록 미확인") if executed_ok
                         else "미확인(집행 기록을 읽지 못함)")
