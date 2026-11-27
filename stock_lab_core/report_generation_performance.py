@@ -99,6 +99,15 @@ def record_official_coverage(context):
     run['official_coverage'] = coverage
 
 
+def record_quote_observations(quotes, now):
+    """Exact public price fields used by the report, no account weights or HTML."""
+    run = _run.get()
+    if run is not None:
+        from stock_lab_core.report_quotes import quote_audit
+        run['quote_observations'] = {ticker: quote_audit(ticker, row, now)
+                                     for ticker, row in quotes.items()}
+
+
 @contextmanager
 def generation_measurement(state, *, options=None, entrypoint=None, script_started=None, clock=None):
     trace = PerformanceTrace(scope='auto_market_report_generation', **({'clock': clock} if clock else {}))
@@ -124,6 +133,7 @@ def generation_measurement(state, *, options=None, entrypoint=None, script_start
                       generation_path='fallback' if run['degraded'] else 'normal',
                       degraded_reasons=sorted(run['degraded']),
                       official_coverage=run.get('official_coverage', {}),
+                      quote_observations=run.get('quote_observations', {}),
                       options=dict(options or {}), cache_state={'policy': 'unchanged_no_clear', 'initial_warmth': 'unknown'},
                       build=get_report_build_info(entrypoint),
                       request_count_coverage='official_http.* counts explicitly instrumented macro/calendar/policy/outlook HTTP boundaries; filing counters are separately labelled. Overlapping report_http/bulletin_http counters must not be summed with these. SDK internals, implicit HTTP redirects/retries and uninstrumented providers are excluded. Cache lookup/function counts are not HTTP requests; download_call is not a remote-request count.',

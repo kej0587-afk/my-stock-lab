@@ -65,12 +65,34 @@ def test_unverified_price_is_not_filled(kind):
     assert result["status"] != "연결됨" and "price" not in result
 
 
-def test_korean_product_and_unrelated_stock_do_not_fetch_us_quote():
+def test_non_us_instruments_do_not_fetch_us_quote():
     st, fetch = MagicMock(), Mock()
-    for ticker in ("418660.KS", "MSFT"):
+    for ticker in ("418660.KS", "005930.KS", "BTC-USD", "NQ=F", "^IXIC"):
         render_quote_evidence(st, ticker, fetch_quote=fetch)
     fetch.assert_not_called()
     assert any("한국 상장 상품" in str(call) for call in st.caption.call_args_list)
+
+
+@pytest.mark.parametrize("ticker", ["SOXL", "GOOGL", "MSFT", "BRK-B"])
+def test_selected_us_stock_uses_same_quote_and_explicit_close(ticker):
+    now, q = payload(ticker, "2026-11-12T17:10:00-05:00", "post")
+    st, fetch = MagicMock(), Mock(return_value=q)
+    result = render_quote_evidence(st, ticker, now=now, fetch_quote=fetch)
+    fetch.assert_called_once_with(ticker)
+    assert result['audit']['regular']['price'] == 100
+    assert result['audit']['extended']['price'] == 92.87
+    assert any('직전 정규장 종가' in str(call) for call in st.markdown.call_args_list)
+    assert st.download_button.called
+
+
+def test_delayed_quote_is_reference_only_and_not_scenario_price():
+    now, q = payload('GOOGL', '2026-11-12T17:10:00-05:00', 'post')
+    q['postMarketTime'] = (now - timedelta(minutes=21)).timestamp()
+    st = MagicMock()
+    result = render_quote_evidence(st, 'GOOGL', now=now, fetch_quote=lambda _:q)
+    assert 'price' not in result
+    assert any('지연 시세' in str(call) for call in st.markdown.call_args_list)
+    assert result['audit']['delayed_reference']['price'] == 92.87
 
 
 def test_renderer_reads_one_selected_quote_and_marks_manual_input():

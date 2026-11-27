@@ -15,7 +15,7 @@ from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_close_basis import confirm_kr_close_bar
 from stock_lab_core.report_session import NEW_YORK, KST, market_session_states
 from stock_lab_core.result_cache import cache_result
-from stock_lab_core.performance import timed_call
+from stock_lab_core.performance import timed_call, submit_with_context
 
 register_loaded_source(__name__, __file__)
 
@@ -74,13 +74,17 @@ def parse_us_quote_page(page, ticker):
     return max(candidates, key=newest) if candidates else {}
 
 
-@cache_result(ttl=60, failure_ttl=15, is_success=bool)
+@cache_result(ttl=60, failure_ttl=15, is_success=bool, trace_name="us_report_quote")
 def load_us_report_quote(ticker):
     try:
         response = requests.get(f"https://finance.yahoo.com/quote/{quote(ticker, safe='')}/",
                                 headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
         response.raise_for_status()
         result = parse_us_quote_page(response.text, ticker)
+        if result:
+            # Fetch clock stays inside the cached value; never relabel it as a trade.
+            result = dict(result, _retrieved_at=datetime.now(timezone.utc).isoformat(),
+                          _http_status=response.status_code)
         if not result:
             logging.warning("Report quote %s: HTTP %s, embedded symbol quote missing", ticker, response.status_code)
         return result
@@ -106,7 +110,7 @@ def load_kr_report_quotes(tickers=()):
 def load_report_quotes(us_tickers, *, include_kr=False, kr_tickers=()):
     # Only held US symbols, once per report; no retry cascade or yfinance lock.
     with ThreadPoolExecutor(max_workers=3) as pool:
-        pending = {ticker: pool.submit(load_us_report_quote, ticker) for ticker in sorted(set(us_tickers))}
+        pending = {ticker: submit_with_context(pool, load_us_report_quote, ticker) for ticker in sorted(set(us_tickers))}
         kr = (load_kr_report_quotes(tuple(sorted(set(kr_tickers)))) if kr_tickers else load_kr_report_quotes()) if include_kr else {}
         us = {ticker: job.result() for ticker, job in pending.items()}
         return {"KR": kr, "US": us, "retrieved_at": datetime.now(timezone.utc).isoformat()}
@@ -380,3 +384,19 @@ def kr_index_observations(payload, now, *, tickers=()):
                               "date": state["active_date"], "as_of": at.isoformat(),
                               "kind": "장중 진행·확정 아님", "source": "Naver 지수·보유종목(제공처 응답시각)"}
     return result
+
+
+def quote_audit(ticker, quote, now):
+    """Allowlisted provider fields from the exact cached response used by the UI."""
+    return {"ticker": ticker, "checked_at": pd.Timestamp(now).isoformat(),
+            "retrieved_at": quote.get("_retrieved_at"), "http_status": quote.get("_http_status"),
+            "source": "Yahoo quote embedded quoteResponse", "cache_success_seconds": 60,
+            "cache_failure_seconds": 15,
+            "provider_fields": {field + "Market" + suffix: raw_number(quote.get(field + "Market" + suffix))
+                                for field in ("regular", "pre", "post", "overnight", "day")
+                                for suffix in ("Price", "Time", "Change", "ChangePercent", "PreviousClose")
+                                if field + "Market" + suffix in quote},
+            "regular": regular_quote_observation(quote, ticker, now),
+            "extended": extended_quote_observation(quote, ticker, now),
+            "delayed_reference": extended_quote_observation(quote, ticker, now, allow_delayed=True),
+            "status": extended_quote_status(quote, ticker, now)}
