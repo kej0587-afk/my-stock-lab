@@ -239,6 +239,33 @@ def standard_amounts(row, *, executed_status):
             "_open": open_amt, "_wait": wait}
 
 
+def monthly_totals(rows, *, executed_status):
+    """Account-level totals in the standard names for the top-of-screen line (pure, tested).
+
+    A column with any missing value is 미확인 (never a partial sum shown as the total).
+    """
+    rows = list(rows or [])
+    if not rows:
+        return {}
+
+    def total(values, missing_reason):
+        values = list(values)
+        unknown = sum(v is None for v in values)
+        if unknown:
+            return f"미확인({unknown}종목 {missing_reason})"
+        return _won(sum(float(v) for v in values))
+
+    plans = [r.get("plan") for r in rows]
+    executed_ok = executed_status == "ok"
+    executed = [r.get("executed") for r in rows] if executed_ok else [None] * len(rows)
+    opened = [None if p is None or e is None else max(0.0, float(p) - float(e)) for p, e in zip(plans, executed)]
+    today = [0.0 if (p is not None and float(p) <= 0) else r.get("executable") for p, r in zip(plans, rows)]
+    return {STD_PLAN: total(plans, "계획 미확인"),
+            STD_EXECUTED: total(executed, "기록 미확인") if executed_ok else "미확인(집행 기록을 읽지 못함)",
+            STD_OPEN: total(opened, "계산 불가"),
+            STD_TODAY: total(today, "자료 부족")}
+
+
 def executed_by_ticker(executions, *, account_scope, month_key):
     """Sum execution records of the same scope and month. Rows of another scope or month are ignored."""
     totals = {}

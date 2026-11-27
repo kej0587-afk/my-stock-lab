@@ -1241,7 +1241,14 @@ with st.sidebar:
 # Phones (2026-11-27 check at 390 px): the title alone filled half the first screen. Shrink it there only.
 st.markdown("<style>@media (max-width: 640px) { h1#realtime-digital-dashboard-v13-1, .stApp h1 { font-size: 1.35rem !important;"
             " line-height: 1.25 !important; padding: .25rem 0 !important; } "
-            "[data-testid='stMainBlockContainer'] { padding-top: 2.5rem !important; } }</style>", unsafe_allow_html=True)
+            "[data-testid='stMainBlockContainer'] { padding-top: 2.5rem !important; } "
+            # Metric and macro-card rows: two per row instead of one tall column each.
+            "[data-testid='stHorizontalBlock']:has(.macro-panel), [data-testid='stHorizontalBlock']:has([data-testid='stMetric']) "
+            "{ flex-direction: row !important; flex-wrap: wrap !important; gap: .5rem !important; } "
+            "[data-testid='stHorizontalBlock']:has(.macro-panel) > [data-testid='stColumn'], "
+            "[data-testid='stHorizontalBlock']:has([data-testid='stMetric']) > [data-testid='stColumn'] "
+            "{ flex: 1 1 calc(50% - .5rem) !important; width: calc(50% - .5rem) !important; min-width: calc(50% - .5rem) !important; } "
+            ".macro-panel { padding: 8px 10px !important; margin-bottom: 4px !important; font-size: .85em !important; } }</style>", unsafe_allow_html=True)
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
 
@@ -27606,6 +27613,9 @@ def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash,
         reserve_target_weight,
     )
     m = state["metrics"]
+    # Filled later in this run by the monthly calculator (key monthly amounts first on phones).
+    from stock_lab_core.monthly_execution_view import SUMMARY_SLOT_KEY
+    st.session_state[SUMMARY_SLOT_KEY] = st.empty()
     render_kpi_summary_panel(state["kpis"], state["alerts"])
 
     st.markdown("### 자산 현황 요약")
