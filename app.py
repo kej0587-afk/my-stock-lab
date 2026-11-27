@@ -1238,6 +1238,10 @@ with st.sidebar:
         st.session_state["my_safe_acc_filter"] = chosen_accounts
         st.session_state["acc_filter"] = chosen_accounts
     
+# Phones (2026-11-27 check at 390 px): the title alone filled half the first screen. Shrink it there only.
+st.markdown("<style>@media (max-width: 640px) { h1#realtime-digital-dashboard-v13-1, .stApp h1 { font-size: 1.35rem !important;"
+            " line-height: 1.25 !important; padding: .25rem 0 !important; } "
+            "[data-testid='stMainBlockContainer'] { padding-top: 2.5rem !important; } }</style>", unsafe_allow_html=True)
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
 

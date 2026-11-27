@@ -22,6 +22,21 @@ def _value(metric, column):
     return f"{Decimal(value):,} {metric['currency']}" if value is not None else "미연결"
 
 
+def readable_krw(text):
+    """"104,615,483,000,000 KRW" -> "104.62조원" for reading; exact won values stay in 상세 근거."""
+    import re
+
+    def short(match):
+        value = Decimal(match[1].replace(",", ""))
+        size = abs(value)
+        if size >= Decimal(10) ** 12:
+            return f"{value / Decimal(10) ** 12:,.2f}조원"
+        if size >= Decimal(10) ** 8:
+            return f"{value / Decimal(10) ** 8:,.0f}억원"
+        return f"{value:,}원"
+    return re.sub(r"(-?\d[\d,]*(?:\.\d+)?) KRW\b", short, str(text))
+
+
 def filing_actual_lines(pipeline, *, detailed=False):
     packets = _packets(pipeline)
     if not packets:
@@ -35,10 +50,11 @@ def filing_actual_lines(pipeline, *, detailed=False):
                      if values[key].get("status") == "reported"]
             identity = f"{packet['name']}({packet['ticker']}) · {packet['fiscal_period']} · 접수 {packet['date']}"
             source = safe_link(packet["source_url"])
-            facts = " / ".join(facts) or "직접 공시된 손익 수치 미연결"
+            facts = readable_krw(" / ".join(facts)) or "직접 공시된 손익 수치 미연결"
             reading = "손익과 누적 영업현금흐름을 함께 확인합니다. 전망·예상치 대조 전에는 실적 상회/하회나 주가 방향을 판단하지 않습니다."
             lines.append(" | ".join(_cell(v) for v in (identity, facts + f" [공시]({source})", reading)))
-        lines.extend(["", "보유·관심 종목 우선 최대 3개입니다. 분기값을 누적값으로 대체하거나 역산하지 않았으며, 공시 접수를 새로운 실적 발표로 해석하지 않습니다.", ""])
+        lines.extend(["", "보유·관심 종목 우선 최대 3개입니다. 분기값을 누적값으로 대체하거나 역산하지 않았으며, 공시 접수를 새로운 실적 발표로 해석하지 않습니다. "
+                      "조·억원은 공시 원 단위 값을 반올림해 읽기 쉽게 표시한 것이며, 원 단위 값은 상세 근거의 실적 표에 있습니다.", ""])
         return lines
     lines.extend(["손익계산서의 3개월 값과 누적값은 별도 열입니다. 현금흐름은 누적으로 보며, 연간 보고서는 4분기값으로 바꾸지 않습니다.", ""])
     for packet in packets:

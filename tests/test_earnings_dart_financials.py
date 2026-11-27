@@ -165,7 +165,7 @@ def test_report_links_actuals_but_not_receipt_as_catalyst_and_preserves_inputs()
     assert list(_evidence(context, pipeline, [], NOW)) == []
     summary = "\n".join(earnings_story_lines(pipeline))
     detail = "\n".join(earnings_calendar_lines(context, NOW, pipeline=pipeline))
-    assert "분기(3개월) 100,000 KRW" in summary and "누적 250,000 KRW" in summary
+    assert "분기(3개월) 100,000원" in summary and "누적 250,000원" in summary  # reading form; exact KRW in detail
     assert "한국 공시 실제 실적" in detail and "60,000 KRW" in detail
     assert "공시 접수일 2026-11-16 · 실적 발표일 미확인" in detail
     assert "누적·분기 역산 안 함" in detail and "전체 CAPEX 아님" in detail
@@ -174,7 +174,7 @@ def test_report_links_actuals_but_not_receipt_as_catalyst_and_preserves_inputs()
     rendered = compose_reading_report("# Report", context=context, news=[], summary_rows=holdings, now=NOW)
     reading = rendered.split("## " + AUDIT_TITLE)[0]
     korean = reading.split("## 한국 시황")[1].split("## 미국 시황")[0]
-    assert "한국 공시 실제 실적" in korean and "분기(3개월) 100,000 KRW" in korean
+    assert "한국 공시 실제 실적" in korean and "분기(3개월) 100,000원" in korean
     assert korean.count("한국 공시 실제 실적") == 1
     assert (context, holdings) == before
 
