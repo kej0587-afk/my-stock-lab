@@ -1,5 +1,21 @@
 # Stock Lab Work Handoff
 
+## 2026-11-28 SOXS/SOXL 운영 검증 완료
+
+- main cf4a89f7 일치/미커밋 없음. 08:42~08:44KST 운영 정밀관측소 확인.
+  두 완료 검토ZIP cf4a89f7/restart_required=False/stale_modules=[]로 Reboot 불필요.
+- SOXS: SOXL 회복·관리표 및 leveraged_precision/recovery/underlying/L3 필드 없음.
+  공통 원판정 CRISIS_PANIC_SELL_OFF, 인버스 분류 유지, 게이트 방어우선/레버리지 시장방어 유지.
+- SOXL: 정상 profile SOXL/회복1/6/LEVERAGED_WATCH_NO_POSITION, 관리표와 기초축 유지.
+  L3 관찰 해당없음(applicable=False): L0 미보유라 보유사이클 없음, axis SOXX.
+  기존 시장방어/방어우선 유지. L3 실제 회차 저장/보유중 운영실행은 검증하지 않음.
+- 차트 아래 A/B/C·신규진입 가격근거·최종 체크 표시 확인, SOXS 단기전략 검증 영역 표시.
+  SOXL 첫 ZIP은08:00 생성분, SOXS 새조회 후 SOXL 재전환 화면도 확인. 개인ZIP Git제외.
+- 코드 변경 없음. 기존95/decision1674 통과 재사용, 관련 잔여 실패0. 전체suite 재실행 아님.
+  [운영 근거/범위](docs/maintenance/20261128_soxs_profile_fix.md). 인계 문서 main 푸시 대상.
+- **Next Task Only:** 동일 고정입력으로 시간외 scalar overlay가 판정·차트·확인축·시황에
+  어떻게 전파되는지 비교. 현재 판정 입력은 유지하고 표시 모순/설계 의도를 먼저 구분한다.
+
 ## 2026-11-28 SOXS 프로필 오연결 수정 완료
 
 - main661f8daf 대조/미커밋 없음. app.py 프로필 선택만 수정: SOXS 티커는 미등록 프로필,
