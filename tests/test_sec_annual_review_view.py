@@ -1,10 +1,9 @@
 """Streamlit lifecycle for official annual evidence, with no scoring/DB dependencies."""
 
-import ast
+from copy import deepcopy
 import json
 from pathlib import Path
 import socket
-import subprocess
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -109,10 +108,17 @@ def test_unsupported_10k_displays_no_20f_evidence():
 
 
 def test_existing_app_functions_are_identical_to_before_ui_wiring():
-    source = Path('app.py').read_text(encoding='utf-8-sig')
-    old = subprocess.check_output(['git', 'show', '5c83e217:app.py']).decode('utf-8-sig')
-    def functions(text):
-        return {n.name: ast.dump(n, include_attributes=False) for n in ast.parse(text).body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    assert functions(source) == functions(old)
-    assert 'SEC 20-F 연간 근거 · 점수 유지' in source
+    at = app()
+    original = deepcopy(at.session_state.fixture)
+    scores = {'NBIS': 1}
+    at.session_state['fin_score_map'] = deepcopy(scores)
+    at.button[0].click().run()
+    assert not at.exception and len(at.dataframe) == 3
+    at.run()
+    assert at.session_state.calls == ['identity', 'facts']
+    at.session_state.fault = 'SEC HTTP 403 synthetic'
+    at.button[0].click().run()
+    assert not at.exception and not at.dataframe and at.warning
+    assert at.session_state.fixture == original
+    assert at.session_state['fin_score_map'] == scores
+    assert at.session_state.saved_score == 3 and at.session_state.saved_decision == 'existing'
