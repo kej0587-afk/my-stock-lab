@@ -1687,7 +1687,20 @@ def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     cols = ["Close", "High", "Low"] + (["Volume"] if "Volume" in out.columns else [])
     # A union of market calendars has empty rows for closed markets. These are
     # not zero-return sessions, and missing volume must never be copied forward.
-    return out[cols].dropna(subset=["Close", "High", "Low"])
+    clean = out[cols].dropna(subset=["Close", "High", "Low"])
+    # Preserve the reason for retaining an older bar. A union-calendar empty row
+    # is not a received candle; only a row with some actual OHLCV data counts.
+    observed = out[cols].dropna(how="all")
+    if not observed.empty and isinstance(observed.index, pd.DatetimeIndex):
+        last = observed.iloc[-1]
+        missing = [column for column in ("Close", "High", "Low") if pd.isna(last[column])]
+        if missing:
+            clean.attrs["flow_partial_bar"] = {
+                "원자료최근봉": observed.index[-1].strftime("%Y-%m-%d"),
+                "원자료누락항목": ", ".join(missing),
+                "원자료사유": "Yahoo 최근 일봉 필수값 누락 · 이전 정상봉 사용(메타 현재가로 대체하지 않음)",
+            }
+    return clean
 
 
 @timed_call("prices")
@@ -2001,6 +2014,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 
     return {
         "기준일": px.index[-1].strftime("%Y-%m-%d") if isinstance(px.index, pd.DatetimeIndex) and pd.notna(px.index[-1]) else "",
+        **px.attrs.get("flow_partial_bar", {}),
         "거래량기준일": volume_dates[-1].strftime("%Y-%m-%d") if isinstance(px.index, pd.DatetimeIndex) and len(volume_dates) else "",
         "현재가":      cur,
         "가격수준":    price_level,

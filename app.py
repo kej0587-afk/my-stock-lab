@@ -30023,6 +30023,8 @@ def render_today_unified_briefing_panel(
             st.caption("섹터 원자료: " + " · ".join(
                 f"{row['시장']} {row['원자료']} {row['가격 기준일']}" for row in source_basis))
             st.caption("종목 점검과 기준일이 다르거나 섞인 섹터는 오늘 한 줄의 변화 비교에서 제외합니다.")
+            if any(row.get("최근봉 필수값 누락", 0) for row in source_basis):
+                st.caption("공급처 최근 일봉에 종가 등 필수값이 빠져 이전 정상봉을 사용한 자료가 있습니다. 돈흐름 상세의 원자료 누락 근거에서 확인할 수 있습니다.")
         st.caption("계좌 범위: " + ", ".join(str(account) for account in latest_accounts)
                    + " · 점검 계산: " + str(df.attrs.get("portfolio_signal_at") or st.session_state.get("today_queue_summary_last_run", "미확인")))
         if change_brief:

@@ -76,7 +76,9 @@ def flow_source_date_rows(snapshot):
             rows.append({"원자료": label, "시장": market,
                 "가격 기준일": day if len(known) == 1 else (f"{known[0]} ~ {known[-1]}" if known else "미확인"),
                 "이전일 자료": sum(bool(value) and value < day for value in values),
-                "기준일 미확인": sum(not value for value in values), "거래종료": int(ended.sum())})
+                "기준일 미확인": sum(not value for value in values), "거래종료": int(ended.sum()),
+                "최근봉 필수값 누락": int(market_frame.get("원자료누락항목", pd.Series("", index=market_frame.index))
+                                      .fillna("").astype(str).str.strip().ne("").sum())})
     return rows
 
 
@@ -89,10 +91,15 @@ def flow_source_issue_rows(snapshot):
             continue
         for row in frame.to_dict("records"):
             ended = row.get("상장상태") == "거래종료"
-            if not ended and pd.notna(row.get("돈흐름점수")):
+            partial = isinstance(row.get("원자료누락항목"), str) and bool(row["원자료누락항목"].strip())
+            if not ended and not partial and pd.notna(row.get("돈흐름점수")):
                 continue
             rows.append({"종목": row.get("종목명", row.get("ETF 이름", "")), "Ticker": row["Ticker"],
-                "자료상태": "거래종료" if ended else "가격부족", "마지막거래일": session_date(row.get("마지막거래일")) or "",
+                "자료상태": "거래종료" if ended else "최근봉 불완전 · 이전 정상봉" if partial else "가격부족",
+                "계산 기준일": session_date(row.get("기준일")) or "",
+                "수신 최근봉": session_date(row.get("원자료최근봉")) or "",
+                "누락항목": row.get("원자료누락항목", "") if partial else "",
+                "마지막거래일": session_date(row.get("마지막거래일")) or "",
                 "사유": row.get("원자료사유") if isinstance(row.get("원자료사유"), str) and row.get("원자료사유")
                         else "조회 불가 또는 계산에 필요한 일봉 부족",
                 "공식출처": row.get("공식출처", "") if ended else ""})
