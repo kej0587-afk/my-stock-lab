@@ -17348,6 +17348,7 @@ def get_dashboard_swing_status_maps():
     return status_map, decision_map
 
 
+@timed_call("display", "queue_dedupe_summary")
 def dedupe_dashboard_summary_df(summary_df):
     if not isinstance(summary_df, pd.DataFrame) or summary_df.empty or "티커" not in summary_df.columns:
         return summary_df
@@ -24719,6 +24720,7 @@ def store_precision_decision_record(ticker, engine_view, c, *, has_pos, manual_p
         logging.exception("Decision record (precision) skipped: ticker=%s", ticker)
 
 
+@timed_call("display", "queue_account_context")
 def portfolio_signal_input_context(*, financial_scores=None):
     """Identify account-dependent inputs without invalidating on every live tick."""
     import hashlib
@@ -33767,7 +33769,8 @@ def _render_today_queue_tab(mode):
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
 
-    financial_revision = financial_input_signature(load_fin_scores_db())
+    with measure("phase", "queue_financial_revision"):
+        financial_revision = financial_input_signature(load_fin_scores_db())
     queue_logic_version = f"{TODAY_QUEUE_LOGIC_VERSION}:{financial_revision}"
     snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     with measure("phase", "watchlist_prepare"):
@@ -33829,10 +33832,11 @@ def _render_today_queue_tab(mode):
         clear_cached_summary, restore_cached_summary, finalize_summary, EXPECTED_CONTEXT_KEY,
     )
     st.session_state[EXPECTED_CONTEXT_KEY] = portfolio_signal_input_context()
-    cached_summary = restore_cached_summary(
-        st.session_state, snapshot_owner, queue_sig,
-        load_today_queue_summary_snapshot=load_today_queue_summary_snapshot,
-    )
+    with measure("phase", "queue_restore_summary"):
+        cached_summary = restore_cached_summary(
+            st.session_state, snapshot_owner, queue_sig,
+            load_today_queue_summary_snapshot=load_today_queue_summary_snapshot,
+        )
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
     refresh_flow_candidates = st.checkbox(
@@ -33895,11 +33899,12 @@ def _render_today_queue_tab(mode):
     else:
         summary_df = cached_summary
 
-    summary_df = finalize_summary(
-        st.session_state, summary_df, queue_sig, run_summary, snapshot_owner,
-        dedupe_dashboard_summary_df=dedupe_dashboard_summary_df,
-        save_today_queue_summary_snapshot=save_today_queue_summary_snapshot,
-    )
+    with measure("phase", "queue_finalize_summary"):
+        summary_df = finalize_summary(
+            st.session_state, summary_df, queue_sig, run_summary, snapshot_owner,
+            dedupe_dashboard_summary_df=dedupe_dashboard_summary_df,
+            save_today_queue_summary_snapshot=save_today_queue_summary_snapshot,
+        )
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
@@ -33924,15 +33929,16 @@ def _render_today_queue_tab(mode):
     from stock_lab_core.today_result_observation import (
         result_metadata, attach_result_metadata, reuse_or_build_market_observation,
     )
-    observation_meta = result_metadata(
-        summary_df, st.session_state, run_summary=run_summary, signature=queue_sig,
-        account_context=portfolio_signal_input_context(),
-    )
-    summary_df = attach_result_metadata(summary_df, observation_meta)
-    # Freeze pre-display wording and original flow inputs. Never replay market-rewritten prose.
-    original_observation_input = summary_df.copy(deep=True)
-    from stock_lab_core.today_restore_session import saved_display_for_context, save_completed_display
-    saved_display = saved_display_for_context(summary_df, observation_meta)
+    with measure("phase", "queue_observation_prepare"):
+        observation_meta = result_metadata(
+            summary_df, st.session_state, run_summary=run_summary, signature=queue_sig,
+            account_context=portfolio_signal_input_context(),
+        )
+        summary_df = attach_result_metadata(summary_df, observation_meta)
+        # Freeze pre-display wording and original flow inputs. Never replay market-rewritten prose.
+        original_observation_input = summary_df.copy(deep=True)
+        from stock_lab_core.today_restore_session import saved_display_for_context, save_completed_display
+        saved_display = saved_display_for_context(summary_df, observation_meta)
     # Nested saved frames belong to storage, not display/concat metadata.
     summary_df.attrs = dict(portfolio_signal_attrs)
     if "판정분류" in summary_df.columns:
@@ -33943,7 +33949,8 @@ def _render_today_queue_tab(mode):
     stored_guard = original_observation_input.attrs.get("today_saved_market_guard") if saved_display is not None else None
     market_guard = dict(stored_guard) if isinstance(stored_guard, dict) else build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     from stock_lab_core.today_queue_display import prepare_today_queue_display
-    summary_df, reason_bucket, display_masks = prepare_today_queue_display(summary_df, market_guard, signal_group)
+    with measure("phase", "queue_display_prepare"):
+        summary_df, reason_bucket, display_masks = prepare_today_queue_display(summary_df, market_guard, signal_group)
     hard_block_mask = display_masks["hard_block_mask"]
     buyish_mask = display_masks["buyish_mask"]
     caution_mask = display_masks["caution_mask"]
@@ -33969,16 +33976,18 @@ def _render_today_queue_tab(mode):
         summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
     else:
         summary_df = saved_display
-    summary_df = reuse_or_build_market_observation(
-        summary_df, original_observation_input, observation_meta, st.session_state,
-        signature=queue_sig, context=portfolio_signal_input_context(),
-    )
+    with measure("phase", "queue_observation_reuse"):
+        summary_df = reuse_or_build_market_observation(
+            summary_df, original_observation_input, observation_meta, st.session_state,
+            signature=queue_sig, context=portfolio_signal_input_context(),
+        )
     if run_summary:
         save_completed_display(
             st.session_state, original_observation_input, summary_df, signature=queue_sig,
             owner=snapshot_owner, save=save_today_queue_summary_snapshot, market_guard=market_guard,
         )
-    attach_today_gate_to_records(summary_df, portfolio_signal_input_context())
+    with measure("phase", "queue_record_gate_sync"):
+        attach_today_gate_to_records(summary_df, portfolio_signal_input_context())
     if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
         portfolio_signals = summary_df.copy()
         portfolio_signals.attrs.update(portfolio_signal_attrs)

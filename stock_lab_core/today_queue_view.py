@@ -8,6 +8,7 @@ from stock_lab_core.backup import dataframe_to_csv_bytes
 from stock_lab_core.execution_readiness import execution_guidance_fields
 from stock_lab_core.formatters import normalize_ticker
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.performance import timed_call
 from stock_lab_core.today_queue import sort_today_queue_detail_table
 
 register_loaded_source(__name__, __file__)
@@ -188,6 +189,7 @@ def _render_queue_tabs(st, summary_df, queue_masks, flow_shortlist_df,
         _render_detail_table(st, detail_df, "전체 점검 종목이 없습니다.")
 
 
+@timed_call("display", "queue_details_total")
 def render_today_queue_details(st, summary_df, *, queue_masks, flow_shortlist_df,
         market_guard, watch_items, holdings_df, render_today_review_export_download,
         render_today_research_links_panel, get_cached_today_market_flow_snapshot,

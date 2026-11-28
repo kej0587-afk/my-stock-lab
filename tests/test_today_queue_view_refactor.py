@@ -215,7 +215,8 @@ def test_random_values_keep_risk_sorting_and_csv_bytes_identical(sources, seed):
 
 
 def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources):
-    old, new = map(function, sources)
+    from tests.queue_timing_contract import StripQueueTimers
+    old, new = (StripQueueTimers().visit(function(source)) for source in sources)
     # Cache/refresh and display labels have dedicated retained-baseline suites.
     def assignment(fn, name):
         return next(i for i, n in enumerate(fn.body) if isinstance(n, ast.Assign)

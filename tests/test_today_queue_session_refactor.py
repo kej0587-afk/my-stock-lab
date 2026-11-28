@@ -41,7 +41,8 @@ def is_assignment(node, name):
 
 @lru_cache(maxsize=2)
 def compiled_prefix(source):
-    tree = ast.parse(source)
+    from tests.queue_timing_contract import StripQueueTimers
+    tree = StripQueueTimers().visit(ast.parse(source))
     fn = deepcopy(next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == MAIN))
     start = next(i for i, n in enumerate(fn.body) if is_assignment(n, "portfolio_signal_attrs"))
     fn.body = fn.body[:start] + ast.parse("return summary_df, watch_items, queue_sig, run_summary").body
