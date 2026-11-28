@@ -485,12 +485,18 @@ def _fetch_pykrx_latest_close(ticker: str) -> float:
     return get_latest_close_from_series(df["Close"])
 
 
+def _yahoo_history_symbol(ticker: str) -> str:
+    """Translate known share classes only at the Yahoo history boundary."""
+    symbol = normalize_price_lookup_key(ticker)
+    return {"BRK.B": "BRK-B", "BRK.A": "BRK-A"}.get(symbol, symbol)
+
+
 def _yfinance_history_candidates(ticker: str) -> list[str]:
     """Return Yahoo symbols to try for OHLCV history."""
     raw = str(ticker or "").strip().upper()
     if not raw:
         return []
-    candidates = [raw]
+    candidates = [_yahoo_history_symbol(raw)]
     if _is_kr_ticker(raw) and not re.search(r"\.(KS|KQ)$", raw, flags=re.IGNORECASE):
         code = _kr_code(raw)
         candidates.extend([f"{code}.KS", f"{code}.KQ"])
@@ -517,7 +523,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
         df = _repair_missing_us_daily_close(yf_ticker, df)
         df = _clean_ohlcv_frame(df, keep_adj_close=True)
         if not df.empty:
-            return _maybe_align_ohlcv_to_live_price(yf_ticker, df)
+            return _maybe_align_ohlcv_to_live_price(normalize_price_lookup_key(ticker), df)
     return pd.DataFrame()
 
 
@@ -538,26 +544,28 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
                       if str(t or "").strip() and not _is_kr_ticker(t)})
     if not symbols:
         return {}
+    provider_symbols = sorted({_yahoo_history_symbol(symbol) for symbol in symbols})
     try:
         with _YF_LOCK:
             _performance.count_event("yfinance_history.batch_download_call")
             data = yf.download(
-                symbols, period=period, interval="1d", group_by="ticker",
-                progress=False, threads=min(4, len(symbols)), auto_adjust=False, timeout=5,
+                provider_symbols, period=period, interval="1d", group_by="ticker",
+                progress=False, threads=min(4, len(provider_symbols)), auto_adjust=False, timeout=5,
                 **yahoo_session_kwargs(),
             )
     except Exception:
         return {}
     if data is None or data.empty:
         return {}
-    if len(symbols) > 1 and not isinstance(data.columns, pd.MultiIndex):
+    if len(provider_symbols) > 1 and not isinstance(data.columns, pd.MultiIndex):
         return {}
     frames = {}
     selector = DownloadFrameSelector(data)
     for symbol in symbols:
         try:
-            frame = selector.select(symbol)
-            frame = _repair_missing_us_daily_close(symbol, frame)
+            provider_symbol = _yahoo_history_symbol(symbol)
+            frame = selector.select(provider_symbol)
+            frame = _repair_missing_us_daily_close(provider_symbol, frame)
             frame = _clean_ohlcv_frame(frame, keep_adj_close=True)
             if not frame.empty:
                 frames[symbol] = _maybe_align_ohlcv_to_live_price(symbol, frame)

@@ -15,6 +15,7 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
 )
 from stock_lab_core.prices import load_price_df
+from stock_lab_core.parking_assets import is_parking_asset
 
 US_TECH_OR_GROWTH_TICKERS = {
     "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
@@ -1229,7 +1230,8 @@ def _normalize_bucket(value):
 
 
 def _is_reserve_or_cash_bucket(bucket):
-    return _normalize_bucket(bucket) in {"reserve", "cash"}
+    bucket = _normalize_bucket(bucket)
+    return bucket == "cash" or is_parking_asset({"bucket": bucket})
 
 
 def apply_holdings_weight_columns(df, krw_cash, usd_cash, usdkrw):
@@ -1276,6 +1278,10 @@ def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkr
     The dividends total is a separate receipt reference translated at current
     FX. Profit uses current assets minus the configured capital, not dated TWR.
     Legacy monthly ex-dividend valuations follow a different contract below.
+
+    holdings_table contains securities, including held reserve assets, once.
+    krw_cash/usd_cash are separate deposit balances excluding held reserves;
+    do not pass a cash-appended report table or waiting_value as cash input.
     """
     stock_value = holdings_table["원화환산"].sum() if not holdings_table.empty else 0.0
     cash_value = krw_cash + (usd_cash * usdkrw)
@@ -1349,6 +1355,12 @@ def calc_pnl_krw_from_row(row, usdkrw):
 
 
 def calc_reserve_summary(df, reserve_target_weight):
+    """Summarize a full asset table with cash rows appended once.
+
+    waiting_value includes both held reserve securities and deposit cash.
+    Only cash_value represents cash; deployable_value is excess waiting assets
+    under the existing reserve target and may require a reserve sale first.
+    """
     total = float(df["원화환산"].sum()) if not df.empty else 0.0
     bucket = df["bucket"].apply(_normalize_bucket) if not df.empty else pd.Series(dtype=str)
 

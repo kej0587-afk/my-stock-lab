@@ -15,6 +15,7 @@ register_loaded_source(__name__, __file__)
 from stock_lab_core.report_evidence import first, holding_reasons, is_held, records, text
 from stock_lab_core.today_snapshot import _snapshot_location
 from stock_lab_core.report_history_store import ReportHistoryStoreError, validate_session
+from stock_lab_core.today_change_brief import merge_today_briefs
 
 DEFAULT_PATH = Path(__file__).resolve().parents[1] / "cache" / "market_report_history.json"
 
@@ -196,8 +197,11 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
                 raise ReportHistoryStoreError("invalid_data")
             # A local outage run may be newer than the last successful DB write.
             for remote_key, value in remote.items():
+                briefs = merge_today_briefs(saved.get(remote_key, {}), value)
                 if remote_key not in saved or _run_time(value) >= _run_time(saved[remote_key]):
                     saved[remote_key] = deepcopy(value)
+                if briefs:
+                    saved[remote_key]["today_briefs"] = briefs
             _repair_names(saved, current)
             remote_loaded = True
         except Exception as exc:
@@ -229,6 +233,10 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
             current["public_market_flows"] = snapshot
         result["public_market_flow_history"] = saved_public_flow_history(
             [*archived, snapshot], checked_at=checked)
+    # Today observations are per account set, unlike the legacy report rows.
+    # A normal report regeneration must retain every account's observation.
+    if briefs := merge_today_briefs(saved.get(key, {})):
+        current["today_briefs"] = briefs
     if remote_loaded:
         try:
             store.upsert_session(current, owner_scope=owner_scope)

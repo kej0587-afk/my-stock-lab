@@ -12093,25 +12093,8 @@ def _flow_sector_row_bucket(row, columns):
 
 
 def _flow_sector_market_from_row(row):
-    market = _flow_stat_first_text(row, ["시장축", "시장"], default="")
-    if "한국" in market or "KOSPI" in market:
-        return "한국"
-    if "미국" in market or "US" in market:
-        return "미국"
-    group = _flow_stat_first_text(row, ["구분"], default="")
-    if "한국" in group:
-        return "한국"
-    if "미국" in group:
-        return "미국"
-    ticker = sanitize_ticker_value(_flow_stat_first_text(row, ["Ticker", "티커"], default=""))
-    if ticker:
-        return "한국" if is_kr_listed(ticker) else "미국"
-    joined = _flow_stat_join_text(row, ["후보군", "연결테마", "테마", "섹터", "대표주"])
-    if "K-" in joined or "국내" in joined or "한국" in joined:
-        return "한국"
-    if "미국" in joined:
-        return "미국"
-    return "혼합"
+    from stock_lab_core.sector_candidate_association import sector_market_from_row
+    return sector_market_from_row(row)
 
 
 def _flow_sector_short_return(row):
@@ -12430,6 +12413,11 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             "raw_action": raw_action,
             "anchor_representatives": _flow_sector_anchor_representatives(market, bucket),
             "representatives": _flow_sector_unique_text(sorted_representatives(items), limit=3),
+            "representative_links": [
+                {"name": _flow_stat_representatives(part), "ticker": symbol}
+                for item in items for part in re.split(r"\s*(?:·|,|/|>|\\n)\s*", str(item.get("representative", "")))
+                for symbol in re.findall(r"\(([A-Za-z0-9.^-]+)\)", part)
+            ],
             "etfs": _flow_sector_unique_label_text([x.get("etf", "") for x in items], limit=3),
             "internal": _flow_sector_unique_text(internals, limit=2),
             "values": values,
@@ -29705,6 +29693,9 @@ def render_today_unified_briefing_panel(
     """Render one Today Queue briefing that replaces the separate guard/action/news/memo panels."""
     guard = market_guard or {}
     df = summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
+    frame_context = df.attrs.get("portfolio_signal_context")
+    context_ok = (bool(frame_context) and frame_context == portfolio_signal_input_context()
+                  and not df.attrs.get("today_queue_summary_stale_reason"))
     mode = str(guard.get("mode", "대기") or "대기")
     level = str(guard.get("level", "caution") or "caution")
     action_text = str(guard.get("action", "시장 안전벨트 기준 확인") or "시장 안전벨트 기준 확인")
@@ -29830,6 +29821,7 @@ def render_today_unified_briefing_panel(
 
             def _add_asset_interpretation(bucket_label: str, action: str, target_lines: list[str]):
                 from stock_lab_core.report_evidence import holding_reasons
+                from stock_lab_core.today_overview import action_columns
                 reasons = holding_reasons(dict(row, 현재비중=current_w, 목표비중=target_w))
                 if is_leveraged_or_inverse_product(name, ticker, asset_class):
                     reasons.append("레버리지 보유")
@@ -29838,13 +29830,14 @@ def render_today_unified_briefing_panel(
                     "구분": bucket_label,
                     "자산": name,
                     "티커": ticker,
+                    **action_columns(row),
+                    "판정·자산 대조": "계산 입력 일치" if context_ok else "입력 변경/미확인 · 이전 판정",
                     "손익": pnl_text,
                     "현재비중": _weight_cell(current_w),
                     "목표비중": _weight_cell(target_w),
                     "비중차이": _weight_cell(gap_w),
-                    "판정": label or final_read or "-",
                     "보유 점검 사유": ", ".join(dict.fromkeys(reasons)),
-                    "관리 해석": action,
+                    "보유분 관리": action,
                 })
 
             if is_core:
@@ -29938,6 +29931,53 @@ def render_today_unified_briefing_panel(
         st.caption(f"시장 {mode} · {action_text}")
     if _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
         return
+    saved_flow = get_cached_today_market_flow_snapshot() or {}
+    if saved_flow and saved_flow.get("sector_cards_view_version") != "exact-market-v1":
+        # Existing observations only. Do not refresh prices or run Today again.
+        saved_flow["sector_ability_cards"] = _flow_sector_ability_cards(
+            saved_flow.get("command_flow_df"), saved_flow.get("sector_rotation_df"),
+            saved_flow.get("theme_rotation_df"), market_guard=market_guard)
+        saved_flow["sector_cards_view_version"] = "exact-market-v1"
+    change_brief = None
+    if not pending and not df.empty:
+        from stock_lab_core.today_overview import observed_sessions, overview_counts
+        counts = overview_counts(df, hard_block_mask)
+        headline = (f"실행후보 {buyish_count}개 · 방어우선 {counts['방어우선']}개 · "
+                    "오늘은 " + ("신규 주문 보류, 보유 위험과 자료 오류 확인" if buyish_count == 0 else "후보의 정밀 최종 체크 확인"))
+        dates = observed_sessions(df)
+        owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
+        at = pd.to_datetime(df.attrs.get("portfolio_signal_at"), errors="coerce")
+        if owner and dates and context_ok and pd.notna(at) and at.tzinfo is not None:
+            from stock_lab_core.today_change_brief import make_today_change_session, refresh_today_change_brief
+            from stock_lab_core.report_history import normalized_decisions
+            from stock_lab_core.report_history_store import SupabaseReportHistoryStore
+            from stock_lab_core.report_latest import account_key
+            from stock_lab_core.report_eventstudy import _exchange_schedule
+            accounts = st.session_state.get("acc_filter", [])
+            cards = saved_flow.get("sector_ability_cards", [])
+            leaders = {card["market"]: card["title"] for card in cards if card.get("rank") == 1}
+            recovery = (df.loc[df["돈흐름_판정"].fillna("").str.contains("회복"), "티커"].astype(str).tolist()
+                        if "돈흐름_판정" in df else None)
+            current_observation = make_today_change_session(
+                normalized_decisions(df.to_dict("records")), dates=dates, generated_at=at.isoformat(),
+                account_key=account_key(accounts), comparison_context={"schema": "today-overview-v1", "sector_source": "existing-ranked-cards", "recovery_source": "saved-flow-recovery-label"},
+                sector_leaders=leaders or None, recovery_watch=recovery, execution_count=buyish_count,
+                held_actions={row["티커"]: row["오늘 행동"] + " · " + row["보류 사유"] for row in asset_interpretation_rows})
+            previous_dates = {}
+            for market, source_day in dates.items():
+                end = pd.Timestamp(source_day) - pd.Timedelta(days=1)
+                schedule = _exchange_schedule(market, str((end - pd.Timedelta(days=15)).date()), str(end.date()))
+                if not schedule.empty:
+                    previous_dates[market] = str(schedule.index[-1].date())
+            change_brief = refresh_today_change_brief(
+                st.session_state, current_observation, owner_scope=owner, accounts=accounts,
+                store=SupabaseReportHistoryStore(supabase, owner_scope=owner) if supabase is not None else None,
+                today_action="신규 주문 보류, 보유 위험과 자료 오류 확인" if buyish_count == 0 else "후보의 정밀 최종 체크 확인",
+                previous_sessions=previous_dates, static_policy=recommendation_lines)
+            headline = change_brief["headline"]
+        elif not context_ok:
+            headline = "현재 계좌·입력 기준 재계산 필요 · 이전 결과 표시, 이력 비교·저장 보류"
+
     if not df.empty:
         from stock_lab_core.today_snapshot import load_previous_today_summary
         from stock_lab_core.report_history_panel import render_history_changes
@@ -29953,7 +29993,7 @@ def render_today_unified_briefing_panel(
 <b>시장</b> · <span style='color:{color};'>{html.escape(mode)}</span>{html.escape(' · ' + scope_text if scope_text else '')}<br>
 <span style='color:#cbd5e1;'>{html.escape(action_text)}</span><br>
 <span style='color:#94a3b8;'>{html.escape(macro_note or reason_text)}</span><br><br>
-<b>실행</b> · 실행후보 {buyish_count}개 / 눌림대기 {wait_count}개 / 주의·차단 {caution_count}개 / 하드차단 {hard_count}개<br>
+<b>실행</b> · 실행후보 {buyish_count}개 / 눌림대기 {wait_count}개 / 주의·차단 {caution_count}개 (그 안에 하드차단 {hard_count}개 포함)<br>
 <b>내 포트</b> · 장기코어 유지 {len(core_hold_lines)}개 / 교체·축소검토 {len(review_lines)}개 / 추가제외 {len(no_add_lines)}개 / 비중대로 가능 {len(keep_lines)}개 / 보유위험표 {risk_count}개<br>
 <b>뉴스</b> · 주요 뉴스 {news_count}건 저장됨
 </div>
@@ -29965,8 +30005,25 @@ def render_today_unified_briefing_panel(
     m1.metric("시장모드", mode)
     m2.metric("실행후보", f"{buyish_count}개")
     m3.metric("주의/차단", f"{caution_count}개")
-    m4.metric("적립 현금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help=f"{clean_float(cash_available, 0.0):,.0f}원")
-    m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
+    m4.metric("입력 예수금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help="계좌에 입력된 예수금입니다. 증권사의 실제 주문가능액과 다를 수 있습니다.")
+    m5.metric("보유 파킹자산(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help="이미 보유한 증권 평가액입니다. 매도·결제 전에는 주문가능 현금이 아닙니다.")
+
+    if not df.empty and detail == "보유관리":
+        from stock_lab_core.today_overview import render_overview
+        overview_flags = build_today_review_flags_df(
+            df, globals().get("holdings_table"), build_today_flow_shortlist_df(saved_flow))
+        render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
+                        hard_mask=hard_block_mask)
+        st.caption("계좌 범위: " + ", ".join(str(account) for account in latest_accounts)
+                   + " · 점검 계산: " + str(df.attrs.get("portfolio_signal_at") or st.session_state.get("today_queue_summary_last_run", "미확인")))
+        if change_brief:
+            with st.expander("오늘 한 줄 · 비교 기준과 저장 상태"):
+                st.caption(change_brief["audit"]["coverage_note"])
+                st.json({"비교 기준일": change_brief["comparison_dates"],
+                         "비교 계산시각": change_brief["comparison_generated_at"],
+                         "저장": change_brief["persistence"], "제외 사유": change_brief["audit"]["excluded"]})
+                st.download_button("오늘 한 줄 비교 검토 JSON", json.dumps(change_brief, ensure_ascii=False, default=str),
+                                   file_name="today_change_review.json", mime="application/json", on_click="ignore")
 
     from stock_lab_core.decision_workspace import render_frame_decision_brief
     render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
@@ -29988,25 +30045,42 @@ def render_today_unified_briefing_panel(
             "오늘 실행후보 0개: 신규 주문보다 현금 비중, 손절선, 이벤트 D-Day, 관심 후보 알림 조건을 먼저 점검합니다."
         )
 
-    st.markdown("**종합 추천**")
-    for line in recommendation_lines[:5]:
-        st.caption(f"- {line}")
+    with st.expander("기본 대응 원칙"):
+        for line in recommendation_lines[:5]:
+            st.caption(f"- {line}")
 
-    if detail == "보유관리" and (review_lines or core_hold_lines or no_add_lines or keep_lines or unknown_lines):
+    from stock_lab_core.parking_assets import parking_asset_rows
+    for _, parked in parking_asset_rows(globals().get("holdings_table")).iterrows():
+        is_domestic = is_kr_listed(str(parked.get("티커", "")))
+        asset_interpretation_rows.append({
+            "구분": "파킹자산", "자산": parked.get("자산명", ""), "티커": parked.get("티커", ""),
+            "오늘 행동": "파킹자산 · 종목점검 제외", "보류 사유": "지정된 대기자금 보관 자산",
+            "기술적 타점": "해당없음", "후보 품질": "해당없음", "R/R": "해당없음",
+            "보유수량": parked.get("보유량"),
+            "달러 평가액": parked.get("평가금액") if not is_domestic else None,
+            "원화 환산액": parked.get("원화환산"), "현재비중": f"{clean_float(parked.get('현재비중'), 0):.1f}%",
+            "보유분 관리": "자산 평가에 포함 · 매도·결제 전 주문가능 현금과 구분",
+        })
+    if detail == "보유관리" and asset_interpretation_rows:
         st.markdown("**내 자산 기준 해석**")
         asset_table = pd.DataFrame(asset_interpretation_rows)
         if not asset_table.empty:
+            front = ["자산", "티커", "오늘 행동", "보류 사유", "기술적 타점", "후보 품질", "R/R", "보유분 관리"]
+            asset_table = asset_table[[col for col in front if col in asset_table]
+                                      + [col for col in asset_table if col not in front]]
             st.dataframe(
                 asset_table,
                 width='stretch',
                 hide_index=True,
                 height=min(520, 90 + len(asset_table) * 36),
                 column_config={
-                    "관리 해석": st.column_config.TextColumn("관리 해석", width="large"),
-                    "판정": st.column_config.TextColumn("오늘점검 판정", width="medium"),
+                    "보유분 관리": st.column_config.TextColumn("보유분 관리", width="large"),
+                    "오늘 행동": st.column_config.TextColumn("오늘 행동", width="medium"),
+                    "기술적 타점": st.column_config.TextColumn("기술적 타점 · 실행 허용 아님", width="large"),
                 },
             )
             st.caption("장기코어는 교체 여부와 적립 속도를 분리하고, 레버리지·위성은 손익보다 회복 조건과 목표비중 초과 여부를 먼저 봅니다.")
+            st.caption("목표비중 부족액 ≠ 월계획액 ≠ 오늘 추가 가능액 ≠ 실제 집행기록액. 파킹자산 평가액을 예수금에 다시 더하지 않습니다.")
     elif detail == "보유관리":
         st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
 
@@ -32459,6 +32533,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
 
     sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     snapshot["sector_ability_cards"] = sector_ability_cards
+    snapshot["sector_cards_view_version"] = "exact-market-v1"
     detail_view = _select_today_market_flow_detail_view()
 
     if detail_view == "주도 섹터":
@@ -32991,7 +33066,11 @@ def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
     except Exception:
         pass
 
-    return tuple(merged[key] for key in ordered_keys if key in merged)
+    from stock_lab_core.parking_assets import is_parking_asset, parking_asset_rows
+    parked = parking_asset_rows(globals().get("holdings_table"))
+    parked_keys = {normalize_ticker(sanitize_ticker_value(ticker)) for ticker in parked.get("티커", [])}
+    return tuple(merged[key] for key in ordered_keys
+                 if key in merged and key not in parked_keys and not is_parking_asset(merged[key]))
 
 
 
@@ -33260,6 +33339,14 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
                 _검토키=summary_df["티커"].astype(str).map(_today_review_ticker_key)
             ).drop_duplicates("_검토키").set_index("_검토키")
             for _, row in hdf[hdf["_검토키"].astype(str).str.len() > 0].iterrows():
+                from stock_lab_core.parking_assets import is_parking_asset
+                if is_parking_asset(row):
+                    _append_today_review_flag(
+                        rows, "제외", row.get("티커", ""), row.get("자산명", ""),
+                        "파킹자산 · 종목점검 제외", "계좌에서 reserve로 지정된 보유자산",
+                        "자산 평가에는 포함하며 종목별 기술판정·실행후보·차단 건수에서는 제외합니다.",
+                    )
+                    continue
                 if row["_검토키"] in today_keys and dup_counts.get(row["_검토키"], 0) == 1:
                     calculated = today_by_key.loc[row["_검토키"]]
                     old_target = clean_float(calculated.get("목표비중"), np.nan)
@@ -33313,7 +33400,8 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
             "근거": "",
             "확인/조치": "검토용 마스터표를 기준으로 상세 확인하세요.",
         })
-    return pd.DataFrame(rows)
+    from stock_lab_core.today_overview import classify_review_flags
+    return classify_review_flags(pd.DataFrame(rows))
 
 
 def _today_review_frame(df, mask=None):
@@ -33403,7 +33491,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 
     export_bytes = build_review_export_zip(frames, notes=notes)
     now_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
-    flag_count = int((flags_df.get("등급", pd.Series(dtype=str)).astype(str) != "정상").sum()) if not flags_df.empty else 0
+    flag_count = int(flags_df.get("확인 구분", pd.Series(dtype=str)).eq("자료·매칭 확인 필요").sum()) if not flags_df.empty else 0
     st.download_button(
         "검토용 통합 CSV ZIP 다운로드",
         data=export_bytes,
@@ -33416,7 +33504,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         f"검토용 ZIP: 고유 종목 {len(master_df)}개, 돈흐름 후보 {len(flow_shortlist_df) if isinstance(flow_shortlist_df, pd.DataFrame) else 0}개, "
         f"현재 신호 검증 {len(signal_audit_df)}개, 중복/충돌 점검 {flag_count}건. 화면 복붙 대신 이 파일을 기준으로 보면 앞뒤가 덜 섞입니다."
     )
-    if flag_count:
+    if not flags_df.empty:
         with st.expander("중복/충돌 점검 미리보기", expanded=False):
             st.dataframe(flags_df, width='stretch', hide_index=True)
 
