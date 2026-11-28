@@ -33544,6 +33544,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         file_name=f"stock_lab_review_export_{now_text}.zip",
         mime="application/zip",
         key=f"download_today_review_export_{now_text}_{len(master_df)}_{flag_count}",
+        on_click="ignore",
         width='stretch',
     )
     st.caption(
@@ -33912,7 +33913,7 @@ def _render_today_queue_tab(mode):
         return
 
     portfolio_signal_attrs = {key: value for key, value in summary_df.attrs.items()
-                              if key not in {"today_restore_inputs", "today_saved_display", "today_observation_cache", "today_saved_market_guard"}}
+                              if key not in {"today_restore_inputs", "today_saved_display", "today_observation_inputs", "today_observation_cache", "today_saved_market_guard"}}
     from stock_lab_core.today_result_observation import (
         result_metadata, attach_result_metadata, reuse_or_build_market_observation,
     )

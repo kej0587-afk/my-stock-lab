@@ -269,7 +269,7 @@ if run_summary and flow_snapshot_for_context:
                 continue
             if ast.dump(node) == ast.dump(ast.parse('''portfolio_signal_attrs = {
                 key: value for key, value in summary_df.attrs.items()
-                if key not in {"today_restore_inputs", "today_saved_display", "today_observation_cache", "today_saved_market_guard"}}''').body[0]):
+                if key not in {"today_restore_inputs", "today_saved_display", "today_observation_inputs", "today_observation_cache", "today_saved_market_guard"}}''').body[0]):
                 node = ast.parse('portfolio_signal_attrs = dict(summary_df.attrs)').body[0]
             if ast.dump(node) == ast.dump(ast.parse('market_guard = dict(stored_guard) if isinstance(stored_guard, dict) else build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)').body[0]):
                 node = ast.parse('market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)').body[0]

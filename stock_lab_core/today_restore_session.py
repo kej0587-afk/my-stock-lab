@@ -126,7 +126,7 @@ def saved_display_for_context(summary, metadata):
         return None
     out = saved.copy(deep=True)
     out.attrs = {key: deepcopy(value) for key, value in summary.attrs.items()
-                 if key not in {"today_restore_inputs", "today_saved_display", "today_observation_cache", "today_saved_market_guard"}}
+                 if key not in {"today_restore_inputs", "today_saved_display", "today_observation_inputs", "today_observation_cache", "today_saved_market_guard"}}
     from stock_lab_core.today_result_observation import attach_result_metadata
     return attach_result_metadata(out, metadata)
 

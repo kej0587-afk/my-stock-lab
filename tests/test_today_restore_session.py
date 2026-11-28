@@ -146,6 +146,89 @@ def test_app_restoration_wires_pure_candidate_context_callback():
     assert isinstance(callback, ast.Name) and callback.id == "portfolio_signal_input_context"
 
 
+@pytest.mark.parametrize("restored", [False, True])
+def test_display_attrs_do_not_copy_observation_trace_and_storage_retains_it(tmp_path, restored):
+    import ast
+    from pathlib import Path
+
+    class Trace(dict):
+        copies = 0
+
+        def __deepcopy__(self, memo):
+            type(self).copies += 1
+            return type(self)(deepcopy(dict(self), memo))
+
+    _, _, raw, _, sig, at, _ = fixture(tmp_path)
+    frozen = raw.copy(deep=True)
+    frozen.attrs = {}
+    raw.attrs["today_saved_display"] = frozen
+    trace = Trace({f"T{i}": {"branch_trace": [{"score": i, "unchanged": True}] * 64}
+                   for i in range(104)})
+    raw.attrs["today_observation_inputs"] = trace
+    raw.attrs["today_observation_cache"] = {"columns": pd.DataFrame({"proof": [1]})}
+    raw.attrs["today_saved_market_guard"] = {"bench_df": pd.DataFrame({"score": [2]})}
+    metadata = result_metadata(raw, {LAST_RUN_KEY: at, SIGNATURE_KEY: sig},
+                               run_summary=False, signature=sig, account_context="account-context")
+    if restored:
+        shown = saved_display_for_context(raw, metadata)
+    else:
+        # Execute the actual fresh display attrs boundary without starting the UI.
+        tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"))
+        fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_render_today_queue_tab")
+        assignment = next(node for node in fn.body if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == "portfolio_signal_attrs"
+                                  for target in node.targets))
+        env = {"summary_df": raw}
+        exec(compile(ast.Module(body=[assignment], type_ignores=[]), "app-display-attrs", "exec"), env)
+        shown = raw.copy(deep=True)
+        shown.attrs = dict(env["portfolio_signal_attrs"])
+
+    assert set(shown.attrs) == {"portfolio_signal_context", "portfolio_signal_at"}
+    assert shown[raw.columns].to_csv(index=False) == raw.to_csv(index=False)
+    assert raw.attrs["today_observation_inputs"] is trace
+    Trace.copies = 0
+    for _ in range(5):
+        copied = shown.copy(deep=True)
+        copied["티커"].tolist()
+        copied.iloc[:10].copy().to_csv(index=False)
+    assert Trace.copies == 0  # Repeated briefing/table/export work cannot copy the trace.
+
+    path = tmp_path / "display-trace-retained.json"
+    state = {LAST_RUN_KEY: at}
+    save_completed_display(
+        state, raw, shown, signature=sig, owner="user",
+        save=lambda *args, **kwargs: save_today_queue_summary_snapshot(*args, path=path, **kwargs),
+    )
+    loaded, _, _ = load_today_queue_summary_snapshot(path=path, owner_scope="user", expected_signature=sig)
+    assert loaded.attrs["today_observation_inputs"] == trace
+    assert raw.attrs["today_observation_inputs"] is trace
+    assert loaded.to_csv(index=False) == raw.to_csv(index=False)
+    assert loaded.attrs["today_saved_display"].attrs == {}
+    assert loaded.attrs["today_saved_display"][raw.columns].to_csv(index=False) == raw.to_csv(index=False)
+
+
+def test_review_zip_download_does_not_rerun_app():
+    import ast
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"))
+    fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+              and node.name == "render_today_review_export_download")
+    calls = [node for node in ast.walk(fn) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == "download_button"]
+    assert len(calls) == 1
+    recorded = []
+    env = {"st": SimpleNamespace(download_button=lambda *args, **kwargs: recorded.append((args, kwargs))),
+           "export_bytes": b"unchanged-zip", "now_text": "synthetic", "master_df": [1], "flag_count": 0}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.Expr(value=calls[0])], type_ignores=[])),
+                 "review-download", "exec"), env)
+    _, kwargs = recorded[0]
+    assert kwargs["on_click"] == "ignore"
+    assert kwargs["data"] == b"unchanged-zip" and kwargs["mime"] == "application/zip"
+
+
 def test_new_browser_104_exact_original_values_csv_time_and_zero_calculations(tmp_path):
     base, auto, original, flow, sig, at, load = fixture(tmp_path)
     state = {EXPECTED_CONTEXT_KEY: "account-context"}
