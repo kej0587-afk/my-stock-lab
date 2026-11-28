@@ -15,6 +15,7 @@ UNIVERSE_FILE: one line "TICKER:KR|US:S|E:R|A,..." (kept outside Git: it is the 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -104,15 +105,31 @@ def region_stats(rows: list[dict]) -> dict:
             "strong": sum(r["d1"] >= 0.03 for r in rows), "max_gain": max(r["d1"] for r in rows)}
 
 
-def flow_score_series(flow_frames: dict, days: pd.DatetimeIndex) -> pd.DataFrame:
-    """Breadth of positive 3M returns and positive 3M acceleration across the money-flow ETFs (as of each day)."""
+def flow_score_series(flow_frames: dict, days: pd.DatetimeIndex, *, view: str = "US") -> pd.DataFrame:
+    """Align each listing market BEFORE computing cross-market breadth.
+
+    Inputs use unique, ordered, naive daily session dates (download() contract).
+    KR view sees domestic closes <= d but US closes strictly < d. US view sees
+    both <= d. A Korean-listed US-asset ETF is domestic by listing, not exposure.
+    Select the latest preceding source date, not a shift over available rows:
+    on a US holiday yesterday's observed bar is already available in Korea.
+    Preserve a selected NaN; do not backfill a missing metric with older data.
+    This daily-session approximation does not model historical publication delays.
+    """
+    if view not in ("KR", "US"):
+        raise ValueError("view must be KR or US")
     r3, acc = {}, {}
     for t, f in flow_frames.items():
+        target = days
+        if view == "KR" and not t.endswith((".KS", ".KQ")):
+            if re.fullmatch(r"[A-Z][A-Z0-9]*", t) is None:
+                raise ValueError(f"Unknown flow listing market: {t}")
+            target = days - pd.Timedelta(nanoseconds=1)
         c = f["Close"]
         ret3 = c / c.shift(63) - 1
         prev3 = c.shift(63) / c.shift(126) - 1
-        r3[t] = ret3.reindex(days, method="ffill")
-        acc[t] = (ret3 - prev3).reindex(days, method="ffill")
+        r3[t] = ret3.reindex(target, method="ffill").set_axis(days)
+        acc[t] = (ret3 - prev3).reindex(target, method="ffill").set_axis(days)
     r3, acc = pd.DataFrame(r3), pd.DataFrame(acc)
     breadth = r3.gt(0).where(r3.notna()).mean(axis=1)
     accel = acc.gt(0).where(acc.notna()).mean(axis=1)
@@ -125,7 +142,7 @@ def replay_gate(bench_frames: dict, flow_frames: dict, view: str) -> pd.DataFram
     session of d, so the KR view sees US closes before d; the US view sees KR closes up to d."""
     days = pd.DatetimeIndex(sorted(set().union(*[f.index for f in bench_frames.values()])))
     days = days[days >= pd.Timestamp(START) + pd.Timedelta(days=200)]
-    flow = flow_score_series(flow_frames, days)
+    flow = flow_score_series(flow_frames, days, view=view)
     out = []
     closes = {t: f["Close"] for t, f in bench_frames.items()}
     for day in days:
@@ -244,7 +261,8 @@ def main(universe_file: str, out_dir: str):
     pd.DataFrame(missing).to_csv(out / "missing.csv", index=False)
     def plain(row):
         return {k: (v.item() if isinstance(v, (np.floating, np.bool_, np.integer)) else v) for k, v in row.items()}
-    meta = {"flow_universe": len(flow), "flow_requested": len(flow_tickers), "bench": sorted(bench),
+    meta = {"flow_alignment": {"KR": "KR <= session date; US < session date", "US": "all <= session date"},
+            "flow_universe": len(flow), "flow_requested": len(flow_tickers), "bench": sorted(bench),
             "gate_first": str(gates["US"].index[0].date()), "gate_last": str(gates["US"].index[-1].date()),
             "closed_KR_days": int(gates["KR"]["closed_KR"].sum()), "KR_days": len(gates["KR"]),
             "closed_US_days": int(gates["US"]["closed_US"].sum()), "US_days": len(gates["US"]),
