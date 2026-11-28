@@ -42,8 +42,9 @@ def prepared_sector_snapshot():
 
 
 @pytest.mark.parametrize("krw_cash,usd_cash", [(140_000., 100.), (0., 0.)])
+@pytest.mark.parametrize("reuse_shortlist", [False, True])
 def test_unified_briefing_preserves_parking_assets_and_saved_results(
-    app_module, monkeypatch, prepared_sector_snapshot, krw_cash, usd_cash,
+    app_module, monkeypatch, prepared_sector_snapshot, krw_cash, usd_cash, reuse_shortlist,
 ):
     app = app_module
     fx = 1400.
@@ -108,10 +109,15 @@ def test_unified_briefing_preserves_parking_assets_and_saved_results(
 
     cash = app.get_cash_available_for_dca(None)
     reserve = app.get_reserve_available_for_crash_buy(None)
-    app.render_today_unified_briefing_panel(
+    reuse_args = {}
+    if reuse_shortlist:
+        reuse_args["flow_shortlist_df"] = pd.DataFrame()
+        monkeypatch.setattr(app, "build_today_flow_shortlist_df", unexpected_work)
+    shared_flags = app.render_today_unified_briefing_panel(
         summary, market_guard=guard,
-        risk_df=risk, cash_available=cash, reserve_available=reserve, **masks,
+        risk_df=risk, cash_available=cash, reserve_available=reserve, **masks, **reuse_args,
     )
+    pd.testing.assert_frame_equal(shared_flags, app.build_today_review_flags_df(summary, holdings, pd.DataFrame()))
 
     tables = [call.args[0] for call in ui.dataframe.call_args_list
               if call.args and isinstance(call.args[0], pd.DataFrame)]

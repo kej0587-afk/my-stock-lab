@@ -77,7 +77,9 @@ def compiled_section(source):
             names.insert(9, "기업품질")
             node.value.elts = [ast.Constant(value=name) for name in names]
     ast.fix_missing_locations(fn)
-    return compile(ast.Module(body=fn.body[detail_start(fn):], type_ignores=[]), "<queue-detail>", "exec")
+    # Fragment starts after the briefing; exercise its missing-table fallback.
+    # Real producer and shared CSV parity: test_overview_table_reuse.
+    return compile(ast.Module(body=ast.parse('briefing_flags = None').body + fn.body[detail_start(fn):], type_ignores=[]), "<queue-detail>", "exec")
 
 
 class FixedDateTime(datetime):
@@ -264,6 +266,13 @@ if run_summary and flow_snapshot_for_context:
         nodes = fresh_nodes
         for node in nodes:
             node = deepcopy(node)
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'briefing_flags'):
+                assert isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == 'render_today_unified_briefing_panel'
+                shared = [k for k in node.value.keywords if k.arg == 'flow_shortlist_df']
+                assert len(shared) == 1 and ast.unparse(shared[0].value) == 'flow_shortlist_df'
+                node.value.keywords = [k for k in node.value.keywords if k.arg != 'flow_shortlist_df']
+                node = ast.Expr(value=node.value)
             # Read-only metadata/observation has independent fixed-input/no-I/O tests.
             # Whitelist exact wiring, rather than dropping arbitrary new statements.
             if ast.dump(node) in observation_dumps:

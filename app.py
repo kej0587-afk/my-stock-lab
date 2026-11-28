@@ -29723,6 +29723,7 @@ def render_today_unified_briefing_panel(
     reserve_available=0.0,
     watch_items=None,
     pending: bool = False,
+    flow_shortlist_df=None,
 ):
     """Render one Today Queue briefing that replaces the separate guard/action/news/memo panels."""
     guard = market_guard or {}
@@ -29752,14 +29753,6 @@ def render_today_unified_briefing_panel(
         except Exception:
             return 0
 
-    def _mask_at(mask, idx) -> bool:
-        try:
-            if isinstance(mask, pd.Series):
-                return bool(mask.reindex(df.index, fill_value=False).loc[idx])
-        except Exception:
-            return False
-        return False
-
     buyish_count = _mask_count(buyish_mask)
     wait_count = _mask_count(wait_mask)
     caution_count = _mask_count(caution_mask)
@@ -29770,131 +29763,13 @@ def render_today_unified_briefing_panel(
     market_defensive = level in {"warning", "danger"} or any(k in mode for k in ["비상", "위험", "방어"])
 
     held_meta = _build_today_held_position_meta_map(watch_items)
-    watch_meta = {
-        normalize_ticker(sanitize_ticker_value(item.get("ticker", ""))): item
-        for item in (watch_items or [])
-        if isinstance(item, dict)
-    }
-    review_lines: list[str] = []
-    core_hold_lines: list[str] = []
-    keep_lines: list[str] = []
-    no_add_lines: list[str] = []
-    unknown_lines: list[str] = []
-    asset_interpretation_rows: list[dict] = []
-
-    if not df.empty and held_meta:
-        ticker_source = df.get("티커", pd.Series("", index=df.index))
-        for idx, row in df.iterrows():
-            ticker = normalize_ticker(sanitize_ticker_value(ticker_source.loc[idx] if idx in ticker_source.index else row.get("티커", "")))
-            meta = held_meta.get(ticker)
-            if not meta:
-                continue
-
-            name = str(row.get("종목명", row.get("자산명", ticker)) or ticker).strip()
-            label = str(row.get("🔥기술적 타점", "") or "")
-            final_read = str(row.get("최종읽기", "") or "")
-            code = str(row.get("판정코드", "") or "")
-            item = watch_meta.get(ticker, {})
-            bucket = str(item.get("bucket", row.get("bucket", row.get("버킷", ""))) or "").lower()
-            asset_class = str(item.get("asset_class", row.get("유형", "")) or "").lower()
-            ticker_upper = ticker.upper()
-            name_key = name.lower()
-            current_price = safe_float(row.get("현재가", np.nan), np.nan)
-            avg_price = clean_float(meta.get("매입가"), np.nan)
-            pnl = np.nan
-            for pnl_col in ["내손익률", "손익률", "평단대비", "수익률"]:
-                if pnl_col in row.index:
-                    pnl = safe_float(row.get(pnl_col), np.nan)
-                    if finite_num(pnl):
-                        break
-            if not finite_num(pnl) and finite_num(current_price) and finite_num(avg_price) and avg_price > 0:
-                pnl = (float(current_price) / float(avg_price) - 1.0) * 100.0
-
-            current_w = clean_float(meta.get("현재비중"), np.nan)
-            target_w = clean_float(meta.get("목표비중"), np.nan)
-            gap_w = clean_float(meta.get("비중차이"), np.nan)
-            if not finite_num(gap_w) and finite_num(current_w) and finite_num(target_w):
-                gap_w = target_w - current_w
-
-            is_hard = _mask_at(hard_block_mask, idx) or "HARD_BLOCK" in code or "하드차단" in label
-            is_caution = _mask_at(caution_mask, idx)
-            is_overweight = finite_num(gap_w) and float(gap_w) < -0.2
-            is_underweight = finite_num(gap_w) and float(gap_w) > 0.2
-            is_leverage = (
-                bucket == "leverage"
-                or bool(re.search(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|2X|3X|레버리지|Ultra", ticker_upper + " " + name, re.I))
-            )
-            is_sector_or_tactical = bool(re.search(
-                r"반도체|Top2|DRAM|Bitcoin|비트코인|원자재|구리|FCX|Freeport|프리포트|TDF|2045|섹터|테마",
-                ticker_upper + " " + name + " " + asset_class,
-                re.I,
-            ))
-            is_core = (
-                (bucket == "core" or ticker_upper in {"379800", "379810", "VOO", "SPY", "IVV", "QQQ", "QQQM"})
-                and not is_leverage
-                and not is_sector_or_tactical
-            ) or (
-                not is_leverage
-                and not is_sector_or_tactical
-                and any(k in name_key for k in ["s&p500", "s&p 500", "sp500", "나스닥100", "nasdaq100", "nasdaq 100"])
-            )
-            damaged_label = any(k in (label + final_read) for k in [
-                "구조훼손", "추세훼손", "시장방어", "가격방어", "급락방어", "추세방어",
-                "추매금지", "추매중단", "비중 초과", "하드차단", "보유점검",
-            ])
-            pnl_text = "-" if not finite_num(pnl) else f"{float(pnl):+.1f}%"
-            weight_text = ""
-            if finite_num(current_w) or finite_num(target_w):
-                cw = "-" if not finite_num(current_w) else f"{float(current_w):.1f}%"
-                tw = "-" if not finite_num(target_w) else f"{float(target_w):.1f}%"
-                weight_text = f" · 비중 {cw}/{tw}"
-            base_line = f"{name}({ticker}) 손익 {pnl_text}{weight_text}"
-
-            def _weight_cell(value):
-                return "-" if not finite_num(value) else f"{float(value):.1f}%"
-
-            def _add_asset_interpretation(bucket_label: str, action: str, target_lines: list[str]):
-                from stock_lab_core.report_evidence import holding_reasons
-                from stock_lab_core.today_overview import action_columns
-                reasons = holding_reasons(dict(row, 현재비중=current_w, 목표비중=target_w))
-                if is_leveraged_or_inverse_product(name, ticker, asset_class):
-                    reasons.append("레버리지 보유")
-                target_lines.append(base_line + " → " + action)
-                asset_interpretation_rows.append({
-                    "구분": bucket_label,
-                    "자산": name,
-                    "티커": ticker,
-                    **action_columns(row),
-                    "판정·자산 대조": "계산 입력 일치" if context_ok else "입력 변경/미확인 · 이전 판정",
-                    "손익": pnl_text,
-                    "현재비중": _weight_cell(current_w),
-                    "목표비중": _weight_cell(target_w),
-                    "비중차이": _weight_cell(gap_w),
-                    "보유 점검 사유": ", ".join(dict.fromkeys(reasons)),
-                    "보유분 관리": action,
-                })
-
-            if is_core:
-                if is_overweight:
-                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 유지, 목표초과라 신규매수 중단/리밸런싱", core_hold_lines)
-                elif market_defensive or is_caution or damaged_label:
-                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 교체 아님, 시장 안정 후 정해진 적립 재개", core_hold_lines)
-                elif is_underweight:
-                    _add_asset_interpretation("비중대로 가능 또는 보유 유지", "장기코어 목표비중 안에서 분할 적립 가능", keep_lines)
-                else:
-                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 보유 유지", core_hold_lines)
-            elif is_leverage and (is_hard or damaged_label or (finite_num(pnl) and float(pnl) <= -10)):
-                _add_asset_interpretation("종목변경/비중축소 검토", "비중대로 밀기보다 원인점검/교체 후보 검토", review_lines)
-            elif is_hard or (damaged_label and finite_num(pnl) and float(pnl) <= -15):
-                _add_asset_interpretation("종목변경/비중축소 검토", "위성/개별 비중 축소 또는 대체 후보 검토", review_lines)
-            elif is_caution or damaged_label or is_overweight:
-                _add_asset_interpretation("추가매수 제외/조건 확인", "추가매수 제외, 회복 조건 확인", no_add_lines)
-            elif is_underweight and not is_caution:
-                _add_asset_interpretation("비중대로 가능 또는 보유 유지", "목표비중 안에서 분할 적립 가능", keep_lines)
-            elif finite_num(pnl):
-                _add_asset_interpretation("비중대로 가능 또는 보유 유지", "보유 유지 중심", keep_lines)
-            else:
-                _add_asset_interpretation("데이터 확인 필요", "평단/현재가 확인 필요", unknown_lines)
+    from stock_lab_core.today_briefing_assets import build_briefing_asset_interpretation
+    (review_lines, core_hold_lines, keep_lines, no_add_lines,
+     unknown_lines, asset_interpretation_rows) = build_briefing_asset_interpretation(
+        df, held_meta, watch_items, hard_block_mask=hard_block_mask,
+        caution_mask=caution_mask, context_ok=context_ok,
+        market_defensive=market_defensive, safe_float=safe_float,
+    )
 
     def _row_name_list(mask, limit=3) -> list[str]:
         if df.empty:
@@ -30053,11 +29928,13 @@ def render_today_unified_briefing_panel(
     m4.metric("입력 예수금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help="계좌에 입력된 예수금입니다. 증권사의 실제 주문가능액과 다를 수 있습니다.")
     m5.metric("보유 파킹자산(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help="이미 보유한 증권 평가액입니다. 매도·결제 전에는 주문가능 현금이 아닙니다.")
 
+    overview_flags = None
     if not df.empty and detail == "보유관리":
         from stock_lab_core.today_overview import render_overview, observed_sessions
         with measure("phase", "briefing_overview_table"):
             with measure("phase", "briefing_overview_shortlist"):
-                overview_shortlist = build_today_flow_shortlist_df(saved_flow)
+                overview_shortlist = (flow_shortlist_df if isinstance(flow_shortlist_df, pd.DataFrame)
+                                      else build_today_flow_shortlist_df(saved_flow))
             with measure("phase", "briefing_overview_flags"):
                 overview_flags = build_today_review_flags_df(df, globals().get("holdings_table"), overview_shortlist)
             with measure("phase", "briefing_overview_render"):
@@ -30143,7 +30020,7 @@ def render_today_unified_briefing_panel(
         st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
 
     if detail == "보유관리":
-        return
+        return overview_flags
 
     st.markdown("**시장 안전벨트 세부지표**")
     kr_stats = guard.get("kr_stats", {}) if isinstance(guard.get("kr_stats", {}), dict) else {}
@@ -33487,14 +33364,16 @@ def _today_review_frame(df, mask=None):
 
 
 @timed_call("phase", "review_export")
-def render_today_review_export_download(summary_df, flow_shortlist_df=None, holdings_df=None, masks=None, market_guard=None):
+def render_today_review_export_download(summary_df, flow_shortlist_df=None, holdings_df=None, masks=None, market_guard=None,
+                                       *, review_flags_df=None):
     if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
         return
 
     masks = masks or {}
     master_df = build_today_review_master_df(summary_df, holdings_df, flow_shortlist_df)
     signal_audit_df = build_today_current_signal_audit_df(summary_df)
-    flags_df = build_today_review_flags_df(summary_df, holdings_df, flow_shortlist_df)
+    flags_df = (review_flags_df if isinstance(review_flags_df, pd.DataFrame)
+                else build_today_review_flags_df(summary_df, holdings_df, flow_shortlist_df))
     guard_df = pd.DataFrame([market_guard or {}])
     notes = [
         {
@@ -34052,7 +33931,7 @@ def _render_today_queue_tab(mode):
                                    allow_prepare=True)
         except Exception as exc:
             st.caption(f"섹터 표시 자료 준비 보류: {type(exc).__name__}")
-    render_today_unified_briefing_panel(
+    briefing_flags = render_today_unified_briefing_panel(
         summary_df,
         market_guard,
         buyish_mask=execution_mask,
@@ -34063,13 +33942,19 @@ def _render_today_queue_tab(mode):
         cash_available=cash_available,
         reserve_available=reserve_available,
         watch_items=watch_items,
+        flow_shortlist_df=flow_shortlist_df,
     )
 
+    # Share only the tables built from this invocation's exact inputs, never
+    # across sessions or reruns. Other briefing views return None and export
+    # builds its own flags as before.
     from stock_lab_core.today_queue_view import render_today_queue_details
+    from functools import partial
     render_today_queue_details(
         st, summary_df, queue_masks=queue_masks, flow_shortlist_df=flow_shortlist_df,
         market_guard=market_guard, watch_items=watch_items, holdings_df=globals().get("holdings_table"),
-        render_today_review_export_download=render_today_review_export_download,
+        render_today_review_export_download=(partial(render_today_review_export_download, review_flags_df=briefing_flags)
+                                            if isinstance(briefing_flags, pd.DataFrame) else render_today_review_export_download),
         render_today_research_links_panel=render_today_research_links_panel,
         get_cached_today_market_flow_snapshot=get_cached_today_market_flow_snapshot,
         render_today_flow_shortlist_panel=render_today_flow_shortlist_panel,
