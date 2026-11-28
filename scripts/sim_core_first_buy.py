@@ -200,7 +200,8 @@ def events_for(ticker: str, region: str, frame: pd.DataFrame, gates: dict, bench
     rows, last_episode_end = [], None
     idx = list(c.index)
     for s in c.index[signal.fillna(False)]:
-        if closed.get(s) is not True:
+        is_closed = closed.get(s)
+        if pd.isna(is_closed) or not bool(is_closed):
             continue
         if last_episode_end is not None and s <= last_episode_end:
             continue   # one event per closed-gate episode

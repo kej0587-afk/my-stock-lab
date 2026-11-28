@@ -27,9 +27,10 @@ def test_same_recovery_and_gate_as_legacy_when_history_is_complete():
 
 def test_boolean_series_without_initial_none_still_generates_event():
     days,frame,gate,bench=fixture()
-    # Legacy identity `is True` rejects numpy bools when no early None exists.
+    # A bool Series without early None must not lose numpy.bool_ True signals.
     gate=gate.reindex(days[180:],method="bfill")
-    assert legacy.events_for("TEST","KR",frame.iloc[180:],{"KR":gate},bench)==[]
+    old=legacy.events_for("TEST","KR",frame.iloc[180:],{"KR":gate},bench)
+    assert len(old)==1
     new=recovery_events(frame.iloc[180:],gate,bench,days,"KR")
     assert len(new)==1 and new[0]["signal"]==days[260]
 
