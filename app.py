@@ -11376,6 +11376,7 @@ def _brief_market_phase(index_df: pd.DataFrame, market_guard: dict | None) -> di
     }
 
 
+@timed_call("display", "flow_briefing_board")
 def render_today_market_briefing_board(
     flow_df: pd.DataFrame,
     sector_rotation_df: pd.DataFrame,
@@ -11947,6 +11948,7 @@ def _flow_market_cards_from_sector_ability(sector_cards):
     return cards
 
 
+@timed_call("display", "flow_stat_cards")
 def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=None, sector_cards=None):
     cards = _flow_market_cards_from_sector_ability(sector_cards)
     if not cards:
@@ -12443,6 +12445,7 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
     return cards[:limit]
 
 
+@timed_call("display", "flow_sector_ability_board")
 def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, cards=None):
     if cards is None:
         cards = _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
@@ -30257,6 +30260,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     render_today_action_news_panel(summary_df)
 
 
+@timed_call("display", "flow_portfolio_bridge")
 def render_today_portfolio_flow_bridge(summary_df, snapshot):
     if summary_df is None or summary_df.empty or not snapshot:
         return
@@ -31149,6 +31153,7 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
     return command_df
 
 
+@timed_call("display", "flow_unified_candidates")
 def render_today_unified_flow_panel(
     sector_rotation_df,
     theme_rotation_df,
@@ -31923,6 +31928,7 @@ def build_today_analyst_target_summary(row) -> str:
 
 
 @timed_call("phase", "flow_shortlist_render")
+@timed_call("display", "flow_shortlist_panel")
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
     shortlist_df = shortlist_df if isinstance(shortlist_df, pd.DataFrame) else build_today_flow_shortlist_df(snapshot)
     if show_header:
@@ -32456,6 +32462,7 @@ def _render_rotation_chart_and_table(
 
 
 @timed_call("phase", "flow_detail_render")
+@timed_call("display", "flow_panel_total")
 def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("처음에는 실행 후보판만 봅니다. 원천 1위와 차트는 후보를 고른 뒤 확인하는 참고 자료입니다.")
