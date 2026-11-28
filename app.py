@@ -33456,7 +33456,8 @@ def render_today_queue_tab(mode):
                                   if attempt["calculation_completed"] else {"mode": "not_recalculated"})
         if attempt["calculation_completed"]:
             attempt["input_counts"] = st.session_state.get("today_queue_current_input_counts", {})
-        attempt["build"] = get_report_build_info(__file__)
+        from stock_lab_core.today_build import today_build_info
+        attempt["build"] = today_build_info(__file__)
         st.session_state["today_queue_last_attempt_performance"] = attempt
         archive_queue_measurement(st.session_state, attempt)
     report = attempt
@@ -33465,7 +33466,7 @@ def render_today_queue_tab(mode):
     if root_timing:
         report["unclassified_render_seconds"] = root_timing["self_seconds"]
     if any(entry["name"] == "summary" for entry in report["functions"]):
-        report["build"] = get_report_build_info(__file__)
+        report["build"] = today_build_info(__file__)
         report["before_today_seconds"] = before_today_seconds
         report["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
         st.session_state["today_queue_performance"] = report
