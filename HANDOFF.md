@@ -8,9 +8,10 @@
 - 최종 선택회귀 decision1674통과/실패·오류·skip0(165.515초), 추가 집중196통과/실패0(41.92초). 전체suite 아님. 첫 gate는 소스변경으로 BLOCKED여서 통과로 세지 않고 소스고정 재검증했다.
 - 진단 d2d0c43d…에서 새5helper 로드시점/디스크SHA 일치·restart_required=False. 일부 중첩시간 계측 누락의 원인은 미확정. 확인 위해 승인된 Cloud Reboot 직접 실행.
 - **운영 제한:**20:47 KST 로그에 저장소 새 clone,20:48 Today 기본92개·미계산/104복원 안 됨. 코드 저장소는 서버cache JSON뿐이며 배포간 영구복구가 아니라는 기존문서 기록 재확인. 새계산으로 덮어쓰지 않았다. 기존 브라우저 복원 검증을 서버교체 복원 완료로 확대하지 말 것.
-- 추가 보완: 빈 화면에서 저장본 없음/접근 실패/파일은 있으나 미복원을 분리하는 metadata-only 안내. 복원·TTL·판정 로직 불변. 복원/세션/화면177통과/실패0(40.32초). 과거 harness의 shortlist builder·키워드 누락과 fake store에 실제파일 안내가 섞인 기대값을 보완했으며 원상태/계산/저장 대조는 유지. 안내 운영확인은 배포 후 진행.
+- 추가 보완78f3b892: 빈 화면에서 저장본 없음/접근 실패/파일은 있으나 미복원을 분리하는 metadata-only 안내. 복원·TTL·판정 로직 불변. 복원/세션/화면177통과/실패0(40.32초). 과거 harness의 shortlist builder·키워드 누락과 fake store에 실제파일 안내가 섞인 기대값을 보완했으며 원상태/계산/저장 대조는 유지.
+- **최종 운영20:58:**78f3b892 푸시/Cloud 재부트 직접 완료. '서버 저장본 없음' 안내 확인. 진단bb60bf8c…completed/render_only/4.597초/전체계산false·calculation_completedfalse,5helper SHA일치/restart_required=False. 빈92화면은 판정104행과 비교 가능한 성능표본이 아님. 중첩reader계측은 다시 기록되었으나 이전 누락의 원인 확정은 아님. 원결과104행 복구는 미완료이며 새계산 미실행.
 - 개인정보 원본은 cache/flow_shortlist_reuse_20261128(Git제외). 상세: docs/maintenance/20261128_flow_shortlist_reuse.md.
-- **Next Task Only/P1:** 재부트에도 원계산을 복원할 영구 저장 경로를 기존 Supabase 개인 저장 구조·용량부터 검토하고 소유자 격리/원입력/원시각/2시간유효성 유지 방안 구현. 새계산으로 복원실패를 숨기거나 CSV를 원판정 입력으로 재구성하지 말 것.
+- **Next Task Only/P1:** 재부트에도 원계산을 복원할 전용 개인 snapshot 저장·복원과 SQL을 준비하고 소유자 격리/원입력/원시각/2시간유효성 유지 검증. 사전확인: settings는 현금 등 scalar,report_history는 US/KR 거래일+rows 제약이 있어 전체snapshot을 임의 혼용하지 않는다. 현재 인증은 앱 검증owner+서버service client로 Supabase JWT가 아니므로 기존 report_history_store의 소유자 검증 패턴 참고. 실제payload용량은 아직 측정안함. 새계산으로 복원실패를 숨기거나 CSV를 원판정 입력으로 재구성하지 말 것.
 - 이후/P3: render_entry_execution_plan434줄 순수 표시조립 분리. 자료4건/두거래일오늘한줄/11월30일13:00ET는 별도대기. 점수·시장방어·월적립·L3·TTL 유지.
 
 ## 2026-11-28 후보 선택 분리 검증 완료 · 오늘점검 모듈 진단 보완
