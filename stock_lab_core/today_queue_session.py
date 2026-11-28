@@ -92,7 +92,9 @@ def _repair_cached_ownership(state, frame, queue_sig):
     from stock_lab_core.portfolio import get_holding_row_by_ticker
 
     out = frame.copy(deep=True)
-    for index, row in out.iterrows():
+    # Read values without propagating the full saved input/display envelope to
+    # every temporary row. Keep the independent output and all its attrs intact.
+    for index, row in pd.DataFrame(out, copy=False).iterrows():
         if any(finite_num(clean_float(row.get(key), float("nan")))
                for key in ("qty", "보유량", "보유수량")):
             continue

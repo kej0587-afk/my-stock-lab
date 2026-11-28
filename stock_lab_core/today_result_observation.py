@@ -310,7 +310,9 @@ def attach_market_observation(displayed, original, metadata):
 def _observation_key(original, displayed, *, signature, context, calculation_id):
     if not all((signature, context, calculation_id)):
         return ""
-    raw = original.drop(columns=list(META_COLUMNS) + list(OBS_COLUMNS), errors="ignore")
+    # Hash the same values, but do not deepcopy storage-only attrs into each
+    # temporary column/row. The evidence envelope is hashed explicitly below.
+    raw = pd.DataFrame(original, copy=True).drop(columns=list(META_COLUMNS) + list(OBS_COLUMNS), errors="ignore")
     if "has_pos" in raw:
         # A legacy display repair may fill missing qty with zero for explicit unheld rows.
         # Normalize only that equivalence, on the hash copy; real quantity changes remain keyed.
