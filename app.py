@@ -9507,7 +9507,15 @@ def _rotation_entry_gate(action: str) -> str:
 def _rotation_market_mode_for_row(row, market_guard=None, label_col: str = "") -> str:
     if not market_guard:
         return ""
+    # Match the existing Today global-stop precedence on this display copy.
+    whole = str(market_guard.get("mode", "") or "")
+    if whole in {"비상", "전시장 비상", "위험"}:
+        return whole
+    if "신규매수 중단" in str(market_guard.get("action", "")):
+        return "시장방어: 신규매수 중단"
     code = _flow_market_code_from_row(row, label_col=label_col)
+    if whole == {"KR": "국장 비상", "US": "미장 비상"}.get(code):
+        return whole
     if code == "KR":
         stats = market_guard.get("kr_stats", {}) if isinstance(market_guard, dict) else {}
     elif code == "US":
@@ -9517,7 +9525,8 @@ def _rotation_market_mode_for_row(row, market_guard=None, label_col: str = "") -
     mode = str((stats or {}).get("mode", "") or "")
     if mode:
         return mode
-    return str((market_guard or {}).get("mode", "") or "")
+    # An emergency in the other region is not a global stop.
+    return "" if whole in {"국장 비상", "미장 비상"} else whole
 
 
 def _rotation_market_is_defensive(mode: str) -> bool:
@@ -29944,8 +29953,9 @@ def render_today_unified_briefing_panel(
     latest_store = (report_latest.SupabaseReportLatestStore(supabase, owner_scope=latest_owner)
                     if latest_owner and supabase is not None else None)
     latest_accounts = st.session_state.get("acc_filter", [])
-    report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                      store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
+    with measure("phase", "briefing_report_restore"):
+        report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                          store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
     from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
     restore_briefing_view(st.session_state)
     detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
@@ -29960,8 +29970,9 @@ def render_today_unified_briefing_panel(
     if saved_flow:
         try:
             from stock_lab_core.sector_display_snapshot import prepare_sector_display
-            prepare_sector_display(saved_flow, market_guard, unify=build_today_unified_flow_candidates,
-                                   prepare=_prepare_flow_command_table, build_cards=_flow_sector_ability_cards)
+            with measure("phase", "briefing_sector_prepare"):
+                prepare_sector_display(saved_flow, market_guard, unify=build_today_unified_flow_candidates,
+                                       prepare=_prepare_flow_command_table, build_cards=_flow_sector_ability_cards)
         except Exception as exc:
             saved_flow["sector_ability_cards"] = []
             st.caption(f"섹터 표시 자료 연결 보류: {type(exc).__name__}")
@@ -29997,11 +30008,12 @@ def render_today_unified_briefing_panel(
                 schedule = _exchange_schedule(market, str((end - pd.Timedelta(days=15)).date()), str(end.date()))
                 if not schedule.empty:
                     previous_dates[market] = str(schedule.index[-1].date())
-            change_brief = refresh_today_change_brief(
-                st.session_state, current_observation, owner_scope=owner, accounts=accounts,
-                store=SupabaseReportHistoryStore(supabase, owner_scope=owner) if supabase is not None else None,
-                today_action="신규 주문 보류, 보유 위험과 자료 오류 확인" if buyish_count == 0 else "후보의 정밀 최종 체크 확인",
-                previous_sessions=previous_dates, static_policy=recommendation_lines)
+            with measure("phase", "briefing_change_history"):
+                change_brief = refresh_today_change_brief(
+                    st.session_state, current_observation, owner_scope=owner, accounts=accounts,
+                    store=SupabaseReportHistoryStore(supabase, owner_scope=owner) if supabase is not None else None,
+                    today_action="신규 주문 보류, 보유 위험과 자료 오류 확인" if buyish_count == 0 else "후보의 정밀 최종 체크 확인",
+                    previous_sessions=previous_dates, static_policy=recommendation_lines)
             headline = change_brief["headline"]
         elif not context_ok:
             headline = "현재 계좌·입력 기준 재계산 필요 · 이전 결과 표시, 이력 비교·저장 보류"
@@ -30009,10 +30021,12 @@ def render_today_unified_briefing_panel(
     if not df.empty:
         from stock_lab_core.today_snapshot import load_previous_today_summary
         from stock_lab_core.report_history_panel import render_history_changes
-        previous_df, previous_date = load_previous_today_summary(
-            owner_scope="" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower())
-        render_history_changes(st, df, previous_df, previous_date=previous_date,
-                               current_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10])
+        with measure("phase", "briefing_previous_load"):
+            previous_df, previous_date = load_previous_today_summary(
+                owner_scope="" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower())
+        with measure("phase", "briefing_history_table"):
+            render_history_changes(st, df, previous_df, previous_date=previous_date,
+                                   current_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10])
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:12px;'>
@@ -30038,10 +30052,11 @@ def render_today_unified_briefing_panel(
 
     if not df.empty and detail == "보유관리":
         from stock_lab_core.today_overview import render_overview, observed_sessions
-        overview_flags = build_today_review_flags_df(
-            df, globals().get("holdings_table"), build_today_flow_shortlist_df(saved_flow))
-        render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
-                        hard_mask=hard_block_mask)
+        with measure("phase", "briefing_overview_table"):
+            overview_flags = build_today_review_flags_df(
+                df, globals().get("holdings_table"), build_today_flow_shortlist_df(saved_flow))
+            render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
+                            hard_mask=hard_block_mask)
         from stock_lab_core.today_sector_basis import sector_observation_basis
         source_basis, _ = sector_observation_basis(saved_flow, observed_sessions(df))
         if source_basis:
@@ -30062,7 +30077,8 @@ def render_today_unified_briefing_panel(
                                    file_name="today_change_review.json", mime="application/json", on_click="ignore")
 
     from stock_lab_core.decision_workspace import render_frame_decision_brief
-    render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
+    with measure("phase", "briefing_decision_table"):
+        render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
 
     if detail == "시장":
         from stock_lab_core.market_quick_view import render_market_quick_view
@@ -32213,6 +32229,7 @@ def _render_rotation_chart_and_table(
     grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col, live_us=live_us)
     grp_df = _apply_rotation_execution_framework(grp_df, market_guard=market_guard, label_col=label_col)
     grp_df = _prepare_rotation_context_display_df(grp_df, label_col=label_col)
+    st.caption("진입검토는 정밀확인 후보이며 매수 허가가 아닙니다. 통합 신규매수 중단은 지역 정상보다 우선하고, 실제 실행은 오늘점검·정밀 최종체크에서 확인합니다.")
     action_colors = {
         "✅ 정밀후보": "#22c55e",
         "⏳ 눌림대기": "#fbbf24",
