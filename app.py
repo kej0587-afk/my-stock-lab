@@ -16632,7 +16632,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=None, user_targ_w=None,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
                              _cash_available=None, _reserve_available=None,
-                             live_price: float = 0.0, _live_indicator_context=None):
+                             live_price: float = 0.0, _live_indicator_context=None, _observation_sink=None):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
     # A-6 (2026-11-25): missing macro is neither risk nor normal. The stock decision runs without
@@ -17100,6 +17100,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         decision_outcome = mark_macro_unknown_reasons(decision_outcome)
         dec, col = decision_outcome.label, decision_outcome.color
 
+    if isinstance(_observation_sink, dict):
+        from stock_lab_core.market_guard_observation import capture_decision_branch_trace
+        _observation_sink.update(capture_decision_branch_trace(locals()))
     return build_decision_result(locals())
 
 TICKER_MAP = {
@@ -17347,6 +17350,8 @@ def dedupe_dashboard_summary_df(summary_df):
         return summary_df
 
     out = summary_df.copy()
+    original_attrs = dict(out.attrs)
+    out.attrs = {}
     out["_ticker_key"] = out["티커"].astype(str).map(lambda x: normalize_ticker(sanitize_ticker_value(x)))
     out["_row_order"] = range(len(out))
     keyed = out[out["_ticker_key"] != ""].drop_duplicates("_ticker_key", keep="first")
@@ -17357,6 +17362,7 @@ def dedupe_dashboard_summary_df(summary_df):
         .drop(columns=["_ticker_key", "_row_order"], errors="ignore")
         .reset_index(drop=True)
     )
+    out.attrs = original_attrs
     return out
 
 
@@ -21469,6 +21475,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             live_context = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
 
         stage = "decision"
+        branch_trace = {} if isinstance(_record_sink, dict) else None
         c = calc_scores_and_decision(
             name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
             my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode,
@@ -21479,6 +21486,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             _reserve_available=snap_reserve_available,
             live_price=_live_p,
             _live_indicator_context=live_context,
+            _observation_sink=branch_trace,
         )
         # C-6/C-11 step 1: keep the raw engine decision for the shared record (read-only copy).
         from stock_lab_core.decision_record import CANDIDATE_FIELDS as _REC_CAND, ENGINE_FIELDS as _REC_ENGINE
@@ -21580,6 +21588,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     if isinstance(_record_sink, dict):
         # C-6/C-11 step 1: side channel for the shared record; the returned item is unchanged.
         _record_sink[tkr] = {"tkr": tkr, "row": row, "engine": engine_view, "post": dict(c), "has_pos": bool(has_p),
+                             "branch_trace": branch_trace,
                              "price_asof": (c.get("input_basis") or {}).get("가격자료기준일")}
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
@@ -33434,10 +33443,11 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
 def _today_review_frame(df, mask=None):
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
-    if mask is None:
-        return df.copy()
     try:
-        return df.loc[mask].copy()
+        result = df.copy() if mask is None else df.loc[mask].copy()
+        # CSV has row values only; nested snapshot frames must not enter concat attrs equality.
+        result.attrs = {}
+        return result
     except Exception:
         return pd.DataFrame()
 
@@ -33748,12 +33758,25 @@ def _render_today_queue_tab(mode):
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
 
+    financial_revision = financial_input_signature(load_fin_scores_db())
+    queue_logic_version = f"{TODAY_QUEUE_LOGIC_VERSION}:{financial_revision}"
+    snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     with measure("phase", "watchlist_prepare"):
         raw_watch_items = tuple(st.session_state.get("watchlist", []))
         flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
-        if not st.session_state.get("today_queue_run_once", False) and not st.session_state.get("today_market_flow_refresh_once", False):
+        from stock_lab_core.today_restore_session import restore_discovery_context
+        restored_items = restore_discovery_context(
+            st.session_state, owner=snapshot_owner, raw_watch_items=raw_watch_items,
+            mode=mode, logic_version=queue_logic_version, account_context=portfolio_signal_input_context(),
+            flow_snapshot=flow_snapshot_for_queue, build_items=build_today_queue_items,
+            signature=build_today_queue_signature, load=load_today_queue_summary_snapshot,
+        )
+        flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
+        if not restored_items and not st.session_state.get("today_queue_run_once", False) and not st.session_state.get("today_market_flow_refresh_once", False):
             _preload_today_queue_kr_context(flow_snapshot_for_queue)
-        if st.session_state.get("today_queue_refresh_flow_candidates", True):
+        if restored_items:
+            watch_items, flow_auto_items = restored_items
+        elif st.session_state.get("today_queue_refresh_flow_candidates", True):
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
         else:
             watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
@@ -33790,10 +33813,7 @@ def _render_today_queue_tab(mode):
         names = [f"{item.get('name', item.get('ticker', ''))}({item.get('ticker', '')})" for item in flow_auto_items[:6]]
         st.caption(f"돈흐름 후보 상위 {len(flow_auto_items)}개를 관심/눌림대기 계산에 자동 포함했습니다: {', '.join(names)}")
 
-    financial_revision = financial_input_signature(load_fin_scores_db())
-    queue_logic_version = f"{TODAY_QUEUE_LOGIC_VERSION}:{financial_revision}"
     queue_sig = build_today_queue_signature(watch_items, mode, logic_version=queue_logic_version)
-    snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     from stock_lab_core.today_queue_session import (
         SIGNATURE_KEY as sig_key, LAST_RUN_KEY as last_key,
         clear_cached_summary, restore_cached_summary, finalize_summary, EXPECTED_CONTEXT_KEY,
@@ -33889,7 +33909,8 @@ def _render_today_queue_tab(mode):
         render_today_candidate_tools(pd.DataFrame(), start_index=0)
         return
 
-    portfolio_signal_attrs = dict(summary_df.attrs)
+    portfolio_signal_attrs = {key: value for key, value in summary_df.attrs.items()
+                              if key not in {"today_restore_inputs", "today_saved_display", "today_observation_cache", "today_saved_market_guard"}}
     from stock_lab_core.today_result_observation import (
         result_metadata, attach_result_metadata, reuse_or_build_market_observation,
     )
@@ -33900,12 +33921,17 @@ def _render_today_queue_tab(mode):
     summary_df = attach_result_metadata(summary_df, observation_meta)
     # Freeze pre-display wording and original flow inputs. Never replay market-rewritten prose.
     original_observation_input = summary_df.copy(deep=True)
+    from stock_lab_core.today_restore_session import saved_display_for_context, save_completed_display
+    saved_display = saved_display_for_context(summary_df, observation_meta)
+    # Nested saved frames belong to storage, not display/concat metadata.
+    summary_df.attrs = dict(portfolio_signal_attrs)
     if "판정분류" in summary_df.columns:
         signal_group = summary_df["판정분류"].astype(str)
     else:
         signal_group = summary_df["🔥기술적 타점"].astype(str).map(classify_decision_signal)
 
-    market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
+    stored_guard = original_observation_input.attrs.get("today_saved_market_guard") if saved_display is not None else None
+    market_guard = dict(stored_guard) if isinstance(stored_guard, dict) else build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     from stock_lab_core.today_queue_display import prepare_today_queue_display
     summary_df, reason_bucket, display_masks = prepare_today_queue_display(summary_df, market_guard, signal_group)
     hard_block_mask = display_masks["hard_block_mask"]
@@ -33916,24 +33942,32 @@ def _render_today_queue_tab(mode):
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
 
-    with measure("phase", "analyst_enrichment"):
-        summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=_timed_today_analyst_snapshot, load_latest_price=load_latest_price)
-    _upside_value_map = build_today_analyst_upside_map(summary_df)
-
+    if saved_display is None:
+        with measure("phase", "analyst_enrichment"):
+            summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=_timed_today_analyst_snapshot, load_latest_price=load_latest_price)
+        _upside_value_map = build_today_analyst_upside_map(summary_df)
     flow_snapshot_for_context = get_cached_today_market_flow_snapshot()
     flow_shortlist_df = build_today_flow_shortlist_df(flow_snapshot_for_context)
-    from stock_lab_core.execution_context import prepare_execution_context
-    summary_df = prepare_execution_context(
-        summary_df, snapshot=flow_snapshot_for_context, flow_shortlist=flow_shortlist_df,
-        market_guard=market_guard, attach_flow=attach_today_flow_context,
-        attach_market=attach_market_execution_context, apply_gate=apply_execution_gate_columns,
-        upside_map=_upside_value_map,
-    )
-    summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
+    if saved_display is None:
+        from stock_lab_core.execution_context import prepare_execution_context
+        summary_df = prepare_execution_context(
+            summary_df, snapshot=flow_snapshot_for_context, flow_shortlist=flow_shortlist_df,
+            market_guard=market_guard, attach_flow=attach_today_flow_context,
+            attach_market=attach_market_execution_context, apply_gate=apply_execution_gate_columns,
+            upside_map=_upside_value_map,
+        )
+        summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
+    else:
+        summary_df = saved_display
     summary_df = reuse_or_build_market_observation(
         summary_df, original_observation_input, observation_meta, st.session_state,
         signature=queue_sig, context=portfolio_signal_input_context(),
     )
+    if run_summary:
+        save_completed_display(
+            st.session_state, original_observation_input, summary_df, signature=queue_sig,
+            owner=snapshot_owner, save=save_today_queue_summary_snapshot, market_guard=market_guard,
+        )
     attach_today_gate_to_records(summary_df, portfolio_signal_input_context())
     if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
         portfolio_signals = summary_df.copy()

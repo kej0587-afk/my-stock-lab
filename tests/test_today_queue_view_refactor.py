@@ -229,6 +229,13 @@ from stock_lab_core.today_result_observation import result_metadata, attach_resu
 observation_meta = result_metadata(summary_df, st.session_state, run_summary=run_summary,
     signature=queue_sig, account_context=portfolio_signal_input_context())
 original_observation_input = summary_df.copy(deep=True)
+from stock_lab_core.today_restore_session import saved_display_for_context, save_completed_display
+saved_display = saved_display_for_context(summary_df, observation_meta)
+summary_df.attrs = dict(portfolio_signal_attrs)
+stored_guard = original_observation_input.attrs.get("today_saved_market_guard") if saved_display is not None else None
+if run_summary:
+    save_completed_display(st.session_state, original_observation_input, summary_df,
+        signature=queue_sig, owner=snapshot_owner, save=save_today_queue_summary_snapshot, market_guard=market_guard)
 summary_df = reuse_or_build_market_observation(summary_df, original_observation_input,
     observation_meta, st.session_state, signature=queue_sig, context=portfolio_signal_input_context())
 from stock_lab_core.today_result_observation import render_result_observation
@@ -243,12 +250,29 @@ if run_summary and flow_snapshot_for_context:
         st.caption(f"섹터 표시 자료 준비 보류: {type(exc).__name__}")
 ''').body
         observation_dumps = {ast.dump(node) for node in observation_nodes}
+        # Fresh calculations retain the exact policy sequence; only a verified
+        # saved display bypasses those calls. The restore contract has fixed-input tests.
+        fresh_nodes = []
+        for node in nodes:
+            if isinstance(node, ast.If) and ast.dump(node.test) == ast.dump(ast.parse('saved_display is None', mode='eval').body):
+                assert not node.orelse or ast.dump(ast.Module(body=node.orelse, type_ignores=[])) == ast.dump(
+                    ast.parse('summary_df = saved_display'))
+                fresh_nodes.extend(node.body)
+            else:
+                fresh_nodes.append(node)
+        nodes = fresh_nodes
         for node in nodes:
             node = deepcopy(node)
             # Read-only metadata/observation has independent fixed-input/no-I/O tests.
             # Whitelist exact wiring, rather than dropping arbitrary new statements.
             if ast.dump(node) in observation_dumps:
                 continue
+            if ast.dump(node) == ast.dump(ast.parse('''portfolio_signal_attrs = {
+                key: value for key, value in summary_df.attrs.items()
+                if key not in {"today_restore_inputs", "today_saved_display", "today_observation_cache", "today_saved_market_guard"}}''').body[0]):
+                node = ast.parse('portfolio_signal_attrs = dict(summary_df.attrs)').body[0]
+            if ast.dump(node) == ast.dump(ast.parse('market_guard = dict(stored_guard) if isinstance(stored_guard, dict) else build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)').body[0]):
+                node = ast.parse('market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)').body[0]
             if ast.dump(node) == ast.dump(ast.parse(
                     'summary_df = attach_result_metadata(summary_df, observation_meta)').body[0]):
                 node = ast.parse('summary_df = summary_df.copy()').body[0]

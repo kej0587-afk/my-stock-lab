@@ -36,6 +36,14 @@ def clear_cached_summary(state, *, explicit=True):
 def _stale_reason(state, frame, queue_sig):
     if frame.attrs.get(STALE_KEY):
         return frame.attrs[STALE_KEY]
+    if isinstance(frame.attrs.get("today_restore_inputs"), dict):
+        from stock_lab_core.today_restore_inputs import restore_expiry_reason, flow_input_identity
+        reason = restore_expiry_reason(frame.attrs["today_restore_inputs"])
+        if reason:
+            return reason
+        current_flow = state.get("today_market_flow_snapshot")
+        if isinstance(current_flow, dict) and flow_input_identity(current_flow) != flow_input_identity(frame.attrs["today_restore_inputs"].get("flow_snapshot")):
+            return "돈흐름 입력 변경 · 원계산과 시장자료 불일치 · 재계산 필요"
     if state.get(SIGNATURE_KEY) != queue_sig:
         return "입력 변경 · 이전 계산 결과 · 재계산 필요"
     if EXPECTED_CONTEXT_KEY in state and (
@@ -172,6 +180,7 @@ def refresh_today_summary(st, mode, raw_watch_items, refresh_flow_candidates, qu
     # Begin with user-owned inputs: failed or skipped discovery cannot carry
     # old auto-candidates into a newly signed calculation.
     watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
+    base_items, flow_snapshot_for_queue = watch_items, None
     if refresh_flow_candidates:
         flow_progress = st.empty()
         try:
@@ -197,5 +206,12 @@ def refresh_today_summary(st, mode, raw_watch_items, refresh_flow_candidates, qu
     with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
         summary_df = calculate_fresh_summary(mode, watch_items, raw_watch_items, flow_auto_items)
     last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    from stock_lab_core.today_restore_session import capture_discovery_context
+    capture_discovery_context(
+        st.session_state, summary_df, mode=mode, raw_watch_items=raw_watch_items,
+        base_items=base_items, watch_items=watch_items, flow_auto_items=flow_auto_items,
+        logic_version=queue_logic_version, refresh_flow_candidates=refresh_flow_candidates,
+        flow_snapshot=flow_snapshot_for_queue, calculated_at=last_run_text,
+    )
     remember_calculated_summary(st.session_state, summary_df, queue_sig, last_run_text)
     return summary_df, watch_items, queue_sig

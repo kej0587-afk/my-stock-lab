@@ -23,6 +23,8 @@ def _is_macro_if(node):
 
 def before_macro_missing(fn):
     fn = deepcopy(fn)
+    from tests.decision_observation_ast_contract import without_observation_capture
+    fn = without_observation_capture(fn)
     fn.body = [n for n in fn.body if not (_assigns(n, "macro_risk_observed") or _assigns(n, "macro_missing_components")
                                           or _is_macro_if(n))]
     for node in ast.walk(fn):

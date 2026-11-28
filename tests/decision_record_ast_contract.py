@@ -11,6 +11,8 @@ import ast
 
 
 def _is_record_stmt(node):
+    if ast.dump(node) == ast.dump(ast.parse('branch_trace = {} if isinstance(_record_sink, dict) else None').body[0]):
+        return True
     if isinstance(node, ast.ImportFrom) and node.module == "stock_lab_core.decision_record":
         return True
     if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "engine_view" for t in node.targets):
@@ -47,6 +49,9 @@ def without_decision_record_capture(fn):
     args.kwonlyargs = [args.kwonlyargs[i] for i in keep]
     args.kw_defaults = [args.kw_defaults[i] for i in keep]
     for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            node.keywords = [k for k in node.keywords if not (
+                k.arg == "_observation_sink" and isinstance(k.value, ast.Name) and k.value.id == "branch_trace")]
         for field in ("body", "orelse", "finalbody"):
             stmts = getattr(node, field, None)
             if isinstance(stmts, list) and stmts and isinstance(stmts[0], ast.stmt):

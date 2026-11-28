@@ -196,7 +196,7 @@ def test_observation_uses_pre_display_prose_and_preserves_all_existing_columns(m
     assert observed.iloc[0]["시장만모의해제_선별결과"] == "선별 통과 · 실행 미확인"
     ui=MagicMock()
     render_result_observation(ui,observed)
-    assert any("미확인 · 0개라는 뜻이 아닙니다" in str(call) for call in ui.caption.call_args_list)
+    assert any("주문가능액·최종체크가 미검증이면 ‘시장만 차단’으로 확정하지 않습니다" in str(call) for call in ui.caption.call_args_list)
 
 
 def test_csv_metadata_equals_screen_and_unknown_is_not_zero():
@@ -311,8 +311,8 @@ def test_ui_only_explicit_unheld_and_separates_unknown_held_state():
           source(티커="CONFLICT",has_pos=False,qty=1),source(티커="STRING",has_pos="False")]
     unheld,unknown=unheld_observation_tables(pd.concat(rows,ignore_index=True))
     assert len(unheld)==1 and "EXAMPLE" in unheld.iloc[0]["종목"]
-    assert len(unknown)==3 and unknown["시장 차단 관찰"].eq("미확인").all()
-    assert list(unheld)==["종목","섹터·돈흐름 기준일","실제 최종 게이트","시장 차단 관찰","남은 사유"]
+    assert len(unknown)==3 and unknown["시장 차단 관찰"].eq("자료 부족").all()
+    assert list(unheld)==["종목","섹터·돈흐름 기준일","실제 최종 게이트","시장 차단 관찰","원판정 재현","시장방어 제외 비교","남은 사유"]
 
 
 @pytest.mark.parametrize("qty", [None, float("nan"), pd.NA, "", 0., "absent"])
@@ -332,7 +332,7 @@ def test_explicit_unheld_remains_visible_when_quantity_is_missing(qty):
 def test_unheld_quantity_conflict_or_invalid_value_is_separate_unknown(qty):
     unheld, unknown = unheld_observation_tables(source(qty=qty))
     assert unheld.empty and len(unknown) == 1
-    assert unknown.iloc[0]["시장 차단 관찰"] == "미확인"
+    assert unknown.iloc[0]["시장 차단 관찰"] == "자료 부족"
 
 
 @pytest.mark.parametrize("change,reason",[({"structure_risk":True},"구조/추세"),({"mfi":90.},"과열"),

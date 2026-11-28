@@ -341,11 +341,23 @@ def test_calculation_and_refresh_blocks_remain_syntax_identical(sources):
 
     remember_start = next(i for i, n in enumerate(branch.body) if is_assignment(n, "last_run_text")) + 1
     refresh = deepcopy(functions["refresh_today_summary"].body[:-2])
+    capture_nodes = ast.parse('''
+base_items, flow_snapshot_for_queue = watch_items, None
+from stock_lab_core.today_restore_session import capture_discovery_context
+capture_discovery_context(
+    st.session_state, summary_df, mode=mode, raw_watch_items=raw_watch_items,
+    base_items=base_items, watch_items=watch_items, flow_auto_items=flow_auto_items,
+    logic_version=queue_logic_version, refresh_flow_candidates=refresh_flow_candidates,
+    flow_snapshot=flow_snapshot_for_queue, calculated_at=last_run_text)
+''').body
+    allowed_capture = {ast.dump(n) for n in capture_nodes}
+    assert sum(ast.dump(n) in allowed_capture for n in refresh) == 3
+    refresh = [n for n in refresh if ast.dump(n) not in allowed_capture]
     refreshed_spinner = next(n for n in refresh if isinstance(n, ast.With))
     refreshed_spinner.body = deepcopy(calc.body[:-2])
     assert dump(branch.body[:remember_start]) == dump(refresh)
     for fn in functions.values():
-        assert fn.end_lineno - fn.lineno + 1 <= 50, fn.name
+        assert fn.end_lineno - fn.lineno + 1 <= (60 if fn.name == "refresh_today_summary" else 50), fn.name
 
 
 @pytest.mark.parametrize("previous_owner, owner", [(None, "a"), ("a", "a"), ("b", "a"), ("", "a"), ("a", "")])

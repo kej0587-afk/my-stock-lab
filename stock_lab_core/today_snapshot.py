@@ -14,6 +14,9 @@ from pathlib import Path
 import pandas as pd
 
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.today_restore_inputs import (
+    INPUTS_KEY, SCHEMA_VERSION, SAVED_ATTR_KEYS, encode_snapshot_value, decode_snapshot_value,
+)
 
 register_loaded_source(__name__, __file__)
 
@@ -90,7 +93,16 @@ def save_today_queue_summary_snapshot(
                 for key in ("portfolio_signal_context", "portfolio_signal_at")
                 if isinstance(summary_df.attrs.get(key), str)
             },
+            "restore_attrs": encode_snapshot_value({
+                key: summary_df.attrs[key] for key in SAVED_ATTR_KEYS if key in summary_df.attrs
+            }),
         }
+        envelope = summary_df.attrs.get(INPUTS_KEY)
+        if isinstance(envelope, dict) and envelope.get("version") == SCHEMA_VERSION:
+            # Keep legacy data for previous-date readers; use exact floats/types for new restores.
+            exact_frame = summary_df.copy(deep=True)
+            exact_frame.attrs = {}
+            payload["encoded_frame"] = encode_snapshot_value(exact_frame)
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         # A failed or concurrent write must leave readers a complete previous/new file.
         with tempfile.NamedTemporaryFile(
@@ -98,7 +110,7 @@ def save_today_queue_summary_snapshot(
             prefix=f".{snapshot_path.stem}_", suffix=".tmp", delete=False,
         ) as handle:
             temporary_path = Path(handle.name)
-            json.dump(payload, handle, ensure_ascii=False)
+            json.dump(payload, handle, ensure_ascii=False, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, snapshot_path)
@@ -145,6 +157,13 @@ def load_today_queue_summary_snapshot(
             raise ValueError("Invalid snapshot frame dimensions")
         # Preserve leading-zero domestic ticker strings across JSON restoration.
         frame = pd.read_json(io.StringIO(raw_data), orient="split", dtype=False)
+        if "encoded_frame" in payload:
+            exact_frame = decode_snapshot_value(payload["encoded_frame"])
+            if (not isinstance(exact_frame, pd.DataFrame) or list(exact_frame.columns) != split["columns"]
+                    or len(exact_frame) != len(split["index"])):
+                raise ValueError("Invalid exact snapshot frame")
+            frame = exact_frame
+            frame.attrs = {}
         if frame.empty:
             return empty
         metadata = payload.get("portfolio_signal_attrs", {})
@@ -152,10 +171,29 @@ def load_today_queue_summary_snapshot(
             frame.attrs.update({key: metadata[key]
                                 for key in ("portfolio_signal_context", "portfolio_signal_at")
                                 if isinstance(metadata.get(key), str)})
+        if "restore_attrs" in payload:
+            try:
+                extra = decode_snapshot_value(payload["restore_attrs"])
+                if not isinstance(extra, dict) or any(key not in SAVED_ATTR_KEYS for key in extra):
+                    raise ValueError("Invalid restore attributes")
+                for key, value in extra.items():
+                    expected = pd.DataFrame if key == "today_saved_display" else dict
+                    if not isinstance(value, expected):
+                        raise ValueError("Invalid restore attribute type")
+                saved = extra.get("today_saved_display")
+                if saved is not None and (
+                    "티커" not in frame or "티커" not in saved
+                    or saved["티커"].tolist() != frame["티커"].tolist()
+                ):
+                    raise ValueError("Saved display does not match calculation rows")
+                frame.attrs.update(extra)
+            except (ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
+                # Keep the historical raw result readable; reject the entire optional restore route.
+                _LOG.warning("Today Queue restore attributes invalid; raw snapshot only")
         return frame, signature, str(payload.get("last_run", ""))
     except FileNotFoundError:
         return empty
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError, RecursionError) as exc:
         _LOG.warning("Today Queue snapshot load failed (%s)", type(exc).__name__)
         return empty
 

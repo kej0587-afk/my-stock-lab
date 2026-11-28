@@ -7,6 +7,28 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 
 
+def select_portfolio_priority_without_market_guard(**kwargs):
+    """Read-only replay: remove just the two storm guard outcomes.
+
+    The operational selector and every downstream condition are unchanged.
+    In particular _fmr, core sizing and macro-derived feature flags stay frozen.
+    """
+    from inspect import signature
+
+    outcome = select_portfolio_priority_decision(**kwargs)
+    if outcome is None or outcome.code not in {"CORE_STORM_DCA", "MACRO_STORM_HOLDING_CAUTION"}:
+        return outcome
+    for stage in (
+        _select_leverage_and_core_priority,
+        _select_recovery_and_drawdown_priority,
+        _select_structure_and_exception_priority,
+    ):
+        outcome = stage(**{key: kwargs[key] for key in signature(stage).parameters})
+        if outcome is not None:
+            return outcome
+    return None
+
+
 def _select_leverage_and_core_priority(
     *,
     core_dca_context,

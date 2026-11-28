@@ -18,11 +18,12 @@ from stock_lab_core.today_queue_session import LAST_RUN_KEY, ORIGIN_KEY, SIGNATU
 
 META_COLUMNS = ("점검결과출처", "점검결과상태", "점검원계산시각", "점검입력맥락", "점검재계산사유")
 OBS_COLUMNS = ("시장만모의해제", "시장만모의해제_선별결과", "시장만모의해제_근거",
-               "시장만모의해제_미확인항목", "시장만모의해제_실행가능", "시장만모의해제_확인범위", "시장만모의해제_증거출처")
+               "시장만모의해제_미확인항목", "시장만모의해제_실행가능", "시장만모의해제_확인범위", "시장만모의해제_증거출처",
+               "시장모의_원판정재현", "시장모의_원판정", "시장모의_비교판정", "시장모의_제외조건")
 CACHE_KEY = "today_market_observation_cache"
 INPUTS_KEY = "today_observation_inputs"
-SCOPE_NOTE = ("시장 연결 차단만 제외 · 원계산 행에 보존된 판정코드·문구·RR·"
-              "MTF·돈흐름의 기존 선별게이트만 재검증 · 시장매크로 원판정 제외 재계산은 미완료 · 점수·판정·금액 불변")
+SCOPE_NOTE = ("같은 원입력에서 원판정·금액 재현을 먼저 확인한 뒤 엔진의 시장방어 2분기만 모의 제외합니다. "
+              "점수·시장 영향이 반영된 기술조건·월적립률·L3는 그대로이며 실제 판정·금액에는 반영하지 않습니다.")
 UNVERIFIED = "당시 주문가능현금·환율·실행금액/예산·원정밀 비중·RR 원가격·구조/과열 전체 입력·정밀 최종체크"
 FULL_CHECK_GAPS = "증권사 실제 주문가능액·확정 실행금액/월예산·RR/밸류/신규ETF/레버리지 포함 최종체크 전체"
 
@@ -41,6 +42,12 @@ def capture_observation_inputs(sink, *, cash, reserve, fx, macro, mode):
             "has_pos": record.get("has_pos"), "price_input_id": (record.get("row") or {}).get("가격입력ID"),
             "cash_input_krw": cash, "reserve_input_krw": reserve, "fx_input": fx,
             "macro": macro, "mode": mode,
+            "branch_trace": deepcopy(record.get("branch_trace")),
+            "final_check_evidence": {key: deepcopy(post[key]) for key in (
+                "data_state", "safety_state", "fin_score", "rr", "rr_stop", "rr_target", "mtf_bias_label",
+                "mtf_bias_text", "leveraged_l3", "flow_context", "input_basis", "decision_code",
+                "current_w", "target_w", "weight_gap", "core_dca_amt", "buy_amt") if key in post},
+            "broker_buying_power": {"status": "unavailable", "reason": "계좌 예수금은 실제 주문가능액 확인값이 아님"},
         }
     return result
 
@@ -131,8 +138,32 @@ def metadata_frame(frame):
 
 
 def observation_frame(frame):
-    return frame[[key for key in ("티커", "종목명", *META_COLUMNS, *OBS_COLUMNS)
-                  if key in frame]].copy()
+    out = frame[[key for key in ("티커", "종목명", *META_COLUMNS, *OBS_COLUMNS) if key in frame]].copy()
+    if "시장만모의해제" in out:
+        out["시장 차단 관찰"] = out["시장만모의해제"].replace({"미확인": "자료 부족"})
+    return out
+
+
+def _branch_comparison(envelope, missing):
+    """Original resolved features only; missing final-order inputs never become permission."""
+    result = {"시장모의_원판정재현": "자료 부족", "시장모의_원판정": "미확인",
+              "시장모의_비교판정": "미확인", "시장모의_제외조건": "미재생"}
+    if missing or not isinstance(envelope, dict):
+        return result
+    from stock_lab_core.market_guard_observation import observe_market_guard_only
+    report = observe_market_guard_only(
+        envelope.get("branch_trace"), funding={key: envelope.get(key) for key in (
+            "cash_input_krw", "reserve_input_krw", "fx_input", "broker_buying_power")},
+    )
+    if not report.get("baseline_identity"):
+        result["시장모의_원판정재현"] = "자료 부족 · " + report.get("reason", report.get("status", "unavailable"))
+        return result
+    result.update({"시장모의_원판정재현": "원판정·금액 일치",
+                   "시장모의_원판정": report["baseline"]["outcome"]["code"],
+                   "시장모의_비교판정": report["counterfactual"]["outcome"]["code"],
+                   "시장모의_제외조건": "시장방어 2분기만 제외 · 다른 매크로 조건 유지 · 최종체크 미완료" if report.get("market_guard_removed")
+                       else "원엔진의 시장방어 분기 해당 없음 · 나머지 조건 유지"})
+    return result
 
 
 def attach_market_observation(displayed, original, metadata):
@@ -212,12 +243,17 @@ def attach_market_observation(displayed, original, metadata):
                 reason += " · 원판정에 시장조건 포함, 시장만 제외한 전체 재계산에 필요한 원입력 미보존"
             elif status == "미확인" and gate_label not in {"데이터확인", "선별 통과 · 실행 미확인"}:
                 reason += " · 원판정의 시장/종목 조건 분리 미확인"
+        comparison = _branch_comparison(original.attrs.get(INPUTS_KEY, {}).get(key), missing)
+        if comparison["시장모의_원판정재현"] == "원판정·금액 일치":
+            verified.append("원판정·금액 동일성/시장방어 분기 모의 비교")
+            reason = reason.replace("원판정에 시장조건 포함, 시장만 제외한 전체 재계산에 필요한 원입력 미보존",
+                                    "원엔진 시장방어 분기 비교 완료 · 후처리/주문가능액/최종체크는 미완료")
         observations.append({"시장만모의해제": status, "시장만모의해제_선별결과": gate_label,
                              "시장만모의해제_근거": reason,
                              "시장만모의해제_미확인항목": gaps,
                              "시장만모의해제_실행가능": "미확인",
                              "시장만모의해제_확인범위": " · ".join(verified) or "재생 전 정합성 확인 미완료",
-                             "시장만모의해제_증거출처": "이번 계산 관찰" if not missing else "증거 미확인"})
+                             "시장만모의해제_증거출처": "이번 계산 관찰" if not missing else "증거 미확인", **comparison})
     for field in OBS_COLUMNS:
         out[field] = pd.Series([row[field] for row in observations], index=out.index, dtype="object")
     return out
@@ -238,7 +274,7 @@ def _observation_key(original, displayed, *, signature, context, calculation_id)
             quantities.append(qty)
         raw = raw.drop(columns="qty", errors="ignore")
         raw["qty"] = pd.Series(quantities, index=raw.index, dtype="object")
-    payload = {"version": 3, "calculation_id": calculation_id, "signature": signature, "context": context,
+    payload = {"version": 4, "calculation_id": calculation_id, "signature": signature, "context": context,
                "input": raw.to_json(orient="split", date_format="iso", double_precision=15),
                "envelope": original.attrs.get(INPUTS_KEY),
                "display_context": displayed[[key for key in ("티커", "가격입력ID", "가격신선도", "데이터상태", "시장실행상태")
@@ -259,7 +295,8 @@ def reuse_or_build_market_observation(displayed, original, metadata, state, *, s
     if (eligible and metadata.get("점검결과출처") != "새 전체 계산"
             and isinstance(cached, dict) and cached.get("key") == key):
         evidence = cached.get("columns")
-        if isinstance(evidence, pd.DataFrame) and evidence.index.equals(displayed.index) and len(evidence) == len(displayed):
+        if (isinstance(evidence, pd.DataFrame) and evidence.index.equals(displayed.index)
+                and len(evidence) == len(displayed) and set(OBS_COLUMNS).issubset(evidence.columns)):
             out = displayed.copy(deep=True)
             out.attrs = deepcopy(displayed.attrs)
             for field in OBS_COLUMNS:
@@ -268,7 +305,9 @@ def reuse_or_build_market_observation(displayed, original, metadata, state, *, s
             return out
     out = attach_market_observation(displayed, original, metadata)
     if eligible and metadata.get("점검결과출처") == "새 전체 계산":
-        state[CACHE_KEY] = {"key": key, "columns": out[list(OBS_COLUMNS)].copy(deep=True)}
+        evidence = out[list(OBS_COLUMNS)].copy(deep=True)
+        evidence.attrs = {}
+        state[CACHE_KEY] = {"key": key, "columns": evidence}
     elif not eligible:
         state.pop(CACHE_KEY, None)
     return out
@@ -292,7 +331,9 @@ def unheld_observation_tables(frame):
         item = {"종목": f"{_text(row.get('종목명'))} ({_text(row.get('티커'))})",
                 "섹터·돈흐름 기준일": f"섹터 {_text(row.get('섹터RS기준일')) or '미확인'} / 돈흐름 {_text(row.get('돈흐름_기준일')) or '미확인'}",
                 "실제 최종 게이트": _text(row.get("게이트상태")) or "미확인",
-                "시장 차단 관찰": status,
+                "시장 차단 관찰": "자료 부족" if status == "미확인" else status,
+                "원판정 재현": row.get("시장모의_원판정재현", "자료 부족"),
+                "시장방어 제외 비교": row.get("시장모의_비교판정", "미확인"),
                 "남은 사유": reason + " · " + _text(row.get("시장만모의해제_미확인항목"))}
         if known:
             unheld.append(item)
@@ -316,7 +357,8 @@ def render_result_observation(st, frame):
         return
     with st.expander("시장 차단만 모의 해제 · 읽기 전용 관찰"):
         st.caption(SCOPE_NOTE)
-        st.caption("실제 실행가능 종목 수: 미확인 · 0개라는 뜻이 아닙니다. " + FULL_CHECK_GAPS + " 미검증")
+        st.caption("관찰 분류: 시장만 차단 / 다른 조건도 차단 / 자료 부족. "
+                   "주문가능액·최종체크가 미검증이면 ‘시장만 차단’으로 확정하지 않습니다. " + FULL_CHECK_GAPS)
         st.caption("실제 최종 게이트는 현재 오늘점검 표시값입니다. 정밀 최종 체크의 실행 허가와 다릅니다.")
         unheld, unknown = unheld_observation_tables(frame)
         if not unheld.empty:

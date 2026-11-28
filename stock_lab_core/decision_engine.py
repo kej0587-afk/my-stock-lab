@@ -38,6 +38,49 @@ class DecisionOutcome:
     reasons: tuple = ()   # 판단근거 목록 — 기본값 빈 튜플 (기존 호출부 영향 없음)
 
 
+def observation_non_core_panic_scope(decision_outcome, *, is_core_dca_allowed, is_etf, current_dd):
+    """Pure mirror of app.enforce_non_core_panic_scope for offline observation.
+
+    Operational callers retain their existing helper. Parity tests cover both
+    implementations, including legacy labels and drawdown boundaries.
+    """
+    from stock_lab_core.decision_code_sets import CORE_PANIC_DEPLOY_CODES
+
+    if decision_outcome is None or is_core_dca_allowed:
+        return decision_outcome
+    label = str(getattr(decision_outcome, "label", "") or "")
+    code = str(getattr(decision_outcome, "code", "") or "")
+    if not (code in CORE_PANIC_DEPLOY_CODES or "최종투입" in label or "현금 투입" in label or "코어 집중" in label):
+        return decision_outcome
+    dd = clean_float(current_dd, 0.0)
+    if dd <= -0.5:
+        label = "🚫비코어 ETF 패닉: 원인점검" if is_etf else "🚫개별주 패닉: 원인점검"
+        code = "NON_CORE_ETF_PANIC_CAUSE_CHECK" if is_etf else "STOCK_PANIC_CAUSE_CHECK"
+        color = "#dc2626"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (패닉 최심 구간)",
+            "예비 현금 최종투입은 목표비중이 부족한 코어 ETF 전용 규칙입니다.",
+            "개별주/비코어 상품은 재무·뉴스·섹터 수급·일봉/주봉 회복 확인 전 신규/추매를 보류합니다.",
+        )
+    elif dd <= -0.4:
+        label = "🚫비코어 ETF 급락: 원인점검" if is_etf else "🚫개별주 급락: 원인점검"
+        code = "NON_CORE_ETF_DRAWDOWN_CAUSE_CHECK" if is_etf else "STOCK_DRAWDOWN_CAUSE_CHECK"
+        color = "#d97706"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (급락 구간)",
+            "코어 ETF가 아니므로 현금 투입 문구를 쓰지 않고 하락 원인과 회복 조건을 먼저 확인합니다.",
+        )
+    else:
+        label = "🚫비코어 ETF 위기: 원인점검" if is_etf else "🚫개별주 위기: 원인점검"
+        code = "NON_CORE_ETF_CRISIS_CAUSE_CHECK" if is_etf else "STOCK_CRISIS_CAUSE_CHECK"
+        color = "#b91c1c"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (위기 구간)",
+            "코어 ETF 중심 분할매수 규칙을 개별주/비코어 상품에 적용하지 않습니다.",
+        )
+    return build_decision_outcome(label, color, code, reasons=reasons)
+
+
 def normalize_decision_runtime_inputs(
     macro_penalty_value=None,
     final_macro_risk_value=None,
