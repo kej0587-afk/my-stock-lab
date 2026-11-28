@@ -30056,10 +30056,13 @@ def render_today_unified_briefing_panel(
     if not df.empty and detail == "보유관리":
         from stock_lab_core.today_overview import render_overview, observed_sessions
         with measure("phase", "briefing_overview_table"):
-            overview_flags = build_today_review_flags_df(
-                df, globals().get("holdings_table"), build_today_flow_shortlist_df(saved_flow))
-            render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
-                            hard_mask=hard_block_mask)
+            with measure("phase", "briefing_overview_shortlist"):
+                overview_shortlist = build_today_flow_shortlist_df(saved_flow)
+            with measure("phase", "briefing_overview_flags"):
+                overview_flags = build_today_review_flags_df(df, globals().get("holdings_table"), overview_shortlist)
+            with measure("phase", "briefing_overview_render"):
+                render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
+                                hard_mask=hard_block_mask)
         from stock_lab_core.today_sector_basis import sector_observation_basis
         source_basis, _ = sector_observation_basis(saved_flow, observed_sessions(df))
         if source_basis:
@@ -33278,6 +33281,7 @@ def _append_today_review_flag(rows, severity, ticker, name, issue, basis, sugges
     })
 
 
+@timed_call("display", "review_flags_build")
 def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=None):
     """Detect duplicate or conflicting review signals across today/flow/portfolio tables."""
     rows: list[dict] = cross_view_flags(summary_df, flow_shortlist_df, excluded_ticker=is_swing_excluded_ticker)
