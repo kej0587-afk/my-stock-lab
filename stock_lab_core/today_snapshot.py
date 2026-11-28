@@ -57,6 +57,25 @@ def _snapshot_location(path, owner_scope):
     return base, owner_hash
 
 
+def snapshot_storage_notice(*, owner_scope: str = "", path=None) -> str:
+    """Explain an empty screen without interpreting absence as changed inputs.
+
+    Reads file metadata only; never loads account contents or changes restoration.
+    File presence does not imply a valid or current saved calculation.
+    """
+    snapshot_path, _ = _snapshot_location(path, owner_scope)
+    if snapshot_path is None:
+        return ""
+    try:
+        snapshot_path.stat()
+    except FileNotFoundError:
+        return ("서버 저장본 없음 · 오늘점검 결과는 현재 서버 임시파일에 저장됩니다. "
+                "재배포·재시작으로 파일이 사라지면 이전 결과와 자동후보를 복원할 수 없습니다.")
+    except OSError:
+        return "서버 저장본 접근 실패 · 입력 변경 여부와 별개로 저장소 확인이 필요합니다."
+    return "서버 저장 파일 있음 · 이번 화면에서는 복원되지 않았습니다. 파일 형식·버전·복원 경로 확인이 필요합니다."
+
+
 def save_today_queue_summary_snapshot(
     summary_df: pd.DataFrame, signature: str = "", last_run: str = "", *,
     path: Path | str | None = None, owner_scope: str = "",

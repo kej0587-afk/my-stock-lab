@@ -164,7 +164,7 @@ def execute(source, kind, *, raw=False):
         ui.record("build_items", items)
         return tuple(items) + (({"ticker": "HELD", "name": "Held"},) if items else ())
 
-    def merge(items, snapshot):
+    def merge(items, snapshot, *, shortlist_builder=None):
         ui.record("merge", items, snapshot)
         if settings["fail"] == "merge" and snapshot["fresh"]:
             raise RuntimeError("merge unavailable")
@@ -229,6 +229,7 @@ def execute(source, kind, *, raw=False):
         financial_input_signature=lambda data: "financial", build_today_queue_signature=signature,
         portfolio_signal_input_context=lambda: {"owner": "current"},
         build_today_queue_items=build_items, build_today_queue_items_with_flow_candidates=merge,
+        build_today_flow_shortlist_df=lambda *a: pd.DataFrame(),
         get_cached_today_market_flow_snapshot=lambda: {"fresh": False},
         load_today_queue_summary_snapshot=snapshot, clear_today_queue_summary_snapshot=clear,
         refresh_today_market_flow_snapshot=refresh, get_all_summary=calculate,
@@ -245,6 +246,8 @@ def execute(source, kind, *, raw=False):
     result = error = None
     from contextlib import ExitStack
     with ExitStack() as stack:
+        # This harness supplies an in-memory fake store; disk status has its own tests.
+        stack.enter_context(patch("stock_lab_core.today_snapshot.snapshot_storage_notice", return_value=""))
         stack.enter_context(patch("stock_lab_core.performance.bind_summary_measurement", bind))
         try:
             import stock_lab_core.today_queue_session as session
@@ -431,7 +434,7 @@ def get_all_summary(scores, mode, items, *, fresh_quotes):
     assert fresh_quotes is True
     st.session_state.fake_price_calls += 1
     return pd.DataFrame({"티커": [i["ticker"] for i in items], "종목명": owner})
-def build_today_queue_items_with_flow_candidates(items, snapshot):
+def build_today_queue_items_with_flow_candidates(items, snapshot, *, shortlist_builder=None):
     extra = ({"ticker": "AUTO", "name": "Auto", "bucket": "flow_candidate"},)
     return tuple(items) + extra, extra
 def build_today_queue_signature(items, mode, *, logic_version):
@@ -444,6 +447,7 @@ def noop(*args, **kwargs):
 measure = lambda *a: nullcontext()
 build_today_queue_items = tuple
 get_cached_today_market_flow_snapshot = lambda: {}
+build_today_flow_shortlist_df = lambda *a: pd.DataFrame()
 load_fin_scores_db = lambda: {}
 financial_input_signature = lambda d: "fixed"
 portfolio_signal_input_context = lambda: {"owner": owner}
@@ -465,7 +469,9 @@ if result is not None:
     expressions = ['subprocess.check_output(["git", "show", BASE + ":app.py"], cwd=ROOT, encoding="utf8")',
                    '(ROOT / "app.py").read_text(encoding="utf-8-sig")']
     from stock_lab_core import today_queue_session
-    with patch.object(today_queue_session, "datetime", FixedDateTime):
+    with patch.object(today_queue_session, "datetime", FixedDateTime), patch(
+        "stock_lab_core.today_snapshot.snapshot_storage_notice", return_value=""
+    ):
         old, new = [AppTest.from_string(script.replace("SOURCE_EXPRESSION", expr)).run(timeout=30)
                     for expr in expressions]
 

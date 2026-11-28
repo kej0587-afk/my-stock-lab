@@ -33738,6 +33738,10 @@ def _render_today_queue_tab(mode):
             st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
+            from stock_lab_core.today_snapshot import snapshot_storage_notice
+            storage_notice = snapshot_storage_notice(owner_scope=snapshot_owner)
+            if storage_notice:
+                st.caption(storage_notice)
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=0)
         return
