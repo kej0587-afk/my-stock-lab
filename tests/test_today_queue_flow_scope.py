@@ -106,6 +106,7 @@ def test_discovery_defaults_on_and_initial_scope_matches_signature():
                     and any(isinstance(target, ast.Name) and target.id == "refresh_flow_candidates"
                             for target in node.targets))
     assert next(k.value.value for k in checkbox.keywords if k.arg == "value") is True
-    prepare = next(node for node in render.body if isinstance(node, ast.With))
+    prepare = next(node for node in render.body if isinstance(node, ast.With)
+                   and "watchlist_prepare" in ast.unparse(node.items[0].context_expr))
     assert "today_queue_refresh_flow_candidates" in ast.unparse(prepare)
     assert "build_today_queue_items(raw_watch_items)" in ast.unparse(prepare)

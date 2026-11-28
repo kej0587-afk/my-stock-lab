@@ -87,7 +87,7 @@ def test_pending_today_queue_builds_real_guard(guard_app, monkeypatch, with_watc
     monkeypatch.setattr(app.st, "session_state", {"watchlist": list(items)})
     monkeypatch.setattr(app, "macro_res", {"10Y 금리": {"val": 5.27}})
     monkeypatch.setattr(app, "get_cached_today_market_flow_snapshot", lambda: {})
-    monkeypatch.setattr(app, "build_today_queue_items_with_flow_candidates", lambda *args: (items, ()))
+    monkeypatch.setattr(app, "build_today_queue_items_with_flow_candidates", lambda *args, **kwargs: (items, ()))
     monkeypatch.setattr(app, "build_today_queue_signature", lambda *args, **kwargs: "test")
     monkeypatch.setattr(app, "load_today_queue_summary_snapshot", lambda **kwargs: (pd.DataFrame(), "", ""))
     monkeypatch.setattr(app, "get_cash_available_for_dca", lambda mode: 0)

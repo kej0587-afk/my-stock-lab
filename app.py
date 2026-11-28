@@ -32820,10 +32820,11 @@ def render_today_research_links_panel(summary_df=None):
         )
 
 
-def build_today_flow_candidate_queue_items(snapshot=None, existing_items=None, limit: int = TODAY_QUEUE_FLOW_AUTO_LIMIT) -> tuple[dict, ...]:
+def build_today_flow_candidate_queue_items(snapshot=None, existing_items=None, limit: int = TODAY_QUEUE_FLOW_AUTO_LIMIT,
+                                          *, shortlist_builder=None) -> tuple[dict, ...]:
     """Promote top money-flow stock candidates into Today Queue calculation."""
     try:
-        shortlist_df = build_today_flow_shortlist_df(snapshot)
+        shortlist_df = (shortlist_builder or build_today_flow_shortlist_df)(snapshot)
     except Exception:
         shortlist_df = pd.DataFrame()
     if not isinstance(shortlist_df, pd.DataFrame) or shortlist_df.empty:
@@ -32896,12 +32897,14 @@ def build_today_flow_candidate_queue_items(snapshot=None, existing_items=None, l
     return tuple(picked)
 
 
-def build_today_queue_items_with_flow_candidates(raw_watch_items=None, snapshot=None) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
+def build_today_queue_items_with_flow_candidates(raw_watch_items=None, snapshot=None,
+                                                *, shortlist_builder=None) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
     base_items = build_today_queue_items(raw_watch_items)
     flow_items = build_today_flow_candidate_queue_items(
         snapshot,
         existing_items=base_items,
         limit=TODAY_QUEUE_FLOW_AUTO_LIMIT,
+        shortlist_builder=shortlist_builder,
     )
     if not flow_items:
         return base_items, tuple()
@@ -33628,6 +33631,14 @@ def _calculate_fresh_today_summary(mode, watch_items, raw_watch_items, flow_auto
 
 @timed_call("phase", "today_queue_render")
 def _render_today_queue_tab(mode):
+    from stock_lab_core.flow_shortlist_render import FlowShortlistRenderReuse
+    shortlist_reader = FlowShortlistRenderReuse(build_today_flow_shortlist_df, TODAY_FLOW_SHORTLIST_VERSION)
+
+    def render_shortlist(snapshot=None):
+        snapshot = snapshot if snapshot is not None else get_cached_today_market_flow_snapshot()
+        return shortlist_reader.get(snapshot, holdings=globals().get("holdings_table"),
+                                    watchlist=st.session_state.get("watchlist", []))
+
     st.subheader("오늘 점검")
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
@@ -33653,7 +33664,8 @@ def _render_today_queue_tab(mode):
         if restored_items:
             watch_items, flow_auto_items = restored_items
         elif st.session_state.get("today_queue_refresh_flow_candidates", True):
-            watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+            watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(
+                raw_watch_items, flow_snapshot_for_queue, shortlist_builder=render_shortlist)
         else:
             watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
     if not watch_items:
@@ -33827,7 +33839,7 @@ def _render_today_queue_tab(mode):
             summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=_timed_today_analyst_snapshot, load_latest_price=load_latest_price)
         _upside_value_map = build_today_analyst_upside_map(summary_df)
     flow_snapshot_for_context = get_cached_today_market_flow_snapshot()
-    flow_shortlist_df = build_today_flow_shortlist_df(flow_snapshot_for_context)
+    flow_shortlist_df = render_shortlist(flow_snapshot_for_context)
     if saved_display is None:
         from stock_lab_core.execution_context import prepare_execution_context
         summary_df = prepare_execution_context(

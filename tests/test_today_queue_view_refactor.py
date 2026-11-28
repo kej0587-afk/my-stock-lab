@@ -266,6 +266,11 @@ if run_summary and flow_snapshot_for_context:
         nodes = fresh_nodes
         for node in nodes:
             node = deepcopy(node)
+            if ast.dump(node) == ast.dump(ast.parse(
+                    'flow_shortlist_df = render_shortlist(flow_snapshot_for_context)').body[0]):
+                # Only the run-local input reuse adapter; equality/invalidation
+                # and actual candidate output are covered in test_flow_shortlist_render.
+                node = ast.parse('flow_shortlist_df = build_today_flow_shortlist_df(flow_snapshot_for_context)').body[0]
             if (isinstance(node, ast.Assign) and len(node.targets) == 1
                     and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'briefing_flags'):
                 assert isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == 'render_today_unified_briefing_panel'
