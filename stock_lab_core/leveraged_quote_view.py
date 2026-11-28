@@ -69,14 +69,14 @@ def render_quote_evidence(st, ticker, *, manual_price=0, now=None, fetch_quote=l
             delayed = audit.get("delayed_reference", {})
             if delayed.get("delayed"):
                 st.markdown(f"**지연 시세 · {delayed['kind']} USD {delayed['price']:,.2f} · {delayed['return'] * 100:+.2f}%**")
-                st.caption("마지막 확인 체결 " + pd.Timestamp(delayed['as_of']).tz_convert("Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S KST") + " · 현재가격·판정 입력에 반영하지 않음")
+                st.caption("마지막 확인 체결 " + pd.Timestamp(delayed['as_of']).tz_convert("Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S KST") + " · 이 패널에서는 지연 참고값으로 표시합니다. 판정·차트의 현재가 반영 여부는 ‘가격 기준’ 표에서 확인합니다.")
             st.caption(((window['label'] + " 미수신 · ") if window and not delayed else "") + evidence["status"])
             if ticker != "418660.KS":
                 st.caption("현재 세션의 신선한 시간외 가격 미연결 · 0원이나 정규장 가격으로 대체하지 않음")
             return evidence
         st.markdown(f"**{evidence['session']} · USD {evidence['price']:,.2f} · {evidence['change']:+.2f}%**")
         st.caption(f"관측 {evidence['as_of']} · 비교: 미국 {evidence['base']} 정규장 종가")
-        st.caption(evidence["source"] + " · 판정·차트 입력에 반영하지 않는 별도 참고값")
+        st.caption(evidence["source"] + " · 이 패널의 별도 참고값입니다. 판정·차트의 현재가 반영 여부는 ‘가격 기준’ 표에서 확인합니다.")
     return evidence
 
 
