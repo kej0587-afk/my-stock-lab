@@ -260,6 +260,39 @@ def test_known_sector_display_cache_does_not_invalidate_source_flow():
     assert flow_input_identity(original) == flow_input_identity(shown)
 
 
+def test_command_display_add_edit_remove_does_not_change_flow_identity():
+    original = {"flow_df": pd.DataFrame({"price": [100.], "date": ["2026-11-27"]}),
+                "sector_rotation_df": pd.DataFrame({"score": [2.]})}
+    before = encode_snapshot_value(original)
+    expected = flow_input_identity(original)
+    shown = deepcopy(original)
+    shown["command_flow_df"] = pd.DataFrame({"display_rank": [1], "label": ["first"]})
+    assert expected and flow_input_identity(shown) == expected
+    shown["command_flow_df"].loc[0] = [99, "changed"]
+    assert flow_input_identity(shown) == expected
+    shown.pop("command_flow_df")
+    assert flow_input_identity(shown) == expected
+    assert encode_snapshot_value(original) == before
+
+
+@pytest.mark.parametrize("change", ["price", "date", "sector", "nested_command"])
+def test_command_display_exclusion_keeps_source_changes_detectable(change):
+    original = {"flow_df": pd.DataFrame({"price": [100.], "date": ["2026-11-27"]}),
+                "sector_rotation_df": pd.DataFrame({"score": [2.]}),
+                "command_flow_df": pd.DataFrame({"display_rank": [1]}),
+                "nested": {"command_flow_df": "source-evidence"}}
+    changed = deepcopy(original)
+    if change == "price":
+        changed["flow_df"].loc[0, "price"] += 1.
+    elif change == "date":
+        changed["flow_df"].loc[0, "date"] = "2026-11-28"
+    elif change == "sector":
+        changed["sector_rotation_df"].loc[0, "score"] += 1.
+    else:
+        changed["nested"]["command_flow_df"] = "different-source"
+    assert flow_input_identity(changed) != flow_input_identity(original)
+
+
 def test_flow_identity_normalizes_nested_mapping_order_but_not_sequence_order():
     first={"meta":{"one":1,"two":2},"sequence":(1,2)}
     second={"sequence":(1,2),"meta":{"two":2,"one":1}}

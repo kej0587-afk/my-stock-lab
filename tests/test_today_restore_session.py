@@ -286,6 +286,19 @@ def test_newer_flow_same_candidates_invalidates_saved_gate(tmp_path):
     assert saved_display_for_context(raw, meta) is None
 
 
+def test_lower_panel_command_display_rerender_keeps_restored_result_valid(tmp_path):
+    base, _, original, _, sig, _, load = fixture(tmp_path)
+    state = {EXPECTED_CONTEXT_KEY: "account-context"}
+    assert restore(state, base, load)
+    state["today_market_flow_snapshot"]["command_flow_df"] = pd.DataFrame({"display_rank": [1]})
+    raw = restore_cached_summary(state, "user", sig, load_today_queue_summary_snapshot=load)
+    meta = result_metadata(raw, state, run_summary=False, signature=sig, account_context="account-context")
+    assert meta["점검입력맥락"] == "일치"
+    shown = saved_display_for_context(raw, meta)
+    assert shown is not None
+    assert shown[original.columns].to_csv(index=False) == original.to_csv(index=False)
+
+
 def test_dedupe_with_nested_saved_frames_preserves_values_and_source_attrs(app_module):
     frame = pd.DataFrame({"티커": ["A", "A", ""], "금액": [1.123456789123456, 2., 3.]})
     frame.attrs["today_restore_inputs"] = {"flow_snapshot": {"flow_df": pd.DataFrame({"x": [1, 2]})}}

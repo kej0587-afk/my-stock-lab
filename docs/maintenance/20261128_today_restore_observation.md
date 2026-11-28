@@ -88,3 +88,18 @@ calculation_completed=False/is_full_today_queue_measurement=False와 운영의 �
 1초 미만, 후보생성1.6초; briefing111.2초/ZIP38.7초/미분류129.1초가 크다.
 따라서 진행표시의 마지막 이름을 병목시간으로 해석하면 안 된다. 큰 검토원입력이
 화면 DataFrame attrs까지 전파되는 경로와 다운로드의 불필요한 rerun을 보완한다.
+
+## 3e663c4a 표시 후처리 분리
+
+저장용 today_observation_inputs를 화면 attrs에서 제외하고 원본 저장/재생에는 유지했다.
+반복 표시 복사에서 검토 trace복사0회, 저장값 불변 검증. ZIP on_click=ignore로 다운로드
+재실행 제거. 범위560건 중559통과·새 fixture1오류는 fixture수정 후 관련33건 통과로 마무리했다.
+
+운영 새계산122.6초, 새탭복원13.4초(측정2eca9e83, render_only/not_recalculated,
+전체계산False). 104행·원시각16:28·103방어/1자료와 CSV00/01/10/12/13 동등성 재확인.
+앞선292.5초에는 두 탭 중첩이 있어 개선율로 쓰지 않는다. 최종 단독실행값을 기준으로 남긴다.
+
+추가 재현: 복원 후 '시장' 보기 전환 시 command_flow_df가 하단 표시에서 snapshot에 추가되어
+실제 돈흐름 변경으로 오인했다. 이 필드는 prepare_sector_display 결과인 파생표이다.
+원자료·기준일·점수 변경 검증은 유지하면서 이 표시용 키만 입력동일성 검사에서 제외하는
+후속 보완을 진행한다. 첫복원 성공과 같은세션 재표시 성공을 구분한다.

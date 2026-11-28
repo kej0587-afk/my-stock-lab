@@ -182,7 +182,10 @@ def _digest(value):
 
 
 def flow_input_identity(snapshot):
-    """Content identity excluding top-level caches and known derived display cards.
+    """Content identity excluding top-level caches and known derived display fields.
+
+    `command_flow_df` is the lower-panel output documented by
+    sector_display_snapshot.prepare_sector_display, not a source flow input.
 
     Mapping insertion order is immaterial; frame values/dates/attrs, row order,
     Other public keys and nested underscore keys remain evidence. Empty return means
@@ -204,7 +207,7 @@ def flow_input_identity(snapshot):
     try:
         source = {key: value for key, value in snapshot.items()
                   if not (isinstance(key, str) and key.startswith("_"))
-                  and key not in {"sector_ability_cards", "sector_cards_view_version"}}
+                  and key not in {"sector_ability_cards", "sector_cards_view_version", "command_flow_df"}}
         payload = canonical(encode_snapshot_value(source))
         return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
     except (ValueError, TypeError, KeyError, OverflowError, AttributeError, RecursionError):
