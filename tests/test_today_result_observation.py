@@ -312,7 +312,7 @@ def test_ui_only_explicit_unheld_and_separates_unknown_held_state():
     unheld,unknown=unheld_observation_tables(pd.concat(rows,ignore_index=True))
     assert len(unheld)==1 and "EXAMPLE" in unheld.iloc[0]["종목"]
     assert len(unknown)==3 and unknown["시장 차단 관찰"].eq("자료 부족").all()
-    assert list(unheld)==["종목","섹터·돈흐름 기준일","실제 최종 게이트","시장 차단 관찰","원판정 재현","시장방어 제외 비교","남은 사유"]
+    assert list(unheld)==["종목","섹터·돈흐름 기준일","실제 최종 게이트","시장 차단 관찰","원판정 재현","시장방어 제외 비교","독립 최종체크","남은 사유"]
 
 
 @pytest.mark.parametrize("qty", [None, float("nan"), pd.NA, "", 0., "absent"])

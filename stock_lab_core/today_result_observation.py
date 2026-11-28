@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 
+import numpy as np
 import pandas as pd
 
 from stock_lab_core.execution_gate import build_execution_gate, GATE_EXECUTABLE
@@ -19,7 +20,8 @@ from stock_lab_core.today_queue_session import LAST_RUN_KEY, ORIGIN_KEY, SIGNATU
 META_COLUMNS = ("점검결과출처", "점검결과상태", "점검원계산시각", "점검입력맥락", "점검재계산사유")
 OBS_COLUMNS = ("시장만모의해제", "시장만모의해제_선별결과", "시장만모의해제_근거",
                "시장만모의해제_미확인항목", "시장만모의해제_실행가능", "시장만모의해제_확인범위", "시장만모의해제_증거출처",
-               "시장모의_원판정재현", "시장모의_원판정", "시장모의_비교판정", "시장모의_제외조건")
+               "시장모의_원판정재현", "시장모의_원판정", "시장모의_비교판정", "시장모의_제외조건",
+               "시장모의_최종체크입력", "시장모의_독립체크")
 CACHE_KEY = "today_market_observation_cache"
 INPUTS_KEY = "today_observation_inputs"
 SCOPE_NOTE = ("같은 원입력에서 원판정·금액 재현을 먼저 확인한 뒤 엔진의 시장방어 2분기만 모의 제외합니다. "
@@ -54,7 +56,7 @@ def capture_observation_inputs(sink, *, cash, reserve, fx, macro, mode):
 
 def _finite(value):
     try:
-        return not isinstance(value, bool) and math.isfinite(float(value))
+        return not isinstance(value, (bool, np.bool_)) and math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
 
@@ -64,40 +66,73 @@ def _quantity_missing(value):
             or (pd.api.types.is_scalar(value) and bool(pd.isna(value))))
 
 
+def retained_final_check_inputs(envelope, raw):
+    """Validate retained scalars without defaulting missing data or fetching.
+
+    NumPy booleans come from engine comparisons and survive the snapshot codec.
+    Strings/0/1 are not flag evidence. Normalize only this observation copy.
+    """
+    if (not isinstance(envelope, dict) or not _text(raw.get("가격입력ID"))
+            or envelope.get("price_input_id") != raw.get("가격입력ID")):
+        return {}, {"identity": ["가격입력ID 불일치/미보존"]}
+    source = envelope.get("decision")
+    source = source if isinstance(source, dict) else {}
+    normalized, issues = {}, {}
+    groups = {
+        "risk": (("core_dca_rate", "dd", "day_ret", "mfi", "rsi", "pct_b"),
+                 ("live_gap_shock", "structure_risk"), ("bucket", "trend", "rs_label", "mtf_bias_label")),
+        "portfolio": (("target_w", "current_w", "macro"), ("has_pos",), ("trend", "rs_label")),
+        "funding": (("cash_input_krw", "reserve_input_krw", "fx_input", "buy_amt", "effective_total_asset"), (), ()),
+    }
+    outer = {"macro", "has_pos", "cash_input_krw", "reserve_input_krw", "fx_input"}
+    for group, kinds in groups.items():
+        errors = []
+        for kind, keys in zip(("number", "flag", "text"), kinds):
+            for key in keys:
+                container = envelope if key in outer else source
+                value = container.get(key)
+                valid = (_finite(value) if kind == "number" else
+                         isinstance(value, (bool, np.bool_)) if kind == "flag" else isinstance(value, str))
+                if not valid:
+                    detail = "미저장" if key not in container else type(value).__name__ + " 부적합"
+                    errors.append(f"{key}({detail})")
+                else:
+                    normalized[key] = float(value) if kind == "number" else bool(value) if kind == "flag" else value
+        issues[group] = errors
+    for key in ("mtf_bias_text", "core_dca_label"):
+        normalized[key] = source.get(key) if isinstance(source.get(key), str) else ""
+    return normalized, issues
+
+
 def replay_retained_final_checks(envelope, raw):
     """Use shared pure final-check rows, not the app's fetching final-check orchestrator."""
     from stock_lab_core.final_check_rows import build_risk_check_rows, build_portfolio_check_rows
-    if not isinstance(envelope, dict) or envelope.get("price_input_id") != raw.get("가격입력ID"):
+    c, issues = retained_final_check_inputs(envelope, raw)
+    if "identity" in issues:
         return [], [], UNVERIFIED
-    c = envelope.get("decision") or {}
     checks, verified = [], []
-    core_known = _finite(c.get("core_dca_rate")) and isinstance(c.get("bucket"), str)
     risk_fields = ("dd", "day_ret", "mfi", "rsi", "pct_b")
-    if (core_known and all(_finite(c.get(key)) for key in risk_fields)
-            and all(isinstance(c.get(key), bool) for key in ("live_gap_shock", "structure_risk"))
-            and all(isinstance(c.get(key), str) for key in ("trend", "rs_label", "mtf_bias_label"))):
+    if not issues["risk"]:
         checks.extend(build_risk_check_rows(
             is_core_dca=c["core_dca_rate"] > 0 and c["bucket"] == "core",
             **{key: c[key] for key in (*risk_fields, "live_gap_shock", "structure_risk", "trend", "rs_label", "mtf_bias_label")},
             mtf_bias_text=c.get("mtf_bias_text", ""), core_dca_label=c.get("core_dca_label", "")))
         verified.append("정밀 구조/MTF/과열 공통체크")
-    if (isinstance(envelope.get("has_pos"), bool) and all(_finite(c.get(key)) for key in ("target_w", "current_w"))
-            and _finite(envelope.get("macro")) and all(isinstance(c.get(key), str) for key in ("trend", "rs_label"))):
+    if not issues["portfolio"]:
         checks.extend(build_portfolio_check_rows(
-            has_pos=envelope["has_pos"], target_w=c["target_w"], curr_w=c["current_w"],
-            weight_gap=c["target_w"]-c["current_w"], macro_risk=envelope["macro"],
+            has_pos=c["has_pos"], target_w=c["target_w"], curr_w=c["current_w"],
+            weight_gap=c["target_w"]-c["current_w"], macro_risk=c["macro"],
             trend=c["trend"], rs_label=c["rs_label"], price_vs_avg=math.nan))
         verified.append("정밀 비중/매크로/보유 공통체크")
-    if all(_finite(envelope.get(key)) for key in ("cash_input_krw", "reserve_input_krw", "fx_input")) and all(
-            _finite(c.get(key)) for key in ("buy_amt", "effective_total_asset")):
+    if not issues["funding"]:
         verified.append("입력 예수금/예비금/환율/총액/부족액 보존 · 주문가능액 아님")
     gaps = [FULL_CHECK_GAPS]
     if not any(item.startswith("정밀 구조") for item in verified):
-        gaps.append("원정밀 구조/과열 입력")
+        gaps.append("원정밀 구조/과열 입력: " + ", ".join(issues["risk"]))
     if not any(item.startswith("정밀 비중") for item in verified):
-        gaps.append("원정밀 비중/매크로 입력")
+        gaps.append("원정밀 비중/매크로 입력: " + ", ".join(issues["portfolio"]))
     if not any(item.startswith("입력 예수금") for item in verified):
-        gaps.append("당시 현금/환율/총액/부족액 원값")
+        gaps.append("당시 현금/환율/총액/부족액 원값: " + ", ".join(issues["funding"]))
     return checks, verified, " · ".join(gaps)
 
 
@@ -212,7 +247,17 @@ def attach_market_observation(displayed, original, metadata):
                              or raw.get("돈흐름_거래량기준일") != raw.get("가격자료기준일")):
             missing.append("원돈흐름 자료날짜/거래량 정합성 미확인")
         market = _text(shown.get("시장실행상태"))
-        verified, gaps = [], UNVERIFIED
+        verified, gaps, checks = [], UNVERIFIED, []
+        envelope = original.attrs.get(INPUTS_KEY, {}).get(key)
+        _, input_issues = retained_final_check_inputs(envelope, raw)
+        input_audit = " · ".join(
+            label + (": " + ", ".join(input_issues[group]) if input_issues[group] else ": 원입력 확인")
+            for group, label in (("risk", "구조/과열"), ("portfolio", "비중/보유"), ("funding", "예수금 기록"))
+            if group in input_issues)
+        if "identity" in input_issues:
+            input_audit = " · ".join(input_issues["identity"])
+        if missing:
+            input_audit = "재생 보류 · " + " · ".join(dict.fromkeys(missing))
         status, gate_label, reason = "미확인", "미재생", " · ".join(dict.fromkeys(missing))
         if not missing and "시장방어" not in market:
             status = "시장 차단 없음" if market == "정상" else "미확인"
@@ -221,7 +266,7 @@ def attach_market_observation(displayed, original, metadata):
             replay = deepcopy(raw)
             replay["시장실행상태"] = "정상"
             gate = build_execution_gate(replay)
-            checks, verified, gaps = replay_retained_final_checks(original.attrs.get(INPUTS_KEY, {}).get(key), raw)
+            checks, verified, gaps = replay_retained_final_checks(envelope, raw)
             verified.insert(0, "원계산 행의 선별게이트")
             gate_label = gate["게이트상태"]
             reason = gate["게이트근거"]
@@ -252,6 +297,9 @@ def attach_market_observation(displayed, original, metadata):
                              "시장만모의해제_근거": reason,
                              "시장만모의해제_미확인항목": gaps,
                              "시장만모의해제_실행가능": "미확인",
+                             "시장모의_최종체크입력": input_audit,
+                             "시장모의_독립체크": " · ".join(row["점검항목"] + ": " + row["상태"]
+                                 for row in checks if row["점검항목"] != "매크로") or "미확인 · 재생 근거 부족",
                              "시장만모의해제_확인범위": " · ".join(verified) or "재생 전 정합성 확인 미완료",
                              "시장만모의해제_증거출처": "이번 계산 관찰" if not missing else "증거 미확인", **comparison})
     for field in OBS_COLUMNS:
@@ -295,12 +343,15 @@ def reuse_or_build_market_observation(displayed, original, metadata, state, *, s
     if (eligible and metadata.get("점검결과출처") != "새 전체 계산"
             and isinstance(cached, dict) and cached.get("key") == key):
         evidence = cached.get("columns")
+        # Legacy evidence is conservative; retain it until a new calculation.
+        # New diagnostic columns alone must not turn all restored rows unknown.
+        required = set(OBS_COLUMNS) - {"시장모의_최종체크입력", "시장모의_독립체크"}
         if (isinstance(evidence, pd.DataFrame) and evidence.index.equals(displayed.index)
-                and len(evidence) == len(displayed) and set(OBS_COLUMNS).issubset(evidence.columns)):
+                and len(evidence) == len(displayed) and required.issubset(evidence.columns)):
             out = displayed.copy(deep=True)
             out.attrs = deepcopy(displayed.attrs)
             for field in OBS_COLUMNS:
-                out[field] = evidence[field].copy()
+                out[field] = evidence[field].copy() if field in evidence else "미확인 · 저장 당시 상세 감사 미보존"
             out["시장만모의해제_증거출처"] = "동일 계산ID·서명·계좌맥락의 관찰 재사용"
             return out
     out = attach_market_observation(displayed, original, metadata)
@@ -334,6 +385,7 @@ def unheld_observation_tables(frame):
                 "시장 차단 관찰": "자료 부족" if status == "미확인" else status,
                 "원판정 재현": row.get("시장모의_원판정재현", "자료 부족"),
                 "시장방어 제외 비교": row.get("시장모의_비교판정", "미확인"),
+                "독립 최종체크": row.get("시장모의_독립체크", "미확인"),
                 "남은 사유": reason + " · " + _text(row.get("시장만모의해제_미확인항목"))}
         if known:
             unheld.append(item)
