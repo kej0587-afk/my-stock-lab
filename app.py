@@ -2432,6 +2432,7 @@ def save_monthly_logs_db(df):
 
 
 @st.cache_data(ttl=30, show_spinner=False)
+@timed_call("external_data", "financial_scores_db_miss")
 def load_fin_scores_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return pd.DataFrame(columns=FIN_SCORE_COLUMNS)
@@ -2443,6 +2444,7 @@ def load_fin_scores_db_for_user(owner_email):
     return dataframe_from_rows(res.data, FIN_SCORE_COLUMNS)
 
 
+@timed_call("display", "financial_scores_cache_read")
 def load_fin_scores_db():
     return load_fin_scores_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
