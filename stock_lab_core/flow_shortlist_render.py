@@ -34,7 +34,7 @@ class FlowShortlistRenderReuse:
     @timed_call("display", "flow_shortlist_render_read")
     def get(self, snapshot, *, holdings, watchlist):
         source = snapshot.get("_flow_shortlist_df") if isinstance(snapshot, dict) else None
-        valid = (isinstance(source, pd.DataFrame)
+        valid = (isinstance(source, pd.DataFrame) and not source.attrs
                  and snapshot.get("_flow_shortlist_version") == self.version)
         registration = self._registration(holdings, watchlist)
         if valid and self.saved is not None:
@@ -53,7 +53,7 @@ class FlowShortlistRenderReuse:
         result = self.build(snapshot)
         # The builder may have populated/replaced the snapshot cache.
         source = snapshot.get("_flow_shortlist_df") if isinstance(snapshot, dict) else None
-        if (isinstance(result, pd.DataFrame) and isinstance(source, pd.DataFrame)
+        if (isinstance(result, pd.DataFrame) and isinstance(source, pd.DataFrame) and not source.attrs
                 and snapshot.get("_flow_shortlist_version") == self.version):
             self.saved = (snapshot, self._frame_copy(source), registration, result.copy(deep=True))
         return result

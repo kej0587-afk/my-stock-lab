@@ -62,6 +62,16 @@ def test_no_time_or_session_reuse_and_failed_build_not_saved():
     assert reader.saved is None
 
 
+def test_snapshot_frame_metadata_is_not_ignored():
+    snapshot, calls, reader = setup_reader()
+    kw = dict(holdings=None, watchlist=[])
+    reader.get(snapshot, **kw)
+    snapshot["_flow_shortlist_df"].attrs["basis"] = "changed"
+    value = reader.get(snapshot, **kw)
+    assert value.attrs["basis"] == "changed"
+    assert len(calls) == 2
+
+
 def test_actual_builder_registration_and_queue_output_match(app_module, monkeypatch):
     app = app_module
     snapshot, _, _ = setup_reader()
