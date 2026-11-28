@@ -29932,12 +29932,14 @@ def render_today_unified_briefing_panel(
     if _render_briefing_report_surface(detail, df, latest_owner, latest_accounts, latest_store):
         return
     saved_flow = get_cached_today_market_flow_snapshot() or {}
-    if saved_flow and saved_flow.get("sector_cards_view_version") != "exact-market-v1":
-        # Existing observations only. Do not refresh prices or run Today again.
-        saved_flow["sector_ability_cards"] = _flow_sector_ability_cards(
-            saved_flow.get("command_flow_df"), saved_flow.get("sector_rotation_df"),
-            saved_flow.get("theme_rotation_df"), market_guard=market_guard)
-        saved_flow["sector_cards_view_version"] = "exact-market-v1"
+    if saved_flow:
+        try:
+            from stock_lab_core.sector_display_snapshot import prepare_sector_display
+            prepare_sector_display(saved_flow, market_guard, unify=build_today_unified_flow_candidates,
+                                   prepare=_prepare_flow_command_table, build_cards=_flow_sector_ability_cards)
+        except Exception as exc:
+            saved_flow["sector_ability_cards"] = []
+            st.caption(f"섹터 표시 자료 연결 보류: {type(exc).__name__}")
     change_brief = None
     if not pending and not df.empty:
         from stock_lab_core.today_overview import observed_sessions, overview_counts
@@ -32506,8 +32508,11 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
     subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
     try:
-        unified_flow_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
-        command_flow_df = _prepare_flow_command_table(unified_flow_df) if unified_flow_df is not None and not unified_flow_df.empty else pd.DataFrame()
+        from stock_lab_core.sector_display_snapshot import prepare_sector_display
+        unified_flow_df, command_flow_df, sector_ability_cards = prepare_sector_display(
+            snapshot, market_guard, unify=build_today_unified_flow_candidates,
+            prepare=_prepare_flow_command_table, build_cards=_flow_sector_ability_cards,
+            allow_prepare=refresh_clicked)
         snapshot["command_flow_df"] = command_flow_df
         st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
         if isinstance(command_flow_df, pd.DataFrame) and not command_flow_df.empty:
@@ -32515,7 +32520,11 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     except Exception as exc:
         unified_flow_df = pd.DataFrame()
         command_flow_df = pd.DataFrame()
+        sector_ability_cards = []
         st.caption(f"실행 후보판 연결 계산을 불러오지 못했습니다: {type(exc).__name__}")
+
+    if refresh_clicked:
+        st.rerun()
 
     brief_news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
     if not isinstance(brief_news_rows, list):
@@ -32531,9 +32540,6 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     else:
         news_cols[1].caption("뉴스재료를 붙이려면 새로고침을 한 번 눌러주세요. 수집된 뉴스는 주요 뉴스 탭과 주도맵에서 함께 씁니다.")
 
-    sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
-    snapshot["sector_ability_cards"] = sector_ability_cards
-    snapshot["sector_cards_view_version"] = "exact-market-v1"
     detail_view = _select_today_market_flow_detail_view()
 
     if detail_view == "주도 섹터":
@@ -33913,6 +33919,17 @@ def _render_today_queue_tab(mode):
     other_caution_mask = queue_masks["other_caution"]
 
     candidate_focus_mask = execution_mask | wait_mask
+    if run_summary and flow_snapshot_for_context:
+        # Finish the existing sector display once at the explicit calculation boundary.
+        # Opening either display later must not repeat provider supplementation.
+        try:
+            from stock_lab_core.sector_display_snapshot import prepare_sector_display
+            prepare_sector_display(flow_snapshot_for_context, market_guard,
+                                   unify=build_today_unified_flow_candidates,
+                                   prepare=_prepare_flow_command_table, build_cards=_flow_sector_ability_cards,
+                                   allow_prepare=True)
+        except Exception as exc:
+            st.caption(f"섹터 표시 자료 준비 보류: {type(exc).__name__}")
     render_today_unified_briefing_panel(
         summary_df,
         market_guard,
