@@ -29956,15 +29956,16 @@ def render_today_unified_briefing_panel(
             from stock_lab_core.report_latest import account_key
             from stock_lab_core.report_eventstudy import _exchange_schedule
             accounts = st.session_state.get("acc_filter", [])
-            cards = saved_flow.get("sector_ability_cards", [])
-            leaders = {card["market"]: card["title"] for card in cards if card.get("rank") == 1}
+            from stock_lab_core.today_sector_basis import sector_observation_basis
+            sector_basis, leaders = sector_observation_basis(saved_flow, dates)
             recovery = (df.loc[df["돈흐름_판정"].fillna("").str.contains("회복"), "티커"].astype(str).tolist()
                         if "돈흐름_판정" in df else None)
             current_observation = make_today_change_session(
                 normalized_decisions(df.to_dict("records")), dates=dates, generated_at=at.isoformat(),
-                account_key=account_key(accounts), comparison_context={"schema": "today-overview-v1", "sector_source": "existing-ranked-cards", "recovery_source": "saved-flow-recovery-label"},
+                account_key=account_key(accounts), comparison_context={"schema": "today-overview-v2", "sector_source": "same-session-ranked-cards", "recovery_source": "saved-flow-recovery-label"},
                 sector_leaders=leaders or None, recovery_watch=recovery, execution_count=buyish_count,
                 held_actions={row["티커"]: row["오늘 행동"] + " · " + row["보류 사유"] for row in asset_interpretation_rows})
+            current_observation["sector_source_basis"] = sector_basis
             previous_dates = {}
             for market, source_day in dates.items():
                 end = pd.Timestamp(source_day) - pd.Timedelta(days=1)
@@ -30011,11 +30012,17 @@ def render_today_unified_briefing_panel(
     m5.metric("보유 파킹자산(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help="이미 보유한 증권 평가액입니다. 매도·결제 전에는 주문가능 현금이 아닙니다.")
 
     if not df.empty and detail == "보유관리":
-        from stock_lab_core.today_overview import render_overview
+        from stock_lab_core.today_overview import render_overview, observed_sessions
         overview_flags = build_today_review_flags_df(
             df, globals().get("holdings_table"), build_today_flow_shortlist_df(saved_flow))
         render_overview(st, df, saved_flow.get("sector_ability_cards", []), overview_flags,
                         hard_mask=hard_block_mask)
+        from stock_lab_core.today_sector_basis import sector_observation_basis
+        source_basis, _ = sector_observation_basis(saved_flow, observed_sessions(df))
+        if source_basis:
+            st.caption("섹터 원자료: " + " · ".join(
+                f"{row['시장']} {row['원자료']} {row['가격 기준일']}" for row in source_basis))
+            st.caption("종목 점검과 기준일이 다르거나 섞인 섹터는 오늘 한 줄의 변화 비교에서 제외합니다.")
         st.caption("계좌 범위: " + ", ".join(str(account) for account in latest_accounts)
                    + " · 점검 계산: " + str(df.attrs.get("portfolio_signal_at") or st.session_state.get("today_queue_summary_last_run", "미확인")))
         if change_brief:

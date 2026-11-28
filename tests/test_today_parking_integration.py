@@ -16,6 +16,7 @@ from stock_lab_core.sector_display_snapshot import prepare_sector_display
 def prepared_sector_snapshot():
     def prewarm(guard, cards, flow):
         snapshot = {
+            "flow_df": pd.DataFrame({"Ticker": ["MSFT"], "기준일": ["2026-11-27"]}),
             "sector_rotation_df": flow.copy(deep=True),
             "theme_rotation_df": pd.DataFrame(),
             "subtheme_group_df": pd.DataFrame(),
@@ -248,7 +249,7 @@ def test_matching_context_passes_current_evidence_and_exchange_dates_to_history(
     assert observation["account_key"] == report_latest.account_key(accounts)
     assert observation["rows"] == normalized_decisions(summary.to_dict("records"))
     assert observation["comparison_context"] == {
-        "schema": "today-overview-v1", "sector_source": "existing-ranked-cards",
+        "schema": "today-overview-v2", "sector_source": "same-session-ranked-cards",
         "recovery_source": "saved-flow-recovery-label"}
     assert observation["brief_inputs"] == {
         "sector_leaders": {"미국": "금융"}, "recovery_watch": ["MSFT"],
