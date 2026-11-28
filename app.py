@@ -29954,8 +29954,11 @@ def render_today_unified_briefing_panel(
                     if latest_owner and supabase is not None else None)
     latest_accounts = st.session_state.get("acc_filter", [])
     with measure("phase", "briefing_report_restore"):
-        report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
-                                          store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
+        # Mirror restore_last_report's first no-op check before evaluating its
+        # expensive build argument. No report/provider cache lifetime changes.
+        if st.session_state.get(report_latest.TRIED_KEY) != report_latest.account_key(latest_accounts):
+            report_latest.restore_last_report(st.session_state, owner_scope=latest_owner, accounts=latest_accounts,
+                                              store=latest_store, build_id=get_report_build_info(__file__)["loaded_source_sha256"])
     from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
     restore_briefing_view(st.session_state)
     detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
