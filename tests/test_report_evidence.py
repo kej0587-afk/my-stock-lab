@@ -99,13 +99,18 @@ def test_report_front_order_missing_reasons_and_leverage_not_double_multiplied()
                                   market_news_rows=[article("CXMT 반도체 매출 증가")],
                                   summary_rows=[{"티커": "SOXL", "보유량": 1, "현재비중": 6, "목표비중": 5}])
     assert memo.index("## 오늘의 시장 스토리") < memo.index("## 지수·매크로 한눈에") < memo.index("## 내 보유 종목 영향") < memo.index("## 경제지표")
-    assert memo.index("## 빠른 요약\n") < memo.index("## 지수\n") < memo.index("## 매크로\n") < memo.index("## 포트폴리오 · 교체 검토\n")
+    # Since ebb310a3 (2026-11-27) the index table is shown once, inside 빠른 요약; a separate
+    # "## 지수" section appears only when no index is connected.
+    quick = memo.index("## 빠른 요약\n")
+    assert quick < memo.index("**주요시장**") < memo.index("## 매크로\n") < memo.index("## 포트폴리오 · 교체 검토\n")
+    assert "나스닥종합(^IXIC)" in memo[quick:memo.index("## 매크로\n")]
     assert "🧭 오늘점검" not in memo
     assert "전년비" in memo and "예상대비 +0.20 %p" in memo
     assert "× 3 = -12.00%" in memo and "-36.00%" not in memo
     assert "비중초과, 레버리지 보유" in memo
     assert memo.count("CXMT 반도체 매출 증가") < 6
-    assert "원자료" not in memo
+    # No raw-data dump section; the consensus check row may still name the supplier's raw label.
+    assert not any(line.startswith("#") and "원자료" in line for line in memo.splitlines())
     assert "일정 미연결" in memo
     assert memo.count("오늘의 전략:") <= 1
 

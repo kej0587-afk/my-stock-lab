@@ -72,7 +72,11 @@ def test_report_lists_error_ram_as_held_with_unknown_weight(replay):
     report = build_auto_market_memo(
         summary_rows=[row], now=datetime(2026, 10, 18, 18, tzinfo=KST),
         report_context={"sessions": {"KR": "2026-10-16", "US": "2026-10-16"}, "prices": {}})
-    holdings = report.split("## 내 보유 종목 영향", 1)[1].split("\n## ", 1)[0]
+    impact = report.split("## 내 보유 종목 영향", 1)[1].split("\n## ", 1)[0]
+    # Since PR #100 the holding-impact table lives in '포트폴리오 · 교체 검토'; the impact
+    # section keeps the definitions and a pointer to it.
+    assert "포트폴리오 · 교체 검토' 구역에 있습니다" in impact
+    holdings = report.split("## 포트폴리오 · 교체 검토", 1)[1].split("\n## ", 1)[0]
     assert "RAM(RAM) |" in holdings
     assert "데이터부족" in holdings and "현재비중·일간 기여 미연결" in holdings
     assert "보유목록 미연결" not in holdings
