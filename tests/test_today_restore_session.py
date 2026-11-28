@@ -16,19 +16,19 @@ from stock_lab_core.today_result_observation import result_metadata
 from stock_lab_core.today_snapshot import load_today_queue_summary_snapshot, save_today_queue_summary_snapshot
 
 
-def fixture(tmp_path, *, age=0):
+def fixture(tmp_path, *, age=0, account_state=None, context="account-context", logic_version="test"):
     base = tuple({"ticker": f"T{i}", "name": f"Company {i}", "qty": 0} for i in range(92))
     auto = tuple({"ticker": f"T{i}", "name": f"Company {i}", "bucket": "flow_candidate"} for i in range(92, 104))
     items = base + auto
     at = (datetime.now(timezone(timedelta(hours=9))) - timedelta(minutes=age)).strftime("%Y-%m-%d %H:%M")
     frame = pd.DataFrame({"티커": [x["ticker"] for x in items], "게이트상태": ["방어우선"] * 103 + ["데이터확인"],
                           "판정코드": ["KEEP"] * 104, "Adj점수": range(104), "금액": [1.123456789123456] * 104})
-    frame.attrs.update(portfolio_signal_context="account-context", portfolio_signal_at=at)
+    frame.attrs.update(portfolio_signal_context=context, portfolio_signal_at=at)
     flow = {"flow_df": pd.DataFrame({"티커": ["QQQ"], "점수": [3.25]}), "original_at": at}
-    sig = signature(items, "계좌", logic_version="test")
-    state = {SUMMARY_KEY: frame, SIGNATURE_KEY: sig, LAST_RUN_KEY: at}
+    sig = signature(items, "계좌", logic_version=logic_version)
+    state = {**(account_state or {}), SUMMARY_KEY: frame, SIGNATURE_KEY: sig, LAST_RUN_KEY: at}
     capture_discovery_context(state, frame, mode="계좌", raw_watch_items=base, base_items=base,
-        watch_items=items, flow_auto_items=auto, logic_version="test", refresh_flow_candidates=True,
+        watch_items=items, flow_auto_items=auto, logic_version=logic_version, refresh_flow_candidates=True,
         flow_snapshot=flow, calculated_at=at)
     path = tmp_path / "snapshot.json"
     def save(*args, **kwargs):
@@ -43,6 +43,107 @@ def restore(state, base, load, *, context="account-context", snapshot=None, owne
     return restore_discovery_context(state, owner=owner, raw_watch_items=base, mode="계좌",
         logic_version="test", account_context=context, flow_snapshot=snapshot,
         build_items=lambda items: items, signature=signature, load=load)
+
+
+@pytest.mark.parametrize("change", [
+    None, "current_unheld", "current_held_same", "current_held_changed", "revision",
+    "cash", "holdings", "account", "watch", "expired", "integrity",
+    "frame_context", "last_run", "signature", "disabled", "callback_error",
+])
+def test_cold_financial_scores_hydrate_only_after_complete_validation(
+        tmp_path, app_module, monkeypatch, change):
+    from types import SimpleNamespace
+
+    saved_scores = {"T0": 3., "T1": 4., "UNHELD": 1.}
+    state = {
+        "fin_score_map": deepcopy(saved_scores), "acc_filter": ["synthetic"],
+        "_app_krw_cash": 100., "_app_usd_cash": 2., "_app_reserve_target_weight": 10.,
+        "_app_holdings_table": pd.DataFrame([
+            {"티커": "T0", "보유량": 2., "매입가": 10., "목표비중": 20.},
+            {"티커": "T1", "보유량": 1., "매입가": 20., "목표비중": 30.},
+        ]),
+    }
+    monkeypatch.setattr(app_module, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "synthetic@example.invalid")
+    context = app_module.portfolio_signal_input_context()
+    base, auto, original, _, sig, at, disk_load = fixture(
+        tmp_path, age=121 if change == "expired" else 0, account_state=state,
+        context=context, logic_version="test:financial-db-revision-1",
+    )
+    state["fin_score_map"] = {}
+    if change == "current_unheld":
+        state["fin_score_map"] = {"UNHELD": 9., "CURRENT_ONLY": 7.}
+    elif change in {"current_held_same", "current_held_changed"}:
+        state["fin_score_map"] = {"T0": 3. if change == "current_held_same" else 99.}
+    elif change == "cash":
+        state["_app_krw_cash"] += 1.
+    elif change == "holdings":
+        state["_app_holdings_table"].loc[0, "보유량"] += 1.
+    elif change == "account":
+        state["acc_filter"] = ["different"]
+    elif change == "watch":
+        base = base[:-1]
+    elif change == "disabled":
+        state["today_queue_refresh_flow_candidates"] = False
+    before = deepcopy(state["fin_score_map"])
+    current_context = app_module.portfolio_signal_input_context()
+    assert current_context != context
+    # The optional override computes a candidate without changing session state.
+    app_module.portfolio_signal_input_context(financial_scores=saved_scores)
+    assert state["fin_score_map"] == before
+
+    def load(**kwargs):
+        frame, saved_sig, saved_at = disk_load(**kwargs)
+        if change == "integrity":
+            frame.attrs["today_restore_inputs"]["account_inputs"]["fin_score_map"]["T0"] = 99.
+        elif change == "frame_context":
+            frame.attrs["portfolio_signal_context"] = "different"
+        elif change == "last_run":
+            saved_at = "different"
+        elif change == "signature":
+            saved_sig = "different"
+        return frame, saved_sig, saved_at
+
+    def candidate_context(*, financial_scores):
+        assert state["fin_score_map"] == before
+        if change == "integrity":
+            pytest.fail("Do not use saved scores before integrity validation")
+        if change == "callback_error":
+            raise ValueError("unavailable candidate")
+        return app_module.portfolio_signal_input_context(financial_scores=financial_scores)
+
+    result = restore_discovery_context(
+        state, owner="user", raw_watch_items=base, mode="계좌",
+        logic_version="test:financial-db-revision-2" if change == "revision" else "test:financial-db-revision-1",
+        account_context=current_context, flow_snapshot=None, build_items=lambda items: items,
+        signature=signature, load=load, account_context_for_scores=candidate_context,
+    )
+    if change in {None, "current_unheld", "current_held_same"}:
+        assert result == (base + auto, auto)
+        assert len(result[0]) == 104
+        assert state["fin_score_map"] == {**saved_scores, **before}
+        assert app_module.portfolio_signal_input_context() == context
+        raw = state[SUMMARY_KEY]
+        assert raw.attrs["portfolio_signal_context"] == context
+        assert raw.to_csv(index=False) == original.to_csv(index=False)
+        assert raw.attrs["today_saved_display"].to_csv(index=False) == original.to_csv(index=False)
+        assert state[LAST_RUN_KEY] == at and state[SIGNATURE_KEY] == sig
+    else:
+        assert result is None
+        assert state["fin_score_map"] == before
+        assert "today_market_flow_snapshot" not in state
+
+
+def test_app_restoration_wires_pure_candidate_context_callback():
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name) and node.func.id == "restore_discovery_context"]
+    assert len(calls) == 1
+    callback = next(kw.value for kw in calls[0].keywords if kw.arg == "account_context_for_scores")
+    assert isinstance(callback, ast.Name) and callback.id == "portfolio_signal_input_context"
 
 
 def test_new_browser_104_exact_original_values_csv_time_and_zero_calculations(tmp_path):

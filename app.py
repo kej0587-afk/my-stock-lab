@@ -24716,7 +24716,7 @@ def store_precision_decision_record(ticker, engine_view, c, *, has_pos, manual_p
         logging.exception("Decision record (precision) skipped: ticker=%s", ticker)
 
 
-def portfolio_signal_input_context():
+def portfolio_signal_input_context(*, financial_scores=None):
     """Identify account-dependent inputs without invalidating on every live tick."""
     import hashlib
 
@@ -24734,7 +24734,8 @@ def portfolio_signal_input_context():
         "holdings": sorted(rows),
         "cash": [st.session_state.get("_app_krw_cash", 0), st.session_state.get("_app_usd_cash", 0)],
         "reserve_target": st.session_state.get("_app_reserve_target_weight", 0),
-        "financial_scores": {key: value for key, value in st.session_state.get("fin_score_map", {}).items()
+        "financial_scores": {key: value for key, value in (st.session_state.get("fin_score_map", {})
+                             if financial_scores is None else financial_scores).items()
                              if _portfolio_flow_ticker_key(key) in held_keys},
         "version": TODAY_QUEUE_LOGIC_VERSION,
     }
@@ -33770,6 +33771,7 @@ def _render_today_queue_tab(mode):
             mode=mode, logic_version=queue_logic_version, account_context=portfolio_signal_input_context(),
             flow_snapshot=flow_snapshot_for_queue, build_items=build_today_queue_items,
             signature=build_today_queue_signature, load=load_today_queue_summary_snapshot,
+            account_context_for_scores=portfolio_signal_input_context,
         )
         flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
         if not restored_items and not st.session_state.get("today_queue_run_once", False) and not st.session_state.get("today_market_flow_refresh_once", False):

@@ -10,7 +10,8 @@ from stock_lab_core.today_queue_session import (
 
 
 def restore_discovery_context(state, *, owner, raw_watch_items, mode, logic_version,
-                              account_context, flow_snapshot, build_items, signature, load):
+                              account_context, flow_snapshot, build_items, signature, load,
+                              account_context_for_scores=None):
     """Only hydrate missing discovery; never replace a newly fetched market snapshot."""
     if flow_snapshot is not None or not owner or owner in state.get(CLEARED_OWNERS_KEY, ()):
         return None
@@ -25,10 +26,31 @@ def restore_discovery_context(state, *, owner, raw_watch_items, mode, logic_vers
     envelope = frame.attrs.get("today_restore_inputs")
     if not isinstance(envelope, dict):
         return None
+    base_items = build_items(raw_watch_items)
     reason = validate_restore_inputs(
-        envelope, raw_watch_items=raw_watch_items, base_items=build_items(raw_watch_items),
+        envelope, raw_watch_items=raw_watch_items, base_items=base_items,
         mode=mode, logic_version=logic_version, account_context=account_context,
     )
+    hydrated_scores = None
+    # A cold session has not computed financial scores yet. Only try saved missing
+    # entries after integrity validation; keep every current entry authoritative.
+    if reason == "계좌·입력맥락 불일치 · 재계산 필요" and callable(account_context_for_scores):
+        saved_inputs = envelope.get("account_inputs")
+        saved_scores = saved_inputs.get("fin_score_map") if isinstance(saved_inputs, dict) else None
+        current_scores = state.get("fin_score_map", {})
+        if isinstance(saved_scores, dict) and isinstance(current_scores, dict):
+            candidate = deepcopy({**saved_scores, **current_scores})
+            try:
+                candidate_context = account_context_for_scores(financial_scores=candidate)
+            except Exception:
+                candidate_context = None
+            candidate_reason = validate_restore_inputs(
+                envelope, raw_watch_items=raw_watch_items, base_items=base_items,
+                mode=mode, logic_version=logic_version, account_context=candidate_context,
+            )
+            if not candidate_reason:
+                reason = ""
+                hydrated_scores = candidate
     enabled = envelope.get("refresh_flow_candidates")
     if "today_queue_refresh_flow_candidates" in state and state["today_queue_refresh_flow_candidates"] != enabled:
         reason = "돈흐름 자동후보 설정 변경 · 재계산 필요"
@@ -48,6 +70,10 @@ def restore_discovery_context(state, *, owner, raw_watch_items, mode, logic_vers
                   ORIGIN_KEY: "저장 결과 복원", "today_queue_summary_owner": owner})
     if reason:
         return None
+    # No financial state changes until envelope, DB revision (logic_version),
+    # current account inputs, original frame/time/signature and settings all match.
+    if hydrated_scores is not None:
+        state["fin_score_map"] = hydrated_scores
     state["today_queue_refresh_flow_candidates"] = enabled
     snapshot = deepcopy(envelope.get("flow_snapshot"))
     if isinstance(snapshot, dict):
