@@ -14,7 +14,6 @@ import pandas as pd
 
 from stock_lab_core.execution_gate import build_execution_gate, GATE_EXECUTABLE
 from stock_lab_core.portfolio import portfolio_flow_ticker_key
-from stock_lab_core.sector_candidate_association import sector_market_from_row
 from stock_lab_core.today_queue_session import LAST_RUN_KEY, ORIGIN_KEY, SIGNATURE_KEY, STALE_KEY
 
 META_COLUMNS = ("점검결과출처", "점검결과상태", "점검원계산시각", "점검입력맥락", "점검재계산사유")
@@ -51,6 +50,11 @@ def _finite(value):
         return not isinstance(value, bool) and math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
+
+
+def _quantity_missing(value):
+    return ((isinstance(value, str) and not value.strip())
+            or (pd.api.types.is_scalar(value) and bool(pd.isna(value))))
 
 
 def replay_retained_final_checks(envelope, raw):
@@ -145,18 +149,11 @@ def attach_market_observation(displayed, original, metadata):
     counts = Counter(keys)
     shown_counts = Counter(portfolio_flow_ticker_key(row.get("티커")) for row in out.to_dict("records"))
     by_key = dict(zip(keys, sources))
-    market_dates = {}
-    for row in sources:
-        market = sector_market_from_row({"티커": row.get("티커")})
-        market_dates.setdefault(market, set()).add(_text(row.get("가격자료기준일")))
     observations = []
     for shown in out.to_dict("records"):
         key = portfolio_flow_ticker_key(shown.get("티커"))
         raw = by_key.get(key, {})
         missing = []
-        market_dates_for_row = market_dates.get(sector_market_from_row({"티커": raw.get("티커")}), set())
-        if len(market_dates_for_row) != 1 or "" in market_dates_for_row:
-            missing.append("같은 시장 원자료 기준일 혼재/미확인")
         if metadata.get("점검입력맥락") != "일치":
             missing.append("계좌·입력맥락 불일치/미저장")
         if metadata.get("점검결과출처") != "새 전체 계산":
@@ -230,7 +227,18 @@ def _observation_key(original, displayed, *, signature, context, calculation_id)
     if not all((signature, context, calculation_id)):
         return ""
     raw = original.drop(columns=list(META_COLUMNS) + list(OBS_COLUMNS), errors="ignore")
-    payload = {"version": 2, "calculation_id": calculation_id, "signature": signature, "context": context,
+    if "has_pos" in raw:
+        # A legacy display repair may fill missing qty with zero for explicit unheld rows.
+        # Normalize only that equivalence, on the hash copy; real quantity changes remain keyed.
+        quantities = []
+        for row in raw.to_dict("records"):
+            qty = row.get("qty")
+            if row.get("has_pos") is False and (_quantity_missing(qty) or (_finite(qty) and float(qty) == 0)):
+                qty = 0.0
+            quantities.append(qty)
+        raw = raw.drop(columns="qty", errors="ignore")
+        raw["qty"] = pd.Series(quantities, index=raw.index, dtype="object")
+    payload = {"version": 3, "calculation_id": calculation_id, "signature": signature, "context": context,
                "input": raw.to_json(orient="split", date_format="iso", double_precision=15),
                "envelope": original.attrs.get(INPUTS_KEY),
                "display_context": displayed[[key for key in ("티커", "가격입력ID", "가격신선도", "데이터상태", "시장실행상태")
@@ -273,7 +281,7 @@ def unheld_observation_tables(frame):
         held = row.get("has_pos")
         qty = row.get("qty")
         known = isinstance(held, bool)
-        if "qty" in row and (not _finite(qty) or float(qty) < 0 or (float(qty) > 0) != held):
+        if not _quantity_missing(qty) and (not _finite(qty) or float(qty) < 0 or (float(qty) > 0) != held):
             known = False
         if known and held:
             continue

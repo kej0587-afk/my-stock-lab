@@ -196,6 +196,23 @@ def test_only_explicit_io_wrapping_changed_against_immutable_reference():
                 isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'batch_builder' for t in n.targets))
                 and not (isinstance(n, ast.If) and 'batch_builder' in ast.unparse(n.test))]
         else:
+            # The 2026-11-28 observation envelope is a read-only side channel.
+            # Require its exact wiring, then compare all original batch policy.
+            observation_clock = ast.parse(
+                'snap_observation_fx = st.session_state.get("_app_usdkrw")').body[0]
+            assert sum(ast.dump(n) == ast.dump(observation_clock) for n in node.body) == 1
+            node.body = [n for n in node.body if ast.dump(n) != ast.dump(observation_clock)]
+            observation_tail = ast.parse('''
+summary = dedupe_dashboard_summary_df(pd.DataFrame(rows))
+if fresh_quotes:
+    from stock_lab_core.today_result_observation import capture_observation_inputs, INPUTS_KEY
+    summary.attrs[INPUTS_KEY] = capture_observation_inputs(
+        record_sink, cash=snap_cash_available, reserve=snap_reserve_available,
+        fx=snap_observation_fx, macro=snap_fmr, mode=mode)
+return summary
+''').body
+            assert [ast.dump(n) for n in node.body[-3:]] == [ast.dump(n) for n in observation_tail]
+            node.body[-3:] = ast.parse('return dedupe_dashboard_summary_df(pd.DataFrame(rows))').body
             removed = 0
             for child in ast.walk(node):
                 if isinstance(child, ast.With):

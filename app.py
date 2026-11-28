@@ -24724,7 +24724,6 @@ def portfolio_signal_input_context():
         "accounts": sorted(st.session_state.get("acc_filter", [])),
         "holdings": sorted(rows),
         "cash": [st.session_state.get("_app_krw_cash", 0), st.session_state.get("_app_usd_cash", 0)],
-        "fx": st.session_state.get("_app_usdkrw"),
         "reserve_target": st.session_state.get("_app_reserve_target_weight", 0),
         "financial_scores": {key: value for key, value in st.session_state.get("fin_score_map", {}).items()
                              if _portfolio_flow_ticker_key(key) in held_keys},
