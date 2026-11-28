@@ -63,7 +63,8 @@ def test_sector_observation_and_execution_stay_separate_without_network(monkeypa
     assert "실행 보류" not in result.iloc[0]["종목 실행 상태"]
     assert "일봉 이력 없음" in result.iloc[1]["종목 실행 상태"]
     assert result.iloc[1]["기존 점수"] == 7.1
-    assert result["시장 차단만 해제"].str.contains("미검증").all()
+    assert "미확인" in result.iloc[0]["시장 차단만 해제"]
+    assert "미검증" in result.iloc[1]["시장 차단만 해제"]
     render_overview(MagicMock(),frame,cards,pd.DataFrame())
     pd.testing.assert_frame_equal(frame,original)
 

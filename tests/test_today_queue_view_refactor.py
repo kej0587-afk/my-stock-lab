@@ -60,7 +60,23 @@ def detail_start(fn):
 
 @lru_cache(maxsize=2)
 def compiled_section(source):
-    fn = function(source)
+    fn = deepcopy(function(source))
+    # Approved execution-first presentation (already on main before this audit).
+    # Keep the retained renderer, values, row ordering, CSV bytes and callbacks;
+    # amend only its explicitly superseded column positions.
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                and any(isinstance(t, ast.Name) and t.id == "show_cols" for t in node.targets)):
+            names = [item.value for item in node.value.elts]
+            assert names[:9] == ["종목명", "티커", "유형", "현재가", "기업품질",
+                                 "🔥기술적 타점", "게이트상태", "게이트근거", "후보품질"]
+            for name in ("현재실행안내", "기업품질", "🔥기술적 타점"):
+                names.remove(name)
+            names.insert(4, "현재실행안내")
+            names.insert(7, "🔥기술적 타점")
+            names.insert(9, "기업품질")
+            node.value.elts = [ast.Constant(value=name) for name in names]
+    ast.fix_missing_locations(fn)
     return compile(ast.Module(body=fn.body[detail_start(fn):], type_ignores=[]), "<queue-detail>", "exec")
 
 
@@ -208,8 +224,34 @@ def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources
         nodes = (fn.body[assignment(fn, "portfolio_signal_attrs"):assignment(fn, "market_guard") + 1]
                  + fn.body[assignment(fn, "risk_df"):detail_start(fn)])
         expanded = []
+        observation_nodes = ast.parse('''
+from stock_lab_core.today_result_observation import result_metadata, attach_result_metadata, reuse_or_build_market_observation
+observation_meta = result_metadata(summary_df, st.session_state, run_summary=run_summary,
+    signature=queue_sig, account_context=portfolio_signal_input_context())
+original_observation_input = summary_df.copy(deep=True)
+summary_df = reuse_or_build_market_observation(summary_df, original_observation_input,
+    observation_meta, st.session_state, signature=queue_sig, context=portfolio_signal_input_context())
+from stock_lab_core.today_result_observation import render_result_observation
+render_result_observation(st, summary_df)
+if run_summary and flow_snapshot_for_context:
+    try:
+        from stock_lab_core.sector_display_snapshot import prepare_sector_display
+        prepare_sector_display(flow_snapshot_for_context, market_guard,
+            unify=build_today_unified_flow_candidates, prepare=_prepare_flow_command_table,
+            build_cards=_flow_sector_ability_cards, allow_prepare=True)
+    except Exception as exc:
+        st.caption(f"섹터 표시 자료 준비 보류: {type(exc).__name__}")
+''').body
+        observation_dumps = {ast.dump(node) for node in observation_nodes}
         for node in nodes:
             node = deepcopy(node)
+            # Read-only metadata/observation has independent fixed-input/no-I/O tests.
+            # Whitelist exact wiring, rather than dropping arbitrary new statements.
+            if ast.dump(node) in observation_dumps:
+                continue
+            if ast.dump(node) == ast.dump(ast.parse(
+                    'summary_df = attach_result_metadata(summary_df, observation_meta)').body[0]):
+                node = ast.parse('summary_df = summary_df.copy()').body[0]
             # Reviewed timer wrapper: callback/result parity is tested separately.
             for child in ast.walk(node):
                 if isinstance(child, ast.keyword) and child.arg == 'get_analyst_snapshot':

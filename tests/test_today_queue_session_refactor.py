@@ -93,7 +93,7 @@ class UI(BaseUI):
 
 def summary(ticker="WATCH"):
     frame = pd.DataFrame({"티커": [ticker], "종목명": ["Test " + ticker], "게이트상태": ["방어우선"]})
-    frame.attrs = {"portfolio_signal_context": {"owner": "original"}, "sentinel": "preserved"}
+    frame.attrs = {"portfolio_signal_context": {"owner": "current"}, "sentinel": "preserved"}
     return frame
 
 
@@ -226,6 +226,7 @@ def execute(source, kind, *, raw=False):
         CURRENT_USER_EMAIL=settings["owner"], IS_PUBLIC_DEMO=settings["demo"],
         TODAY_QUEUE_LOGIC_VERSION="fixture", load_fin_scores_db=lambda: {"WATCH": 3},
         financial_input_signature=lambda data: "financial", build_today_queue_signature=signature,
+        portfolio_signal_input_context=lambda: {"owner": "current"},
         build_today_queue_items=build_items, build_today_queue_items_with_flow_candidates=merge,
         get_cached_today_market_flow_snapshot=lambda: {"fresh": False},
         load_today_queue_summary_snapshot=snapshot, clear_today_queue_summary_snapshot=clear,
@@ -261,13 +262,29 @@ def execute(source, kind, *, raw=False):
     if raw:
         return ui, result, error
     attrs = {key: value.attrs for key, value in ui.session_state.items() if isinstance(value, pd.DataFrame)}
-    return freeze((ui.log, ui.session_state, attrs, result, error))
+    # Explicit provenance additions only; values are asserted below, not ignored wholesale.
+    from stock_lab_core.today_queue_session import ORIGIN_KEY, EXPECTED_CONTEXT_KEY
+    compared_state = {k: v for k, v in ui.session_state.items()
+                      if k not in (ORIGIN_KEY, EXPECTED_CONTEXT_KEY, "_today_full_calculation_count")}
+    return freeze((ui.log, compared_state, attrs, result, error))
 
 
 CASES = ("empty_watch", "first", "cached", "disk", "disk_no_time", "bad_disk", "disk_failure",
          "fallback", "bad_cache", "stale_signature", "old_time", "bad_time", "owner_change", "demo",
          "clear", "clear_failure", "refresh", "refresh_basic", "refresh_flow_failure", "refresh_merge_failure",
          "refresh_compute_failure", "refresh_interrupt", "refresh_empty", "refresh_save_failure", "refresh_dedupe_failure")
+
+
+@pytest.mark.parametrize("kind", ["cached", "disk", "refresh", "refresh_compute_failure"])
+def test_provenance_state_and_calculation_counter_are_explicit(sources, kind):
+    from stock_lab_core.today_queue_session import ORIGIN_KEY, EXPECTED_CONTEXT_KEY
+    ui, _, _ = execute(sources[1], kind, raw=True)
+    state = ui.session_state
+    assert state[EXPECTED_CONTEXT_KEY] == {"owner": "current"}
+    assert state.get("_today_full_calculation_count", 0) == (1 if kind == "refresh" else 0)
+    assert state.get(ORIGIN_KEY) == {
+        "disk": "저장 결과 복원", "refresh": "세션 계산 재사용",
+    }.get(kind)
 
 
 @pytest.mark.parametrize("kind", CASES)
@@ -316,14 +333,16 @@ def test_calculation_and_refresh_blocks_remain_syntax_identical(sources):
     branch = next(n for n in old.body if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "run_summary")
     spinner = next(n for n in branch.body if isinstance(n, ast.With))
     dump = lambda body: ast.dump(ast.Module(body=body, type_ignores=[]))
-    assert dump(spinner.body) == dump(calc.body[:-1])
+    counter = ast.parse('st.session_state["_today_full_calculation_count"] = st.session_state.get("_today_full_calculation_count", 0) + 1').body[0]
+    assert ast.dump(calc.body[-2]) == ast.dump(counter)
+    assert dump(spinner.body) == dump(calc.body[:-2])
     module = ast.parse((ROOT / "stock_lab_core/today_queue_session.py").read_text(encoding="utf8"))
     functions = {n.name: n for n in module.body if isinstance(n, ast.FunctionDef)}
 
     remember_start = next(i for i, n in enumerate(branch.body) if is_assignment(n, "last_run_text")) + 1
     refresh = deepcopy(functions["refresh_today_summary"].body[:-2])
     refreshed_spinner = next(n for n in refresh if isinstance(n, ast.With))
-    refreshed_spinner.body = deepcopy(calc.body[:-1])
+    refreshed_spinner.body = deepcopy(calc.body[:-2])
     assert dump(branch.body[:remember_start]) == dump(refresh)
     for fn in functions.values():
         assert fn.end_lineno - fn.lineno + 1 <= 50, fn.name
@@ -414,9 +433,12 @@ build_today_queue_items = tuple
 get_cached_today_market_flow_snapshot = lambda: {}
 load_fin_scores_db = lambda: {}
 financial_input_signature = lambda d: "fixed"
+portfolio_signal_input_context = lambda: {"owner": owner}
 clear_latest_price_cache = enable_force_live_price_refresh = cache_clear = noop
 load_price_df = load_price_frames_batch = None
-stamp_portfolio_signal_context = lambda df: df
+def stamp_portfolio_signal_context(df):
+    df.attrs["portfolio_signal_context"] = portfolio_signal_input_context()
+    return df
 dedupe_dashboard_summary_df = lambda df: df.copy()
 get_cash_available_for_dca = get_reserve_available_for_crash_buy = lambda mode: 0.
 build_today_market_guard = lambda *a: {"mode": "위험"}

@@ -14,10 +14,12 @@ SIGNATURE_KEY = "today_queue_summary_sig"
 LAST_RUN_KEY = "today_queue_summary_last_run"
 STALE_KEY = "today_queue_summary_stale_reason"
 CLEARED_OWNERS_KEY = "_today_queue_cleared_owners"
+ORIGIN_KEY = "today_queue_summary_origin"
+EXPECTED_CONTEXT_KEY = "today_queue_expected_context"
 RESULT_KEYS = (
     SUMMARY_KEY, SIGNATURE_KEY, LAST_RUN_KEY,
     "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig",
-    "portfolio_today_signal_df", STALE_KEY,
+    "portfolio_today_signal_df", STALE_KEY, ORIGIN_KEY, "today_market_observation_cache",
 )
 
 
@@ -36,6 +38,11 @@ def _stale_reason(state, frame, queue_sig):
         return frame.attrs[STALE_KEY]
     if state.get(SIGNATURE_KEY) != queue_sig:
         return "입력 변경 · 이전 계산 결과 · 재계산 필요"
+    if EXPECTED_CONTEXT_KEY in state and (
+        not state.get(EXPECTED_CONTEXT_KEY)
+        or frame.attrs.get("portfolio_signal_context") != state[EXPECTED_CONTEXT_KEY]
+    ):
+        return "계좌·입력맥락 불일치 또는 미저장 · 이전 계산 결과 · 재계산 필요"
     return ""
 
 
@@ -70,6 +77,7 @@ def _repair_cached_ownership(state, frame, queue_sig):
     """Fill legacy ownership only from matching, current portfolio inputs."""
     holdings = state.get("_app_holdings_table")
     if (frame.empty or state.get(SIGNATURE_KEY) != queue_sig
+            or (EXPECTED_CONTEXT_KEY in state and _stale_reason(state, frame, queue_sig))
             or not isinstance(holdings, pd.DataFrame) or holdings.empty):
         return frame
     from stock_lab_core.formatters import clean_float, finite_num
@@ -107,6 +115,7 @@ def restore_cached_summary(state, snapshot_owner, queue_sig, *, load_today_queue
             owner_scope=snapshot_owner, expected_signature=None,
         )
         if isinstance(disk_summary, pd.DataFrame) and not disk_summary.empty:
+            state[ORIGIN_KEY] = "저장 결과 복원"
             cached_summary = disk_summary.copy()
             state[SUMMARY_KEY] = cached_summary
             state[SIGNATURE_KEY] = disk_sig
@@ -124,6 +133,7 @@ def restore_cached_summary(state, snapshot_owner, queue_sig, *, load_today_queue
 
 def remember_calculated_summary(state, summary_df, queue_sig, last_run_text):
     state.pop(STALE_KEY, None)
+    state[ORIGIN_KEY] = "세션 계산 재사용"
     if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
         owners = set(state.get(CLEARED_OWNERS_KEY, ()))
         owners.discard(state.get("today_queue_summary_owner", ""))

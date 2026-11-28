@@ -89,6 +89,7 @@ def sector_observation_rows(cards, summary):
         names = list(dict.fromkeys(name.strip() for name in re.split(r"[,/|·]", reps) if name.strip() and name.strip() != "-"))
         canonical = lambda symbol: portfolio_flow_ticker_key(str(symbol).upper().replace("BRK-", "BRK."))
         matches = []
+        market_checks = []
         for name in names:
             # IDs may only identify the named, visible capture, not hidden candidates.
             symbols = {canonical(link['ticker']) for link in card.get('representative_links', [])
@@ -100,17 +101,23 @@ def sector_observation_rows(cards, summary):
             if len(aligned) == 1:
                 item = aligned[0]
                 matches.append(f"{name}: {action_columns(item)['오늘 행동']} · {text(item.get('게이트근거'))}")
+                if item.get("시장만모의해제"):
+                    market_checks.append(f"{name}: {item['시장만모의해제']} · {text(item.get('시장만모의해제_근거'))}")
+                else:
+                    market_checks.append(f"{name}: 미검증 · 원계산 모의 관찰 없음")
             elif candidates and not aligned:
                 matches.append(f"{name}: 대표주 시장 불일치 · 연결 보류")
+                market_checks.append(f"{name}: 미확인 · 시장 불일치")
             else:
                 matches.append(f"{name}: " + ("중복 매칭 확인" if len(aligned) > 1 else "점검 대상 범위 차이·이름 매칭 확인"))
+                market_checks.append(f"{name}: 미확인 · 유일한 원계산 연결 불가")
         total = card.get("total", card.get("종합", "-"))
         rows.append({"시장": market, "순위": card.get("rank", card.get("순위", "-")),
                      "섹터": card.get("title", card.get("섹터", "-")), "기존 점수": total,
                      "섹터 관찰": card.get("verdict", card.get("최종읽기", "-")),
                      "오늘 포착종목": reps,
                      "종목 실행 상태": " / ".join(matches) if matches else ("점검 대상 범위 차이·이름 매칭 확인" if names else "포착 종목 없음"),
-                     "시장 차단만 해제": "미검증 · 다른 제한 해소 여부 별도 확인"})
+                     "시장 차단만 해제": " / ".join(market_checks) if market_checks else "미검증 · 다른 제한 해소 여부 별도 확인"})
     return pd.DataFrame(rows)
 
 

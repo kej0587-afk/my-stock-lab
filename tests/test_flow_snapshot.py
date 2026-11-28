@@ -40,3 +40,22 @@ def test_one_new_row_does_not_hide_old_scored_rows_or_missing_dates():
     theme["돈흐름점수"] = [20, None]
     assert can_reuse_theme_snapshot({"theme_flow_df": theme}, flow)  # Unscored failure is not a signal.
     assert flow_source_date_rows({"theme_flow_df": theme})[0]["기준일 미확인"] == 1
+
+
+def test_received_partial_bar_is_not_presented_as_latest_valid_close():
+    source = pd.DataFrame([{"Ticker": "SOXX", "기준일": "2026-11-25",
+                            "원자료최근봉": "2026-11-27", "원자료누락항목": "Close",
+                            "돈흐름점수": 63.5}])
+    original = source.copy(deep=True)
+    row = flow_source_date_rows({"flow_df": source})[0]
+    assert row["수신 최근봉"] == "2026-11-27"
+    assert row["마지막 정상 종가일"] == row["가격 기준일"] == "2026-11-25"
+    assert row["누락 항목"] == "Close"
+    assert row["자료 상태"] == "최근봉 불완전 · 이전 정상봉 사용"
+    pd.testing.assert_frame_equal(source, original)
+
+
+def test_normal_bar_date_never_claims_today_or_new_request():
+    row = flow_source_date_rows({"flow_df": frame(("SOXX", "2026-11-25"))})[0]
+    assert row["수신 최근봉"] == row["마지막 정상 종가일"] == "2026-11-25"
+    assert row["자료 상태"] == "표시 기준일 자료"

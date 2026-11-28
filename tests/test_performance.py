@@ -36,6 +36,15 @@ def test_parallel_intervals_separate_work_sum_from_wall_union():
     assert next(row for row in report["functions"] if row["name"] == "fetch")["active_wall_seconds"] == 5
 
 
+def test_unstarted_recorded_trace_uses_interval_origin_without_clock_read():
+    trace = PerformanceTrace(clock=lambda: pytest.fail("No execution clock in manual trace"))
+    trace.record("prices", "fetch", 4, 0, False, started=100, ended=104, child_intervals=[])
+    report = trace.report()
+    assert report["functions"][0]["first_started_seconds"] == 0
+    assert report["functions"][0]["last_finished_seconds"] == 4
+    assert report["measurement_status"] == "not_started"
+
+
 def test_decorator_preserves_clear_unwrapped_output_and_exceptions():
     def original(value):
         if value < 0:

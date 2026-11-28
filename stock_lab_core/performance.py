@@ -181,11 +181,16 @@ class PerformanceTrace:
             function_intervals = {key: list(value) for key, value in self._function_intervals.items()}
             category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
             events = dict(self._events)
+        # Offline/manual record() traces have not entered the context manager.
+        # Use the first recorded interval as their origin, without sampling a
+        # new clock or changing the origin of an actual running measurement.
+        origin = getattr(self, "_started", min(
+            (start for intervals in function_intervals.values() for start, _ in intervals), default=0.0))
         for entry in entries:
             intervals = function_intervals[(entry["category"], entry["name"])]
             entry["active_wall_seconds"] = _interval_seconds(intervals)
-            entry["first_started_seconds"] = min(start for start, _ in intervals) - self._started
-            entry["last_finished_seconds"] = max(end for _, end in intervals) - self._started
+            entry["first_started_seconds"] = min(start for start, _ in intervals) - origin
+            entry["last_finished_seconds"] = max(end for _, end in intervals) - origin
         entries.sort(key=lambda entry: entry["total_seconds"], reverse=True)
         categories = {}
         for entry in entries:

@@ -181,6 +181,7 @@ def replay(monkeypatch, summary_ast):
 
     def run(fresh_quotes=False, *, items=None):
         state = SimpleNamespace(fin_score_map=MainThreadScores({"UNCHANGED": 3}))
+        state.get = lambda key, default=None: getattr(state, key, default)
         env["st"] = SimpleNamespace(session_state=state)
         result = env["get_all_summary"](
             tuple(state.fin_score_map.items()), "fixture mode",

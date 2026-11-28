@@ -13,6 +13,7 @@ from stock_lab_core.decision_engine import (
     resolve_current_price_for_decision,
 )
 from stock_lab_core.formatters import finite_num
+from stock_lab_core.decision_quote_eligibility import prepare_decision_quote_context
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.ta_engine import get_macd_state, get_sqz_status, get_trend
 
@@ -21,9 +22,14 @@ register_loaded_source(__name__, __file__)
 
 def prepare_decision_price_inputs(
     df, ticker, live_price, *, build_indicators,
-    apply_live_price_with_indicators, _live_indicator_context=None,
+    apply_live_price_with_indicators, _live_indicator_context=None, quote_now=None, manual_price=False,
 ):
     """Keep original closes separate from live/prepared indicator rows."""
+    live_price, _live_indicator_context = prepare_decision_quote_context(
+        df, live_price, ticker, build_indicators,
+        apply_live_price_with_indicators=apply_live_price_with_indicators,
+        context=_live_indicator_context, now=quote_now, manual=manual_price,
+    )
     source_daily_close, source_prev_close = get_source_close_values(df)
     if _live_indicator_context is None:
         df, live_ohlcv_applied, indicator_data_issue = apply_live_price_with_indicators(

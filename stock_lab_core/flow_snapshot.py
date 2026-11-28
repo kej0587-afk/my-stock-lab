@@ -73,8 +73,18 @@ def flow_source_date_rows(snapshot):
             ended = market_frame.get("상장상태", pd.Series(index=market_frame.index, dtype=object)).eq("거래종료")
             values = [session_date(value) for value in market_frame.loc[~ended, "기준일"]]
             known = sorted({value for value in values if value})
+            active_rows = market_frame.loc[~ended].to_dict("records")
+            received = sorted({value for row in active_rows if (value :=
+                session_date(row.get("원자료최근봉")) or session_date(row.get("기준일")))})
+            missing = sorted({str(row["원자료누락항목"]).strip() for row in active_rows
+                              if isinstance(row.get("원자료누락항목"), str) and row["원자료누락항목"].strip()})
+            date_range = lambda days: days[0] if len(days) == 1 else (f"{days[0]} ~ {days[-1]}" if days else "미확인")
             rows.append({"원자료": label, "시장": market,
                 "가격 기준일": day if len(known) == 1 else (f"{known[0]} ~ {known[-1]}" if known else "미확인"),
+                "수신 최근봉": date_range(received), "마지막 정상 종가일": date_range(known),
+                "누락 항목": " / ".join(missing) or "없음(수신 자료 기준)",
+                "자료 상태": "최근봉 불완전 · 이전 정상봉 사용" if missing else
+                    "기준일 혼재·미확인" if len(known) != 1 or any(not value for value in values) else "표시 기준일 자료",
                 "이전일 자료": sum(bool(value) and value < day for value in values),
                 "기준일 미확인": sum(not value for value in values), "거래종료": int(ended.sum()),
                 "최근봉 필수값 누락": int(market_frame.get("원자료누락항목", pd.Series("", index=market_frame.index))

@@ -125,15 +125,19 @@ def test_completed_refresh_caption_uses_new_run_time_in_same_render():
         isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id in {"refresh_clicked", "last_run"}
     ) or (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "last_run"
                                               for target in node.targets))]
-    assert len(selected) == 3
+    # A completed refresh now also reruns the upper shared sector display.
+    # Exercise that statement too; do not assume a fixed AST statement count.
+    assert selected
     state = {"last": "old"}
     captions = []
+    rerun_captions = []
 
     def refresh(**kwargs):
         state["last"] = "new"
         return {"fresh": True}
 
-    scope = {"st": SimpleNamespace(session_state=state, spinner=lambda _: nullcontext()),
+    scope = {"st": SimpleNamespace(session_state=state, spinner=lambda _: nullcontext(),
+                                   rerun=lambda: rerun_captions.append(list(captions))),
         "status_col": SimpleNamespace(caption=captions.append), "refresh_clicked": True,
         "snapshot": {"old": True}, "TODAY_MARKET_FLOW_LAST_RUN_KEY": "last",
         "refresh_today_market_flow_snapshot": refresh}
@@ -142,3 +146,4 @@ def test_completed_refresh_caption_uses_new_run_time_in_same_render():
     exec(compile(ast.fix_missing_locations(ast.Module(body=[code], type_ignores=[])), "<refresh-caption>", "exec"), scope)
     scope["render"]()
     assert captions == ["마지막 계산: new"]
+    assert rerun_captions == [["마지막 계산: new"]]

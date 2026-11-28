@@ -320,7 +320,6 @@ from stock_lab_core.financial_score import (
     resolve_fin_score_source,
 )
 from stock_lab_core.decision_engine import (
-    apply_live_price_with_indicators,
     DECISION_GROUP_BY_CODE,
     apply_safety_state_override as _apply_safety_state_override,
     apply_live_price_to_ohlcv,
@@ -370,6 +369,9 @@ from stock_lab_core.decision_policies import (
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
 from stock_lab_core.decision_followup import select_portfolio_followup_decision
 from stock_lab_core.decision_inputs import prepare_decision_price_inputs, prepare_decision_technical_inputs
+# Same report 20-minute/session contract for Today, demo and precision preparation.
+# Unknown/manual scalars retain their policy; known stale observations use source history.
+from stock_lab_core.decision_quote_eligibility import prepare_eligible_live_context as apply_live_price_with_indicators
 from stock_lab_core.decision_signals import build_entry_signal_context
 from stock_lab_core.decision_finalization import finalize_decision_sizing
 from stock_lab_core.decision_smc import build_decision_smc_context
@@ -21706,6 +21708,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
     snap_mp, snap_fmr, snap_te = resolve_decision_runtime_inputs()
     snap_cash_available = get_cash_available_for_dca(mode)
     snap_reserve_available = get_reserve_available_for_crash_buy(mode)
+    snap_observation_fx = st.session_state.get("_app_usdkrw")
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
@@ -21755,7 +21758,14 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
 
     # C-6/C-11 step 1: shared records for this run (main thread; optional when the helper is absent).
     globals().get("store_today_decision_records", lambda _sink: None)(record_sink)
-    return dedupe_dashboard_summary_df(pd.DataFrame(rows))
+    summary = dedupe_dashboard_summary_df(pd.DataFrame(rows))
+    if fresh_quotes:
+        from stock_lab_core.today_result_observation import capture_observation_inputs, INPUTS_KEY
+        summary.attrs[INPUTS_KEY] = capture_observation_inputs(
+            record_sink, cash=snap_cash_available, reserve=snap_reserve_available,
+            fx=snap_observation_fx, macro=snap_fmr, mode=mode,
+        )
+    return summary
 
 
 def is_known_non_swing_asset(ticker, asset_class="", include_etf=False):
@@ -24714,6 +24724,7 @@ def portfolio_signal_input_context():
         "accounts": sorted(st.session_state.get("acc_filter", [])),
         "holdings": sorted(rows),
         "cash": [st.session_state.get("_app_krw_cash", 0), st.session_state.get("_app_usd_cash", 0)],
+        "fx": st.session_state.get("_app_usdkrw"),
         "reserve_target": st.session_state.get("_app_reserve_target_weight", 0),
         "financial_scores": {key: value for key, value in st.session_state.get("fin_score_map", {}).items()
                              if _portfolio_flow_ticker_key(key) in held_keys},
@@ -33202,7 +33213,9 @@ def build_today_current_signal_audit_df(summary_df, source: str = "today_check")
     work["검증출처"] = str(source or "today_check")
     work["검증일"] = datetime.now(KST).date().isoformat()
 
+    from stock_lab_core.today_result_observation import META_COLUMNS, OBS_COLUMNS
     audit_cols = [
+        *META_COLUMNS, *OBS_COLUMNS,
         "검증일", "검증출처", "티커", "종목명", "유형", "검증방향", "검증대상",
         "현재가", "현재비중", "목표비중", "비중차이",
         "🔥기술적 타점", "최종읽기", "판정코드", "판정분류",
@@ -33455,7 +33468,8 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         },
         {
             "항목": "계산 당시와 현재 자산",
-            "내용": "01/98은 오늘점검 계산 당시, 09는 현재 자산현황입니다. 입력 수정 후 차이는 99에서 목표비중 변경으로 표시합니다. 값을 억지로 일치시키지 말고 재계산하세요.",
+            "내용": "01/98은 원계산 시각을 유지한 현재 표시결과(시장·돈흐름 연결 포함), 09는 현재 자산현황입니다. "
+                    "12의 결과 출처·입력맥락을 함께 확인하세요. 입력 변경 시 이전 계산을 새 전체 계산으로 읽지 말고 재계산하세요.",
         },
         {
             "항목": "시장 기준일",
@@ -33503,6 +33517,13 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         "98_current_signal_audit.csv": signal_audit_df,
         "99_review_flags.csv": flags_df,
     }
+
+    from stock_lab_core.today_result_observation import metadata_frame, observation_frame
+    frames["12_today_result_metadata.csv"] = metadata_frame(summary_df)
+    frames["13_market_only_observation.csv"] = observation_frame(summary_df)
+    notes.append({"항목": "결과 출처·모의 관찰", "내용":
+        "12는 화면과 동일한 원계산시각·복원/재계산 상태입니다. 13은 원입력의 시장 연결 차단만 제외한 "
+        "읽기 전용 선별 관찰이며 실제 실행 허가가 아닙니다. 실행 가능 여부 미확인은 후보 0건이나 실행 불가 확정이라는 뜻이 아닙니다."})
 
     export_bytes = build_review_export_zip(frames, notes=notes)
     now_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
@@ -33776,8 +33797,9 @@ def _render_today_queue_tab(mode):
     snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     from stock_lab_core.today_queue_session import (
         SIGNATURE_KEY as sig_key, LAST_RUN_KEY as last_key,
-        clear_cached_summary, restore_cached_summary, finalize_summary,
+        clear_cached_summary, restore_cached_summary, finalize_summary, EXPECTED_CONTEXT_KEY,
     )
+    st.session_state[EXPECTED_CONTEXT_KEY] = portfolio_signal_input_context()
     cached_summary = restore_cached_summary(
         st.session_state, snapshot_owner, queue_sig,
         load_today_queue_summary_snapshot=load_today_queue_summary_snapshot,
@@ -33869,7 +33891,16 @@ def _render_today_queue_tab(mode):
         return
 
     portfolio_signal_attrs = dict(summary_df.attrs)
-    summary_df = summary_df.copy()
+    from stock_lab_core.today_result_observation import (
+        result_metadata, attach_result_metadata, reuse_or_build_market_observation,
+    )
+    observation_meta = result_metadata(
+        summary_df, st.session_state, run_summary=run_summary, signature=queue_sig,
+        account_context=portfolio_signal_input_context(),
+    )
+    summary_df = attach_result_metadata(summary_df, observation_meta)
+    # Freeze pre-display wording and original flow inputs. Never replay market-rewritten prose.
+    original_observation_input = summary_df.copy(deep=True)
     if "판정분류" in summary_df.columns:
         signal_group = summary_df["판정분류"].astype(str)
     else:
@@ -33900,6 +33931,10 @@ def _render_today_queue_tab(mode):
         upside_map=_upside_value_map,
     )
     summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
+    summary_df = reuse_or_build_market_observation(
+        summary_df, original_observation_input, observation_meta, st.session_state,
+        signature=queue_sig, context=portfolio_signal_input_context(),
+    )
     attach_today_gate_to_records(summary_df, portfolio_signal_input_context())
     if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
         portfolio_signals = summary_df.copy()
@@ -33928,6 +33963,8 @@ def _render_today_queue_tab(mode):
     other_caution_mask = queue_masks["other_caution"]
 
     candidate_focus_mask = execution_mask | wait_mask
+    from stock_lab_core.today_result_observation import render_result_observation
+    render_result_observation(st, summary_df)
     if run_summary and flow_snapshot_for_context:
         # Finish the existing sector display once at the explicit calculation boundary.
         # Opening either display later must not repeat provider supplementation.
@@ -35531,11 +35568,13 @@ if main_page == "precision":
             ret6_color = "#2ecc71" if finite_num(_ret6) and _ret6 > 0 else ("#dc2626" if finite_num(_ret6) else "#94a3b8")
             ret3_text = f"{_ret3*100:.1f}%" if finite_num(_ret3) else "데이터 부족"
             ret6_text = f"{_ret6*100:.1f}%" if finite_num(_ret6) else "데이터 부족"
-            if display_cur_p <= 0:
+            if display_cur_p <= 0 or precision_signal_basis.get("시세제외사유"):
                 display_cur_p = c["cur_p"]
             price_refresh_key = f"precision_price_refresh_time_{fin_key}"
             price_refresh_time = st.session_state.get(price_refresh_key)
-            price_source = quote_display_label(manual_price=manual_cur_p, auto_price=auto_cur_p, live_applied=_precision_live_ohlcv_applied)
+            price_source = quote_display_label(manual_price=manual_cur_p, auto_price=auto_cur_p,
+                                               live_applied=_precision_live_ohlcv_applied,
+                                               rejection_reason=precision_signal_basis.get("시세제외사유", ""))
 
             price_info_col, price_refresh_col = st.columns([2.2, 1])
             with price_info_col:

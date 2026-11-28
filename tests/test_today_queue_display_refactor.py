@@ -5,6 +5,7 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -106,7 +107,9 @@ def run(source, frame, market):
         return market
 
     env = dict(globals(), summary_df=frame, get_cached_today_market_flow_snapshot=lambda: {"fixture": True},
-               build_today_market_guard=market_guard)
+               build_today_market_guard=market_guard, st=SimpleNamespace(session_state={}),
+               run_summary=False, queue_sig="fixture",
+               portfolio_signal_input_context=lambda: {"scope": "fixture"})
     exec(compiled_display(source), env)
     pd.testing.assert_frame_equal(frame, before, check_exact=True)
     assert frame.attrs == before.attrs and market == guard_before
@@ -119,11 +122,35 @@ def run(source, frame, market):
 
 
 def assert_parity(before, after):
+    from stock_lab_core.today_result_observation import META_COLUMNS
+
+    # Strip only the explicitly added provenance columns, including callback frames.
+    def legacy(value):
+        if isinstance(value, pd.DataFrame):
+            return value.drop(columns=list(META_COLUMNS), errors="ignore")
+        if isinstance(value, dict):
+            return {k: legacy(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(legacy(v) for v in value)
+        return value
+    after = legacy(after)
     for key in ("summary", "gates"):
         pd.testing.assert_frame_equal(before[key], after[key], check_exact=True)
     for key in ("reason_bucket", "hard_block_mask", "buyish_mask", "caution_mask"):
         pd.testing.assert_series_equal(before[key], after[key], check_exact=True)
     assert freeze(before) == freeze(after)
+
+
+def test_new_metadata_is_present_and_separate_from_retained_display_contract(sources):
+    from stock_lab_core.today_result_observation import META_COLUMNS
+    output = run(sources[1], sample(), guard())
+    result = output["summary"]
+    assert set(META_COLUMNS).issubset(result.columns)
+    assert result["점검결과상태"].eq("현재 입력 달라 재계산 필요").all()
+    assert result["점검원계산시각"].eq("미확인").all()
+    assert result["점검입력맥락"].eq("미확인/불일치").all()
+    assert result["점검재계산사유"].eq("입력 변경 · 입력 서명 불일치").all()
+    assert result["점검결과출처"].eq("세션 계산 재사용").all()
 
 
 @pytest.mark.parametrize("market", GUARDS)

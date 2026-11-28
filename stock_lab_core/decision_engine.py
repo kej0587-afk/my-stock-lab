@@ -1341,12 +1341,14 @@ def build_position_sizing_hint(
     eff_total: float,
     cur_p: float,
     is_etf: bool,
+    *, price_currency=None,
 ) -> str:
     if is_new_entry_signal and targ_w > 0 and eff_total > 0:
         first_buy_w = round(targ_w * 0.33, 2)
         first_buy_amt = round(eff_total * first_buy_w / 100, 0)
         cur_p_for_size = cur_p if cur_p > 0 else 1
-        shares_hint = int(first_buy_amt / cur_p_for_size) if cur_p_for_size > 0 else 0
+        # Allocation is KRW; an unknown/USD scalar cannot be divided into it.
+        shares_hint = int(first_buy_amt / cur_p_for_size) if price_currency == "KRW" and cur_p_for_size > 0 else 0
         return (
             f"1차 정찰대: 목표비중의 1/3 ({first_buy_w:.1f}%) "
             f"~{first_buy_amt:,.0f}원"
@@ -1616,7 +1618,10 @@ def compute_sizing_hint(
 ):
     """Compute the position-sizing hint shown alongside the decision."""
     is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
-    sizing_hint = build_position_sizing_hint(is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
+    sizing_hint = build_position_sizing_hint(
+        is_new_entry_signal, targ_w, eff_total, cur_p, is_etf,
+        price_currency="KRW" if is_kr_listed(ticker) else None,
+    )
     if (
         not sizing_hint
         and has_pos

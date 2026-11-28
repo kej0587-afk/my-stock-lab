@@ -124,6 +124,16 @@ def source_return_basis(source, ticker, calculated_at):
 
 def build_signal_basis(source, context, *, calculated_at=None, ticker="", input_price=None, manual=False):
     chart, applied, issue = context
+    rejection = str(getattr(chart, "attrs", {}).get("decision_quote_rejection") or "")
+    excluded = {}
+    if rejection:
+        _, reference = _quote_basis(input_price, ticker, manual, True)
+        excluded = {"시세제외사유": rejection,
+                    **{key.replace("현재가", "제외시세", 1): value for key, value in reference.items()}}
+        # Supplier evidence remains explicitly excluded reference, never the
+        # provenance/identity of the daily source actually used for decisions.
+        input_price, applied = 0.0, False
+        issue = " · ".join(filter(None, (str(issue or ""), rejection, "해당 시세 제외 · 판정·차트는 가격 이력 기준")))
     quote = dict(getattr(chart, "attrs", {}).get("live_quote") or {})
     atr_frame = source_price_rows(chart)
     try:
@@ -155,12 +165,15 @@ def build_signal_basis(source, context, *, calculated_at=None, ticker="", input_
         "임시봉날짜의미": "계산용 현지 날짜 · 실제 체결 시각/정규장 완료일 아님" if applied else "원자료 봉 날짜",
         # Processing time is not the vendor's quote time.
         "계산시각": calculated_at,
+        **excluded,
     }
 
 
-def quote_display_label(*, manual_price=0, auto_price=0, live_applied=False):
+def quote_display_label(*, manual_price=0, auto_price=0, live_applied=False, rejection_reason=""):
     if manual_price > 0:
         return "수동보정 · 차트 반영" if live_applied else "수동보정 · 차트 미반영"
+    if rejection_reason:
+        return "가격 이력 기준 · 조회 시세 제외: " + str(rejection_reason)
     if auto_price > 0:
         session = _SESSION_LABELS.get(quote_provenance(auto_price).get("session"))
         return f"조회 현재가 · {session}" if session else "조회 현재가 · 세션 미확인"

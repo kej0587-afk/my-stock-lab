@@ -181,6 +181,14 @@ def test_only_input_extraction_and_reused_row_reads_changed():
                               ("prepare_decision_technical_inputs", 35, 53)):
         body = deepcopy(helpers[name].body[1:-1])  # docstring and explicit result mapping
         if name == "prepare_decision_price_inputs":
+            # 2026-11-28: known stale extended quotes are rejected before the
+            # retained extraction. Dedicated eligibility tests pin both scalar
+            # and prepared-context restoration; all original downstream AST
+            # remains compared below. No old golden is regenerated.
+            assert isinstance(body[0], ast.Assign)
+            assert ast.unparse(body[0].targets[0]) == "(live_price, _live_indicator_context)"
+            assert isinstance(body[0].value, ast.Call) and body[0].value.func.id == "prepare_decision_quote_context"
+            body = body[1:]
             daily = next(n for n in body if isinstance(n, ast.Assign)
                          and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "daily_close")
             daily.value.orelse = ast.parse('float(df.iloc[-1]["Close"])', mode="eval").body
